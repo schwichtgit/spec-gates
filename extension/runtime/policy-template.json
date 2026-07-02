@@ -4,6 +4,8 @@
     "prettier": {
       "include": ["**/*.md", "**/*.yml", "**/*.yaml", "**/*.json"],
       "exclude": [
+        ".specify/**",
+        ".claude/**",
         "LICENSE",
         "node_modules/**",
         "**/node_modules/**",
@@ -16,6 +18,8 @@
     "markdownlint": {
       "include": ["**/*.md"],
       "exclude": [
+        ".specify/**",
+        ".claude/**",
         "node_modules/**",
         "**/node_modules/**",
         ".venv/**",
@@ -29,6 +33,8 @@
     "shellcheck": {
       "include": ["**/*.sh"],
       "exclude": [
+        ".specify/**",
+        ".claude/**",
         ".git/**",
         "node_modules/**",
         "**/node_modules/**",

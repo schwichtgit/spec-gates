@@ -9,7 +9,8 @@
         "**/node_modules/**",
         ".venv/**",
         "**/.venv/**",
-        "package-lock.json"
+        "package-lock.json",
+        ".claude/**"
       ],
       "orchestrator": "none",
       "severity": "error"
@@ -21,7 +22,8 @@
         "node_modules/**",
         "**/node_modules/**",
         ".venv/**",
-        "**/.venv/**"
+        "**/.venv/**",
+        ".claude/**"
       ],
       "orchestrator": "none",
       "severity": "error"
@@ -33,7 +35,8 @@
         "node_modules/**",
         "**/node_modules/**",
         ".venv/**",
-        "**/.venv/**"
+        "**/.venv/**",
+        ".claude/**"
       ],
       "orchestrator": "none",
       "severity": "error"
