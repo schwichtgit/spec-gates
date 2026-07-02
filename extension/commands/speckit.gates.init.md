@@ -35,27 +35,29 @@ another agent is the harness), `--no-git-hooks`, `--policy-only`.
 ### 1. Locate the extension runtime
 
 The extension ships its runtime under the extension install directory.
-Resolve `RUNTIME_SRC` as the `runtime/` directory adjacent to this
-command's extension root. All projection below copies FROM `RUNTIME_SRC`
-INTO the project. Never symlink — projected files must survive the
-extension being removed.
+Resolve `RUNTIME_SRC` as the `runtime/` directory under this command's
+extension root (e.g. `.specify/extensions/gates/runtime/`). All projection
+below copies FROM `RUNTIME_SRC` INTO the project. Never symlink — projected
+files must survive the extension being removed.
 
 ### 2. Infer the policy (or load the existing one)
 
 - If `.specify/gates/policy.json` already exists: show it to the user,
   ask whether to keep it (default) or re-infer. NEVER silently overwrite —
   policy.json is user-owned.
-- Otherwise run: `bash "$RUNTIME_SRC/lib/policy-infer.sh" --project-root .`
-  This introspects the repo (languages present, existing prettier /
-  markdownlint / shellcheck / ruff configs, Taskfile presence) and prints
-  a seeded policy JSON.
-- Present the inferred policy to the user section by section (one hook
-  entry at a time: include globs, exclude globs, orchestrator, severity).
-  Apply requested edits. This is a conversation, not a dump — the user
-  must understand what will be enforced before it is enforced.
-- Write the approved result to `.specify/gates/policy.json` and validate
-  it against `"$RUNTIME_SRC/policy.schema.json"` using jq. On validation
-  failure, show the error, fix interactively, re-validate.
+- Otherwise run (positional args `<project_dir> <output_path>`):
+  `bash "$RUNTIME_SRC/lib/policy-infer.sh" . .specify/gates/policy.json.seed`
+  It introspects the repo (existing prettier / markdownlint / shellcheck
+  configs, Taskfile presence) and WRITES a seeded, schema-validated policy
+  to the output path. It exits nonzero on a usage error, a missing default
+  template, or schema-validation failure — surface that and stop.
+- Present the seed (`.specify/gates/policy.json.seed`) to the user section
+  by section (one hook entry at a time: include globs, exclude globs,
+  orchestrator, severity). Apply requested edits. This is a conversation,
+  not a dump — the user must understand what will be enforced.
+- On approval, move the seed to `.specify/gates/policy.json`. Re-validate
+  with `bash "$RUNTIME_SRC/lib/policy.sh" validate .specify/gates/policy.json`.
+  On failure, show the error, fix interactively, re-validate.
 
 ### 3. Project the runtime
 

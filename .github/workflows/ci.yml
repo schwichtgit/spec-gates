@@ -29,9 +29,9 @@ jobs:
       - name: Project the gate runtime
         run: |
           mkdir -p .specify/gates/lib
-          cp runtime/verify.sh runtime/doctor.sh .specify/gates/
-          cp runtime/lib/*.sh .specify/gates/lib/
-          cp runtime/policy.schema.json .specify/gates/
+          cp extension/runtime/verify.sh extension/runtime/doctor.sh .specify/gates/
+          cp extension/runtime/lib/*.sh .specify/gates/lib/
+          cp extension/runtime/policy.schema.json .specify/gates/
 
       - name: Run the gate on this repo (dogfood)
         run: bash .specify/gates/verify.sh --boundary ci
