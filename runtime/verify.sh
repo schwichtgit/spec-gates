@@ -44,7 +44,9 @@ if [[ ! -f "$POLICY_FILE" ]]; then
     exit 1
 fi
 
-# shellcheck source=lib/policy.sh
+# Path is resolved at runtime from the projected layout; the source= hint helps
+# `shellcheck -x` runs, disable=SC1091 silences the unavoidable static miss.
+# shellcheck source=lib/policy.sh disable=SC1091
 source "$GATES_DIR/lib/policy.sh"
 
 FAILED=0
@@ -90,7 +92,7 @@ case "$ORCH" in
         run_gate "task-test" "warning" task test
         ;;
     custom)
-        CUSTOM_CMD="$(gates_policy_get "verify-quality" "command")"
+        CUSTOM_CMD="$(gates_policy_get "verify-quality" "custom_command")"
         SEV="$(gates_policy_get "verify-quality" "severity")"; [[ -z "$SEV" ]] && SEV="error"
         [[ -n "$CUSTOM_CMD" ]] && run_gate "custom" "$SEV" sh -c "$CUSTOM_CMD"
         ;;
@@ -110,21 +112,30 @@ esac
 # ---------------------------------------------------------------------------
 # Report
 # ---------------------------------------------------------------------------
+# Note: "${RESULTS[@]}" on an empty array is an unbound-variable error under
+# `set -u` on bash 3.2 (the default /bin/bash on macOS, where these hooks run),
+# so every access is guarded by an element-count check.
 if [[ "$JSON" == "1" ]]; then
+    joined=""
+    if [[ ${#RESULTS[@]} -gt 0 ]]; then
+        joined="$(IFS=,; printf '%s' "${RESULTS[*]}")"
+    fi
     printf '{"boundary":"%s","failed":%d,"warnings":%d,"gates":[%s]}\n' \
-        "$BOUNDARY" "$FAILED" "$WARNINGS" "$(IFS=,; echo "${RESULTS[*]}")"
+        "$BOUNDARY" "$FAILED" "$WARNINGS" "$joined"
 else
     echo "gates: boundary=$BOUNDARY failed=$FAILED warnings=$WARNINGS"
-    for r in "${RESULTS[@]}"; do
-        name="$(printf '%s' "$r" | jq -r '.name')"
-        status="$(printf '%s' "$r" | jq -r '.status')"
-        detail="$(printf '%s' "$r" | jq -r '.detail' | head -n 1)"
-        if [[ -n "$detail" ]]; then
-            echo "  [$status] $name -- $detail"
-        else
-            echo "  [$status] $name"
-        fi
-    done
+    if [[ ${#RESULTS[@]} -gt 0 ]]; then
+        for r in "${RESULTS[@]}"; do
+            name="$(printf '%s' "$r" | jq -r '.name')"
+            status="$(printf '%s' "$r" | jq -r '.status')"
+            detail="$(printf '%s' "$r" | jq -r '.detail' | head -n 1)"
+            if [[ -n "$detail" ]]; then
+                echo "  [$status] $name -- $detail"
+            else
+                echo "  [$status] $name"
+            fi
+        done
+    fi
 fi
 
 [[ "$FAILED" -gt 0 ]] && exit 2
