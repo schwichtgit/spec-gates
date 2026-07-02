@@ -1,0 +1,7 @@
+node_modules/
+*.log
+/tmp/
+
+# Claude Mind local memory store (session artifact, not project content)
+.claude/mind.mv2
+.claude/mind.mv2.lock
