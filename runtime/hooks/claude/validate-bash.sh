@@ -22,9 +22,12 @@ fi
 
 BLOCKED=""
 
-# Destructive filesystem operations (matching literal $HOME in user commands)
+# Destructive filesystem operations (matching literal $HOME in user commands).
+# No trailing \b: a word boundary after "/" never matches at end-of-string on
+# GNU grep (Linux/CI), so `rm -rf /` slipped through there while matching on
+# BSD grep (macOS). The dangerous-target alternation is anchor enough.
 # shellcheck disable=SC2016
-if echo "$COMMAND" | grep -qE 'rm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+)?(-[a-zA-Z]*r[a-zA-Z]*\s+)?(\/|\/\*|~|\$HOME)\b'; then
+if echo "$COMMAND" | grep -qE 'rm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+)?(-[a-zA-Z]*r[a-zA-Z]*\s+)?(\/|\/\*|~|\$HOME)'; then
     BLOCKED="Destructive rm command targeting root, home, or wildcard"
 fi
 

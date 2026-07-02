@@ -64,6 +64,9 @@ echo ""
 echo "=== validate-bash.sh ==="
 check "allowed ls" 0 bash -c "echo '{\"tool_input\":{\"command\":\"ls -la\"}}' | bash '$HOOKS/validate-bash.sh'"
 check "blocked rm -rf /" 2 bash -c 'echo '"'"'{"tool_input":{"command":"rm -rf /"}}'"'"' | bash '"'$HOOKS/validate-bash.sh'"''
+check "blocked rm -rf ~" 2 bash -c 'echo '"'"'{"tool_input":{"command":"rm -rf ~"}}'"'"' | bash '"'$HOOKS/validate-bash.sh'"''
+check "blocked rm -rf /var/data" 2 bash -c 'echo '"'"'{"tool_input":{"command":"rm -rf /var/data"}}'"'"' | bash '"'$HOOKS/validate-bash.sh'"''
+check "allowed rm -rf ./build" 0 bash -c 'echo '"'"'{"tool_input":{"command":"rm -rf ./build"}}'"'"' | bash '"'$HOOKS/validate-bash.sh'"''
 check "blocked git push --force" 2 bash -c 'echo '"'"'{"tool_input":{"command":"git push --force origin main"}}'"'"' | bash '"'$HOOKS/validate-bash.sh'"''
 check "blocked fork bomb" 2 bash -c 'echo '"'"'{"tool_input":{"command":":(){ :|:& };:"}}'"'"' | bash '"'$HOOKS/validate-bash.sh'"''
 check "fail-open bad JSON" 0 bash -c "echo 'not-json' | bash '$HOOKS/validate-bash.sh'"
