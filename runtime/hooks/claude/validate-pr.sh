@@ -42,10 +42,13 @@ body = body_match.group(1) if body_match else ""
 text = f"{title}\n{body}"
 violations = []
 
-# AI branding (allow "Claude Code")
+# AI branding (allow "Claude Code" and legitimate Claude-file references)
 cleaned = re.sub(r'Claude Code', '', text)
 cleaned = re.sub(r'\([^)]*\)', '', cleaned)  # Remove parenthetical scopes
 cleaned = re.sub(r'[/\\]\S+', '', cleaned)   # Remove file paths
+cleaned = re.sub(r'CLAUDE\.md', '', cleaned, flags=re.IGNORECASE)   # memory file
+cleaned = re.sub(r'\.claude\S*', '', cleaned, flags=re.IGNORECASE)  # .claude/ paths
+cleaned = re.sub(r'claude-[\w.-]+', '', cleaned, flags=re.IGNORECASE)  # kebab ids
 for term in ["Anthropic", "GPT", "OpenAI", "Copilot"]:
     if re.search(rf'\b{term}\b', cleaned, re.IGNORECASE):
         violations.append(f"AI branding: {term}")

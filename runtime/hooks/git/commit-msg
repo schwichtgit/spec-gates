@@ -89,8 +89,17 @@ if policy_enabled forbid_ai_isms; then
         ERRORS=$((ERRORS + 1))
     fi
 
-    # Standalone "Claude" check (allow "Claude Code")
-    CLEANED_MSG=$(echo "$MSG" | sed 's/Claude Code//g' | sed 's/([^)]*)//g')
+    # Standalone "Claude" check. Strip legitimate references first so editing
+    # Claude files does not trip the AI-branding rule: the product name
+    # ("Claude Code"), the memory file (CLAUDE.md, any casing), .claude/ paths
+    # (hooks, settings), and claude-* kebab identifiers. Portable sed only (no
+    # GNU-specific case-insensitive flag).
+    CLEANED_MSG=$(echo "$MSG" \
+        | sed 's/Claude Code//g' \
+        | sed 's/[Cc][Ll][Aa][Uu][Dd][Ee]\.md//g' \
+        | sed 's#\.claude/[^[:space:]]*##g' \
+        | sed 's/[Cc]laude-[A-Za-z0-9._-]*//g' \
+        | sed 's/([^)]*)//g')
     if echo "$CLEANED_MSG" | grep -qiE '\bClaude\b'; then
         echo "ERROR: Standalone 'Claude' detected (use 'Claude Code' if needed)." >&2
         ERRORS=$((ERRORS + 1))
