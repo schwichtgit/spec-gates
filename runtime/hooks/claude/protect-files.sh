@@ -70,6 +70,29 @@ if echo "$FILE_PATH" | grep -qE '/(\.ssh|\.gnupg|\.aws|\.gcloud)/'; then
     BLOCKED="File in sensitive directory"
 fi
 
+# Policy-declared extra protected paths (protected_files.extra). Matched against
+# both the project-relative path and the basename so exact entries and globs
+# (e.g. ".specify/memory/constitution.md", "docs/**") both work.
+if [[ -z "$BLOCKED" ]]; then
+    PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+    POLICY_LIB="$PROJECT_ROOT/.specify/gates/lib/policy.sh"
+    # shellcheck source=/dev/null disable=SC1091
+    [[ -f "$POLICY_LIB" ]] && source "$POLICY_LIB"
+    if command -v gates_policy_section_list >/dev/null 2>&1; then
+        REL="$FILE_PATH"
+        [[ "$FILE_PATH" == "$PROJECT_ROOT/"* ]] && REL="${FILE_PATH#"$PROJECT_ROOT"/}"
+        while IFS= read -r entry; do
+            [[ -z "$entry" ]] && continue
+            if gates_glob_match "$REL" "$entry" \
+                || gates_glob_match "$FILE_PATH" "$entry" \
+                || [[ "$BASENAME" == "$entry" ]]; then
+                BLOCKED="Protected by policy (protected_files.extra: $entry)"
+                break
+            fi
+        done < <(gates_policy_section_list protected_files extra)
+    fi
+fi
+
 if [[ -n "$BLOCKED" ]]; then
     echo "BLOCKED: $BLOCKED" >&2
     echo "File: $FILE_PATH" >&2

@@ -143,6 +143,53 @@ printf '%s' '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severit
 check "git.block_main_commits=false -> main commit allowed" 0 \
     bash -c "cd '$GF' && git switch -q main && echo c >c.txt && git add c.txt && git commit -q -m 'chore: c'"
 
+# pre-commit consumes protected_files.extra: staging a listed file is refused.
+printf '%s' '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error", "custom_command": "true" } }, "git": { "block_main_commits": false }, "protected_files": { "extra": ["secrets.txt", "infra/**"] } }' \
+    >"$GF/.specify/gates/policy.json"
+check "protected_files.extra -> staged listed file blocked" 1 \
+    bash -c "cd '$GF' && echo x >secrets.txt && git add secrets.txt && git commit -q -m 'chore: s'"
+check "protected_files.extra glob -> staged match blocked" 1 \
+    bash -c "cd '$GF' && mkdir -p infra && echo x >infra/main.tf && git add infra/main.tf && git commit -q -m 'chore: tf'"
+
+# ===========================================================================
+# Part D: agent-boundary protect-files consumes protected_files.extra
+# ===========================================================================
+echo ""
+echo "=== protect-files.sh consumes protected_files.extra ==="
+PF="$WORKDIR/protect"
+project_runtime "$PF" "true"
+printf '%s' '{ "hooks": {}, "protected_files": { "extra": ["docs/internal.md", "infra/**"] } }' \
+    >"$PF/.specify/gates/policy.json"
+check "policy-listed exact path blocked" 2 \
+    bash -c "echo '{\"tool_input\":{\"file_path\":\"docs/internal.md\"}}' | CLAUDE_PROJECT_DIR='$PF' bash '$HOOKS/protect-files.sh'"
+check "policy-listed glob path blocked" 2 \
+    bash -c "echo '{\"tool_input\":{\"file_path\":\"infra/prod.tf\"}}' | CLAUDE_PROJECT_DIR='$PF' bash '$HOOKS/protect-files.sh'"
+check "non-listed path allowed" 0 \
+    bash -c "echo '{\"tool_input\":{\"file_path\":\"docs/public.md\"}}' | CLAUDE_PROJECT_DIR='$PF' bash '$HOOKS/protect-files.sh'"
+
+# ===========================================================================
+# Part E: commit-msg toggles (git.conventional_commits, git.forbid_ai_isms)
+# ===========================================================================
+echo ""
+echo "=== commit-msg toggles ==="
+CM="$GITHOOKS/commit-msg"
+MSGF="$WORKDIR/msg.txt"
+
+printf 'add a thing without a type\n' >"$MSGF"
+check "commit-msg: non-conventional blocked (default)" 1 bash -c "bash '$CM' '$MSGF'"
+printf 'feat: add a thing\n\nA plain body line.\n' >"$MSGF"
+check "commit-msg: clean conventional passes (default)" 0 bash -c "bash '$CM' '$MSGF'"
+printf 'feat: add a thing\n\nI have done the work.\n' >"$MSGF"
+check "commit-msg: ai-ism blocked (default)" 1 bash -c "bash '$CM' '$MSGF'"
+
+CMD="$WORKDIR/cmsg"
+project_runtime "$CMD" "true"
+printf '%s' '{ "hooks": {}, "git": { "conventional_commits": false, "forbid_ai_isms": false } }' \
+    >"$CMD/.specify/gates/policy.json"
+printf 'random subject no type\n\nI have done it, seamless work.\n' >"$MSGF"
+check "commit-msg: both toggles off -> allowed" 0 \
+    bash -c "cd '$CMD' && CLAUDE_PROJECT_DIR='$CMD' bash '$CM' '$MSGF'"
+
 # --- Summary ---
 echo ""
 echo "$PASS of $TOTAL tests passed."

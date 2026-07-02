@@ -88,6 +88,29 @@ gates_policy_section_list() {
     ' "$file" 2>/dev/null || true
 }
 
+# Match <path> against a policy <glob> using bash `[[ == ]]` semantics, with
+# `**/` (leading) and `/**` (trailing) normalized so the common conventions
+# (`dir/**`, `**/name`) work without globstar. Returns 0 on match. Shared by
+# protect-files.sh and the pre-commit forbidden-file scan.
+gates_glob_match() {
+    local path="$1" glob="$2"
+    [[ -z "$glob" ]] && return 1
+    # shellcheck disable=SC2053
+    [[ "$path" == "$glob" ]] && return 0
+    # shellcheck disable=SC2053
+    [[ "$path" == $glob ]] && return 0
+    if [[ "$glob" == */\*\* ]]; then
+        local trimmed="${glob%/\*\*}"
+        [[ "$path" == "$trimmed" || "$path" == "$trimmed"/* ]] && return 0
+    fi
+    if [[ "$glob" == \*\*/* ]]; then
+        local rest="${glob#\*\*/}"
+        # shellcheck disable=SC2053
+        [[ "$path" == "$rest" || "$path" == */"$rest" ]] && return 0
+    fi
+    return 1
+}
+
 gates_validate_policy() {
     local file="${1:-}"
     if [[ -z "$file" ]]; then

@@ -115,12 +115,37 @@ check_for_secrets() {
     return 0
 }
 
+# Collect policy-declared extra protected paths (protected_files.extra) once.
+PROTECTED_EXTRA=()
+if command -v gates_policy_section_list >/dev/null 2>&1; then
+    while IFS= read -r _entry; do
+        [[ -n "$_entry" ]] && PROTECTED_EXTRA+=("$_entry")
+    done < <(gates_policy_section_list protected_files extra)
+fi
+
+file_is_policy_protected() { # <rel_path>
+    local f="$1" e
+    [[ "${#PROTECTED_EXTRA[@]}" -eq 0 ]] && return 1
+    for e in "${PROTECTED_EXTRA[@]}"; do
+        if gates_glob_match "$f" "$e" || [[ "$(basename "$f")" == "$e" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
 # --- Git-specific safety pass over staged files ---
 echo "Pre-commit: scanning staged files for secrets and forbidden paths..."
 
 for file in $STAGED_FILES; do
     if ! check_forbidden_files "$file"; then
         echo "BLOCKED: forbidden file: $file" >&2
+        ERRORS=$((ERRORS + 1))
+        continue
+    fi
+
+    if file_is_policy_protected "$file"; then
+        echo "BLOCKED: policy-protected file staged: $file" >&2
         ERRORS=$((ERRORS + 1))
         continue
     fi

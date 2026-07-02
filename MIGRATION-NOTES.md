@@ -12,7 +12,7 @@ Status of each component and the review pass it still needs.
 | runtime/lib/taskfile-detect.sh            | cpf-taskfile-detect.sh  | trivial                                                                                                                                                                                                                                                                                                                                                   |
 | runtime/policy.schema.json                | cpf-policy.schema.json  | DONE: added protected_files + git to the JSON schema (top-level additionalProperties:false was rejecting the very sections the template ships) and to the policy.sh validator; git.block_main_commits is now consumed by pre-commit                                                                                                                       |
 | runtime/hooks/claude/*.sh                 | CPF hooks               | DONE: verify-quality.sh slimmed 617->60 lines, now delegates to verify.sh --boundary agent (legacy language walk dropped); remaining PreToolUse hooks (protect-files, validate-bash, validate-pr, post-edit, format-changed) still need a review pass; check-upgrade.sh was intentionally dropped                                                         |
-| runtime/hooks/git/{pre-commit,commit-msg} | CPF scaffold            | DONE (pre-commit): 221->144 lines; keeps git-only safety (block-main, secret/forbidden-file scan), delegates the quality gate to verify.sh --boundary git. commit-msg (conventional + no-AI-isms) still needs a review pass                                                                                                                               |
+| runtime/hooks/git/{pre-commit,commit-msg} | CPF scaffold            | DONE (pre-commit): 221->144 lines; keeps git-only safety (block-main, secret/forbidden-file scan), delegates the quality gate to verify.sh --boundary git. commit-msg now reads git.conventional_commits + git.forbid_ai_isms toggles (default on)                                                                                                        |
 | tests/\*.sh                               | cpf/scripts             | DONE: rewired to the runtime/ tree. test-ci-parity.sh renamed to test-parity.sh and broadened (5-boundary routing + single-impl + identical-results). test-hooks.sh now covers agent/git delegation. test-policy.sh repointed. `bash tests/run.sh` runs all (59 tests green)                                                                              |
 
 ## Written new
@@ -55,12 +55,12 @@ into a hook.
    smoke tests folded into test-hooks.sh; test-parity.sh asserts real boundary
    parity (5-boundary routing, single implementation, identical results). 59
    tests green.
-3. DONE: added protected_files + git to the JSON schema and the policy.sh
-   validator (with tests); wired git.block_main_commits into pre-commit as the
-   proof-of-consumption. STILL DECORATIVE (follow-up): protected_files.extra is
-   not yet read by protect-files.sh / the pre-commit forbidden scan, and
-   git.conventional_commits / forbid_ai_isms are not yet read by commit-msg
-   (all three are currently hardcoded).
+3. DONE (fully consumed, not just validated): protected_files + git added to
+   the JSON schema and the policy.sh validator. All sections are now read by
+   the hooks: git.block_main_commits by pre-commit; protected_files.extra by
+   protect-files.sh (agent) and the pre-commit scan; git.conventional_commits
+   and git.forbid_ai_isms by commit-msg. Shared gates_glob_match helper added.
+   Every toggle has test coverage.
 4. Dogfood: run /speckit.gates.init against a scratch spec-kit project via `specify extension add --from <url>`
 5. DONE: self-enforcement. `.github/workflows/ci.yml` projects the runtime
    and runs the gate on this repo + `tests/run.sh`. Linters pinned via

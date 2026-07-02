@@ -10,6 +10,18 @@ SUBJECT=$(head -n 1 "$MSG_FILE")
 ERRORS=0
 WARNINGS=0
 
+PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+POLICY_LIB="$PROJECT_ROOT/.specify/gates/lib/policy.sh"
+# shellcheck source=/dev/null disable=SC1091
+[[ -f "$POLICY_LIB" ]] && source "$POLICY_LIB"
+
+# A git toggle is enabled unless the policy sets it to false (default: on).
+policy_enabled() { # <git-field>
+    command -v gates_policy_section_get >/dev/null 2>&1 || return 0
+    [[ "$(gates_policy_section_get git "$1")" == "false" ]] && return 1
+    return 0
+}
+
 # --- Empty check ---
 if [[ -z "${MSG// /}" ]]; then
     echo "ERROR: Empty commit message." >&2
@@ -51,44 +63,48 @@ if [[ "$EMOJI_FOUND" == "true" ]]; then
     ERRORS=$((ERRORS + 1))
 fi
 
-# --- AI-ism detection ---
-# Self-references
-if echo "$MSG" | grep -qiE '\b(I have|I'\''ve|I updated|I fixed|I added|I removed|I refactored)\b'; then
-    echo "ERROR: Self-referential language detected." >&2
-    ERRORS=$((ERRORS + 1))
+# --- AI-ism detection (policy: git.forbid_ai_isms) ---
+if policy_enabled forbid_ai_isms; then
+    # Self-references
+    if echo "$MSG" | grep -qiE '\b(I have|I'\''ve|I updated|I fixed|I added|I removed|I refactored)\b'; then
+        echo "ERROR: Self-referential language detected." >&2
+        ERRORS=$((ERRORS + 1))
+    fi
+
+    # Filler
+    if echo "$MSG" | grep -qiE '\b(Certainly|I'\''d be happy to|As an AI|Happy to help)\b'; then
+        echo "ERROR: AI filler language detected." >&2
+        ERRORS=$((ERRORS + 1))
+    fi
+
+    # Marketing adjectives
+    if echo "$MSG" | grep -qiE '\b(seamless|robust|powerful|elegant|streamlined|polished|enhanced|refined)\b'; then
+        echo "ERROR: Marketing adjective detected." >&2
+        ERRORS=$((ERRORS + 1))
+    fi
+
+    # AI branding
+    if echo "$MSG" | grep -qiE '\b(Anthropic|GPT|OpenAI|Copilot)\b'; then
+        echo "ERROR: AI branding detected." >&2
+        ERRORS=$((ERRORS + 1))
+    fi
+
+    # Standalone "Claude" check (allow "Claude Code")
+    CLEANED_MSG=$(echo "$MSG" | sed 's/Claude Code//g' | sed 's/([^)]*)//g')
+    if echo "$CLEANED_MSG" | grep -qiE '\bClaude\b'; then
+        echo "ERROR: Standalone 'Claude' detected (use 'Claude Code' if needed)." >&2
+        ERRORS=$((ERRORS + 1))
+    fi
 fi
 
-# Filler
-if echo "$MSG" | grep -qiE '\b(Certainly|I'\''d be happy to|As an AI|Happy to help)\b'; then
-    echo "ERROR: AI filler language detected." >&2
-    ERRORS=$((ERRORS + 1))
-fi
-
-# Marketing adjectives
-if echo "$MSG" | grep -qiE '\b(seamless|robust|powerful|elegant|streamlined|polished|enhanced|refined)\b'; then
-    echo "ERROR: Marketing adjective detected." >&2
-    ERRORS=$((ERRORS + 1))
-fi
-
-# AI branding
-if echo "$MSG" | grep -qiE '\b(Anthropic|GPT|OpenAI|Copilot)\b'; then
-    echo "ERROR: AI branding detected." >&2
-    ERRORS=$((ERRORS + 1))
-fi
-
-# Standalone "Claude" check (allow "Claude Code")
-CLEANED_MSG=$(echo "$MSG" | sed 's/Claude Code//g' | sed 's/([^)]*)//g')
-if echo "$CLEANED_MSG" | grep -qiE '\bClaude\b'; then
-    echo "ERROR: Standalone 'Claude' detected (use 'Claude Code' if needed)." >&2
-    ERRORS=$((ERRORS + 1))
-fi
-
-# --- Conventional commits ---
-if ! echo "$SUBJECT" | grep -qE '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?: .+'; then
-    echo "ERROR: Subject does not match conventional commit format." >&2
-    echo "  Expected: type(scope)?: description" >&2
-    echo "  Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert" >&2
-    ERRORS=$((ERRORS + 1))
+# --- Conventional commits (policy: git.conventional_commits) ---
+if policy_enabled conventional_commits; then
+    if ! echo "$SUBJECT" | grep -qE '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?: .+'; then
+        echo "ERROR: Subject does not match conventional commit format." >&2
+        echo "  Expected: type(scope)?: description" >&2
+        echo "  Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert" >&2
+        ERRORS=$((ERRORS + 1))
+    fi
 fi
 
 # --- Draft markers ---
