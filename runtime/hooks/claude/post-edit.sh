@@ -30,9 +30,12 @@ if [[ -z "$FILE_PATH" ]] || [[ ! -f "$FILE_PATH" ]]; then
     exit 0
 fi
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-GATES_HOOK_LIB_DIR="$(cd "$SCRIPT_DIR/../lib" && pwd)"
-POLICY_LIB="$GATES_HOOK_LIB_DIR/policy.sh"
+# The Claude hooks are projected to .claude/hooks/gates/, but the runtime lib
+# lives in a different subtree (.specify/gates/lib/), so resolve it by the
+# canonical project-relative path -- NOT relative to this script.
+PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+GATES_LIB_DIR="$PROJECT_ROOT/.specify/gates/lib"
+POLICY_LIB="$GATES_LIB_DIR/policy.sh"
 
 # REMOVE AT v0.2.0
 LEGACY_MODE=0
@@ -44,8 +47,7 @@ if [[ ! -f "$POLICY_LIB" ]]; then
         "post-edit running in legacy mode (REMOVE AT v0.2.0)" >&2
     LEGACY_MODE=1
 elif
-    # shellcheck source=../lib/policy.sh
-    # shellcheck disable=SC1091
+    # shellcheck source=/dev/null disable=SC1091
     ! source "$POLICY_LIB" 2>/dev/null
 then
     # REMOVE AT v0.2.0
@@ -65,8 +67,12 @@ else
     fi
 fi
 
-# shellcheck disable=SC1091
-source "$SCRIPT_DIR/formatter-dispatch.sh"
+if [[ ! -f "$GATES_LIB_DIR/formatter-dispatch.sh" ]]; then
+    # Runtime not projected -> nothing to format; fail open.
+    exit 0
+fi
+# shellcheck source=/dev/null disable=SC1091
+source "$GATES_LIB_DIR/formatter-dispatch.sh"
 
 RC=0
 if [[ "$LEGACY_MODE" -eq 1 ]]; then
@@ -75,7 +81,7 @@ if [[ "$LEGACY_MODE" -eq 1 ]]; then
     exit 0
 fi
 
-format_file "$FILE_PATH" || RC=$?
+format_file "$FILE_PATH" >/dev/null || RC=$?
 
 if [[ "$RC" -eq 0 ]]; then
     exit 0

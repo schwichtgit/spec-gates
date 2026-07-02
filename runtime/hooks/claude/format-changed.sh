@@ -33,11 +33,12 @@ if [[ "$STOP_ACTIVE" == "true" ]]; then
     exit 0
 fi
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-GATES_HOOK_LIB_DIR="$(cd "$SCRIPT_DIR/../lib" && pwd)"
-POLICY_LIB="$GATES_HOOK_LIB_DIR/policy.sh"
-
+# The Claude hooks are projected to .claude/hooks/gates/, but the runtime lib
+# lives in a different subtree (.specify/gates/lib/), so resolve it by the
+# canonical project-relative path -- NOT relative to this script.
 PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+GATES_LIB_DIR="$PROJECT_ROOT/.specify/gates/lib"
+POLICY_LIB="$GATES_LIB_DIR/policy.sh"
 
 # ADR-006 fallback decisions.
 # REMOVE AT v0.2.0
@@ -50,8 +51,7 @@ if [[ ! -f "$POLICY_LIB" ]]; then
         "format-changed running in legacy mode (REMOVE AT v0.2.0)" >&2
     LEGACY_MODE=1
 elif
-    # shellcheck source=../lib/policy.sh
-    # shellcheck disable=SC1091
+    # shellcheck source=/dev/null disable=SC1091
     ! source "$POLICY_LIB" 2>/dev/null
 then
     # REMOVE AT v0.2.0
@@ -71,14 +71,19 @@ else
     fi
 fi
 
-# shellcheck disable=SC1091
-source "$SCRIPT_DIR/formatter-dispatch.sh"
+if [[ ! -f "$GATES_LIB_DIR/formatter-dispatch.sh" ]]; then
+    # Runtime not projected -> nothing to format; fail open.
+    exit 0
+fi
+# shellcheck source=/dev/null disable=SC1091
+source "$GATES_LIB_DIR/formatter-dispatch.sh"
 
-# Discover changed files (exclude deleted files)
-changed_files=$(git diff --name-only --diff-filter=d HEAD 2>/dev/null || true)
+# Discover changed files (exclude deleted files). Anchor git to PROJECT_ROOT so
+# the hook works regardless of the caller's cwd.
+changed_files=$(git -C "$PROJECT_ROOT" diff --name-only --diff-filter=d HEAD 2>/dev/null || true)
 if [[ -z "$changed_files" ]]; then
     # Also check unstaged changes
-    changed_files=$(git diff --name-only --diff-filter=d 2>/dev/null || true)
+    changed_files=$(git -C "$PROJECT_ROOT" diff --name-only --diff-filter=d 2>/dev/null || true)
 fi
 
 if [[ -z "$changed_files" ]]; then
@@ -94,7 +99,7 @@ while IFS= read -r file; do
         # REMOVE AT v0.2.0
         format_file "$full_path" >/dev/null 2>&1 || true
     else
-        format_file "$full_path" || FAILED=$((FAILED + 1))
+        format_file "$full_path" >/dev/null || FAILED=$((FAILED + 1))
     fi
 done <<<"$changed_files"
 

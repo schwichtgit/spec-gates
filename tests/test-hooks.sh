@@ -44,10 +44,14 @@ project_runtime() {
     mkdir -p "$dir/.specify/gates/lib"
     cp "$REPO_ROOT/runtime/verify.sh" "$dir/.specify/gates/"
     cp "$REPO_ROOT/runtime/lib/"*.sh "$dir/.specify/gates/lib/"
+    [[ -d "$REPO_ROOT/node_modules" ]] && ln -sfn "$REPO_ROOT/node_modules" "$dir/node_modules"
     cat >"$dir/.specify/gates/policy.json" <<JSON
 { "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error", "custom_command": "$cmd" } } }
 JSON
 }
+
+# True if the pinned node linters are installed (npm ci has run).
+have_node_linters() { [[ -x "$REPO_ROOT/node_modules/.bin/prettier" ]]; }
 
 # ===========================================================================
 # Part A: self-contained hooks
@@ -189,6 +193,46 @@ printf '%s' '{ "hooks": {}, "git": { "conventional_commits": false, "forbid_ai_i
 printf 'random subject no type\n\nI have done it, seamless work.\n' >"$MSGF"
 check "commit-msg: both toggles off -> allowed" 0 \
     bash -c "cd '$CMD' && CLAUDE_PROJECT_DIR='$CMD' bash '$CM' '$MSGF'"
+
+# ===========================================================================
+# Part F: the auto-format hooks actually format (they resolve the runtime lib
+# from .specify/gates/lib, not a script-relative path). Needs the pinned
+# prettier; skips otherwise.
+# ===========================================================================
+echo ""
+echo "=== auto-format hooks reformat files ==="
+if have_node_linters; then
+    PRETTIER="$REPO_ROOT/node_modules/.bin/prettier"
+    NONE_MD='{ "hooks": { "prettier": { "include": ["**/*.md"], "orchestrator": "none", "severity": "error" }, "post-edit": { "severity": "warning" }, "format-changed": { "severity": "warning" } } }'
+
+    # post-edit (PostToolUse): formats the single edited file.
+    FMT="$WORKDIR/fmt"
+    project_runtime "$FMT" "true"
+    printf '%s' "$NONE_MD" >"$FMT/.specify/gates/policy.json"
+    printf '#Bad md\n\n\n- x\n' >"$FMT/doc.md"
+    check "post-edit: fixture starts prettier-dirty" 1 "$PRETTIER" --check "$FMT/doc.md"
+    echo "{\"tool_input\":{\"file_path\":\"$FMT/doc.md\"}}" \
+        | CLAUDE_PROJECT_DIR="$FMT" bash "$HOOKS/post-edit.sh" >/dev/null 2>&1 || true
+    check "post-edit: file is prettier-clean afterwards" 0 "$PRETTIER" --check "$FMT/doc.md"
+
+    # format-changed (Stop): formats tracked files that changed.
+    FC="$WORKDIR/fchanged"
+    mkdir -p "$FC"
+    git -C "$FC" init -q -b main
+    git -C "$FC" config user.email t@example.com
+    git -C "$FC" config user.name tester
+    project_runtime "$FC" "true"
+    printf '%s' "$NONE_MD" >"$FC/.specify/gates/policy.json"
+    printf '# Title\n\nBody.\n' >"$FC/doc.md"
+    ( cd "$FC" && git add doc.md && git commit -q -m "seed" ) >/dev/null 2>&1
+    printf '#Bad\n\n\n- x\n' >"$FC/doc.md"
+    check "format-changed: target starts prettier-dirty" 1 "$PRETTIER" --check "$FC/doc.md"
+    echo '{"stop_hook_active":false}' \
+        | CLAUDE_PROJECT_DIR="$FC" bash "$HOOKS/format-changed.sh" >/dev/null 2>&1 || true
+    check "format-changed: changed file is prettier-clean afterwards" 0 "$PRETTIER" --check "$FC/doc.md"
+else
+    echo "SKIP: auto-format hook checks (run npm ci to install pinned prettier)"
+fi
 
 # --- Summary ---
 echo ""
