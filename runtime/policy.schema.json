@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/schwichtgit/claude-project-foundation/.claude-plugin/lib/policy.schema.json",
+  "title": "gates policy",
+  "description": "Declarative hook policy for gates-scaffolded projects. Consumed by .claude-plugin/lib/policy.sh at runtime and by /gates:specforge init and upgrade for semantic validation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["hooks"],
+  "properties": {
+    "_comment": {
+      "type": "string",
+      "description": "Free-form note field. Ignored by the loader. Authored copies may reference this schema URL here."
+    },
+    "$schema": {
+      "type": "string",
+      "description": "Optional schema reference for editor tooling."
+    },
+    "hooks": {
+      "type": "object",
+      "description": "Map of hook name to hook stanza. Hook names are free-form strings matching the name used by gates_policy_get / gates_policy_list callers.",
+      "additionalProperties": {
+        "$ref": "#/$defs/hook"
+      }
+    }
+  },
+  "$defs": {
+    "hook": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["severity"],
+      "allOf": [
+        {
+          "if": {
+            "properties": { "orchestrator": { "const": "custom" } },
+            "required": ["orchestrator"]
+          },
+          "then": {
+            "required": ["custom_command"],
+            "properties": {
+              "custom_command": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "include": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Glob patterns selecting files in scope. Consumed by config generators."
+        },
+        "exclude": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Glob patterns excluded from scope. Consumed by config generators."
+        },
+        "orchestrator": {
+          "type": "string",
+          "enum": ["none", "task", "custom"],
+          "description": "Dispatch style. none = invoke the native tool directly. task = delegate to a Taskfile target. custom = invoke the command in custom_command."
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["error", "warning", "info"],
+          "description": "How the hook's overall exit code maps to caller-visible severity."
+        },
+        "on_missing_runner": {
+          "type": "string",
+          "enum": ["warn", "skip"],
+          "default": "warn",
+          "description": "Behavior when no per-service runner can be resolved for a tool (neither $dir/.venv/bin/<tool> nor `uv run --project $dir <tool>` is available). Default is warn. INFRA-025: applies to the verify-quality legacy walker's Python branch; per-service opt-out via [tool.gates.hooks] skip in pyproject.toml is logged as SKIP regardless of this field."
+        },
+        "on_missing_tests": {
+          "type": "string",
+          "enum": ["warn", "skip"],
+          "default": "skip",
+          "description": "Behavior when the test runner reports no tests collected (pytest exit code 5). Default is skip (log SKIP, no WARNING/FAIL). INFRA-026: warn flips to logging WARN and incrementing the warnings counter; consumed by the verify-quality Python branch's pytest classifier."
+        },
+        "custom_command": {
+          "type": "string",
+          "description": "Shell command invoked when orchestrator == custom."
+        }
+      }
+    }
+  }
+}

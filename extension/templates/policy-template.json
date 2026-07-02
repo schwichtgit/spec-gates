@@ -1,0 +1,46 @@
+{
+  "_comment": "spec-gates policy. Schema: .specify/gates/policy.schema.json. Loader: .specify/gates/lib/policy.sh. USER-OWNED: init seeds this file; upgrade never overwrites. Edit include/exclude globs, orchestrator, and severity to customize gate behavior at all three boundaries.",
+  "hooks": {
+    "prettier": {
+      "include": ["**/*.md", "**/*.yml", "**/*.yaml", "**/*.json"],
+      "exclude": ["LICENSE", "node_modules/**", "**/node_modules/**"],
+      "orchestrator": "none",
+      "severity": "error"
+    },
+    "markdownlint": {
+      "include": ["**/*.md"],
+      "exclude": [
+        "node_modules/**",
+        "**/node_modules/**",
+        ".venv/**",
+        "**/target/**"
+      ],
+      "orchestrator": "none",
+      "severity": "error"
+    },
+    "shellcheck": {
+      "include": ["**/*.sh"],
+      "exclude": [
+        "./.git/*",
+        "*/.venv/*",
+        "*/node_modules/*",
+        "*/target/*",
+        "*/dist/*"
+      ],
+      "orchestrator": "none",
+      "severity": "error"
+    },
+    "verify-quality": {
+      "orchestrator": "none",
+      "severity": "error"
+    }
+  },
+  "protected_files": {
+    "extra": [".specify/memory/constitution.md", ".specify/gates/policy.json"]
+  },
+  "git": {
+    "block_main_commits": true,
+    "conventional_commits": true,
+    "forbid_ai_isms": true
+  }
+}

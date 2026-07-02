@@ -1,0 +1,70 @@
+schema_version: "1.0"
+
+extension:
+  id: gates
+  name: "Quality Gates (Enforcement Layer)"
+  version: "0.1.0"
+  description: >-
+    Deterministic quality enforcement for Spec Kit projects at three
+    boundaries: the agent boundary (Claude Code PreToolUse/PostToolUse/Stop
+    hooks), the git boundary (pre-commit / commit-msg), and the CI boundary
+    (projected GitHub Actions / GitLab CI / Jenkins pipelines). One policy
+    file, one verify entrypoint, identical results at every boundary.
+  author: schwichtgit
+  repository: https://github.com/schwichtgit/spec-gates
+  license: MIT
+
+requires:
+  speckit_version: ">=0.9.0"
+  tools:
+    - name: jq
+      required: true
+    - name: git
+      required: false
+
+provides:
+  commands:
+    - name: speckit.gates.init
+      file: commands/speckit.gates.init.md
+      description: "Infer a quality policy from the repo, project the enforcement runtime, wire agent + git hooks, and run a self-test"
+    - name: speckit.gates.verify
+      file: commands/speckit.gates.verify.md
+      description: "Run the full gate suite on demand (same checks as the Stop hook, pre-commit, and CI)"
+    - name: speckit.gates.doctor
+      file: commands/speckit.gates.doctor.md
+      description: "Check enforcement health: hooks wired, policy valid, runtime version matches extension"
+    - name: speckit.gates.ci
+      file: commands/speckit.gates.ci.md
+      description: "Project CI enforcement for a platform: github | gitlab | jenkins"
+    - name: speckit.gates.upgrade
+      file: commands/speckit.gates.upgrade.md
+      description: "Re-project the enforcement runtime after an extension update (never touches policy.json)"
+
+  config:
+    - name: "policy.json"
+      template: "templates/policy-template.json"
+      description: "Quality gate policy (user-owned; init seeds it, upgrade never overwrites)"
+      required: false
+
+# Native integration with the core Spec Kit loop: after /speckit.implement
+# finishes, offer to run the gate suite so a red gate is caught before the
+# user moves on to commit/PR.
+hooks:
+  after_implement:
+    command: speckit.gates.verify
+    optional: true
+    prompt: "Run quality gates on the implemented changes?"
+    description: "Run the gate suite after implementation"
+  after_taskstoissues: null
+
+tags:
+  - "quality"
+  - "enforcement"
+  - "hooks"
+  - "ci"
+  - "governance"
+
+config:
+  defaults:
+    policy_path: ".specify/gates/policy.json"
+    runtime_dir: ".specify/gates"

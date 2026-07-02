@@ -2,9 +2,9 @@
 
 **Deterministic quality enforcement for [Spec Kit](https://github.com/github/spec-kit) projects.**
 
-Spec Kit is a guidance layer: templates, prompts, and checklists *ask* the
+Spec Kit is a guidance layer: templates, prompts, and checklists _ask_ the
 agent to comply. spec-gates is the enforcement layer underneath it: hooks
-and pipelines that *force* compliance — the bash call is rejected, the
+and pipelines that _force_ compliance — the bash call is rejected, the
 protected file is refused, the session cannot end with failing checks.
 
 Extracted from
@@ -62,13 +62,13 @@ hook offers a gate run before you move to commit/PR.
 
 ## Commands
 
-| Command                  | Purpose                                                    |
-| ------------------------ | ---------------------------------------------------------- |
+| Command                  | Purpose                                                          |
+| ------------------------ | ---------------------------------------------------------------- |
 | `/speckit.gates.init`    | Infer policy, project runtime, wire agent + git hooks, self-test |
-| `/speckit.gates.verify`  | Run the full suite on demand (also runs after `implement`) |
-| `/speckit.gates.doctor`  | Health check: hooks wired, policy valid, versions in sync  |
-| `/speckit.gates.ci`      | Project CI enforcement: `github` \| `gitlab` \| `jenkins`  |
-| `/speckit.gates.upgrade` | Re-project runtime after update; never touches policy.json |
+| `/speckit.gates.verify`  | Run the full suite on demand (also runs after `implement`)       |
+| `/speckit.gates.doctor`  | Health check: hooks wired, policy valid, versions in sync        |
+| `/speckit.gates.ci`      | Project CI enforcement: `github` \| `gitlab` \| `jenkins`        |
+| `/speckit.gates.upgrade` | Re-project runtime after update; never touches policy.json       |
 
 ## Workflow-engine integration
 
