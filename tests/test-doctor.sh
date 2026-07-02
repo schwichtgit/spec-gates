@@ -17,8 +17,8 @@ trap '[[ -n "${WORKDIR:-}" && -d "$WORKDIR" ]] && rm -rf "$WORKDIR"' EXIT
 project() { # <dir> <policy-json> <link-node:yes|no>
     local dir="$1" policy="$2" link="$3"
     mkdir -p "$dir/.specify/gates/lib"
-    cp "$REPO_ROOT/runtime/doctor.sh" "$REPO_ROOT/runtime/verify.sh" "$dir/.specify/gates/"
-    cp "$REPO_ROOT/runtime/lib/"*.sh "$dir/.specify/gates/lib/"
+    cp "$REPO_ROOT/extension/runtime/doctor.sh" "$REPO_ROOT/extension/runtime/verify.sh" "$dir/.specify/gates/"
+    cp "$REPO_ROOT/extension/runtime/lib/"*.sh "$dir/.specify/gates/lib/"
     printf '%s' "$policy" >"$dir/.specify/gates/policy.json"
     if [[ "$link" == "yes" && -d "$REPO_ROOT/node_modules" ]]; then
         ln -sfn "$REPO_ROOT/node_modules" "$dir/node_modules"

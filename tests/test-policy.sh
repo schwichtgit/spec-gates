@@ -6,10 +6,10 @@ set -euo pipefail
 # against fixture policy files in a single mktemp_d workdir.
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-LIB="$REPO_ROOT/runtime/lib/policy.sh"
+LIB="$REPO_ROOT/extension/runtime/lib/policy.sh"
 # The shipped default policy is the extension's template (init seeds it into
 # .specify/gates/policy.json). It must always pass the validator.
-BUNDLED_POLICY="$REPO_ROOT/extension/templates/policy-template.json"
+BUNDLED_POLICY="$REPO_ROOT/extension/runtime/policy-template.json"
 
 PASSED=0
 FAILED=0
@@ -32,7 +32,7 @@ trap '[[ -n "$WORKDIR" && -d "$WORKDIR" ]] && rm -rf "$WORKDIR"' EXIT
 
 WORKDIR="$(mktemp -d 2>/dev/null || mktemp -d -t 'gates-policy')"
 
-# shellcheck source=../runtime/lib/policy.sh
+# shellcheck source=../extension/runtime/lib/policy.sh
 # shellcheck disable=SC1091
 source "$LIB"
 

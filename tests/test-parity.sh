@@ -63,11 +63,11 @@ assert_absent() { # <name> <file> <needle>
 # Part 1: every boundary invokes verify.sh
 # ===========================================================================
 echo "=== every boundary routes through verify.sh ==="
-assert_invokes "CI/github" "$REPO_ROOT/ci/github/gates.yml" "ci"
-assert_invokes "CI/gitlab" "$REPO_ROOT/ci/gitlab/gates.gitlab-ci.yml" "ci"
-assert_invokes "CI/jenkins" "$REPO_ROOT/ci/jenkins/Jenkinsfile.gates" "ci"
-assert_invokes "agent hook" "$REPO_ROOT/runtime/hooks/claude/verify-quality.sh" "agent"
-assert_invokes "git hook" "$REPO_ROOT/runtime/hooks/git/pre-commit" "git"
+assert_invokes "CI/github" "$REPO_ROOT/extension/ci/github/gates.yml" "ci"
+assert_invokes "CI/gitlab" "$REPO_ROOT/extension/ci/gitlab/gates.gitlab-ci.yml" "ci"
+assert_invokes "CI/jenkins" "$REPO_ROOT/extension/ci/jenkins/Jenkinsfile.gates" "ci"
+assert_invokes "agent hook" "$REPO_ROOT/extension/runtime/hooks/claude/verify-quality.sh" "agent"
+assert_invokes "git hook" "$REPO_ROOT/extension/runtime/hooks/git/pre-commit" "git"
 
 # ===========================================================================
 # Part 2: the gate lives in exactly one place
@@ -76,8 +76,8 @@ echo ""
 echo "=== no boundary re-implements the gate ==="
 # The legacy per-language walk and the per-file lint walk must be gone; if they
 # come back, the boundaries can silently diverge again.
-assert_absent "agent hook" "$REPO_ROOT/runtime/hooks/claude/verify-quality.sh" "run_legacy_walk"
-assert_absent "git hook" "$REPO_ROOT/runtime/hooks/git/pre-commit" "lint_staged_files"
+assert_absent "agent hook" "$REPO_ROOT/extension/runtime/hooks/claude/verify-quality.sh" "run_legacy_walk"
+assert_absent "git hook" "$REPO_ROOT/extension/runtime/hooks/git/pre-commit" "lint_staged_files"
 
 # ===========================================================================
 # Part 3: identical results across boundaries
@@ -92,8 +92,8 @@ else
     trap '[[ -n "${WORKDIR:-}" && -d "$WORKDIR" ]] && rm -rf "$WORKDIR"' EXIT
 
     mkdir -p "$WORKDIR/.specify/gates/lib"
-    cp "$REPO_ROOT/runtime/verify.sh" "$WORKDIR/.specify/gates/"
-    cp "$REPO_ROOT/runtime/lib/"*.sh "$WORKDIR/.specify/gates/lib/"
+    cp "$REPO_ROOT/extension/runtime/verify.sh" "$WORKDIR/.specify/gates/"
+    cp "$REPO_ROOT/extension/runtime/lib/"*.sh "$WORKDIR/.specify/gates/lib/"
 
     # A deterministic gate set: one passing custom gate. The boundary flag must
     # not change the outcome, only the reported label.

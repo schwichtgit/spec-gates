@@ -2,6 +2,12 @@
 
 Status of each component and the review pass it still needs.
 
+> **Layout note:** an end-to-end dogfood (`specify extension add --dev`)
+> showed the extension must be self-contained, so `runtime/` and `ci/` moved
+> **under `extension/`** (`extension/runtime/`, `extension/ci/`) and the seed
+> template to `extension/runtime/policy-template.json`. Paths in the tables
+> below that say `runtime/…` now live at `extension/runtime/…`.
+
 ## Adapted mechanically (sed rename: CPF_->GATES_, cpf_->gates_, .cpf/->.specify/gates/)
 
 | File                                      | Origin                  | Review needed                                                                                                                                                                                                                                                                                                                                                                                                                                                          |

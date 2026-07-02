@@ -12,8 +12,8 @@ set -euo pipefail
 #           dirs and assert the fail-open / fail-closed contract end to end.
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-HOOKS="$REPO_ROOT/runtime/hooks/claude"
-GITHOOKS="$REPO_ROOT/runtime/hooks/git"
+HOOKS="$REPO_ROOT/extension/runtime/hooks/claude"
+GITHOOKS="$REPO_ROOT/extension/runtime/hooks/git"
 
 PASS=0
 FAIL=0
@@ -42,8 +42,8 @@ trap '[[ -n "${WORKDIR:-}" && -d "$WORKDIR" ]] && rm -rf "$WORKDIR"' EXIT
 project_runtime() {
     local dir="$1" cmd="$2"
     mkdir -p "$dir/.specify/gates/lib"
-    cp "$REPO_ROOT/runtime/verify.sh" "$dir/.specify/gates/"
-    cp "$REPO_ROOT/runtime/lib/"*.sh "$dir/.specify/gates/lib/"
+    cp "$REPO_ROOT/extension/runtime/verify.sh" "$dir/.specify/gates/"
+    cp "$REPO_ROOT/extension/runtime/lib/"*.sh "$dir/.specify/gates/lib/"
     [[ -d "$REPO_ROOT/node_modules" ]] && ln -sfn "$REPO_ROOT/node_modules" "$dir/node_modules"
     cat >"$dir/.specify/gates/policy.json" <<JSON
 { "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error", "custom_command": "$cmd" } } }

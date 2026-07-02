@@ -45,7 +45,7 @@ provides:
 
   config:
     - name: "policy.json"
-      template: "templates/policy-template.json"
+      template: "runtime/policy-template.json"
       description: "Quality gate policy (user-owned; init seeds it, upgrade never overwrites)"
       required: false
 
@@ -58,7 +58,6 @@ hooks:
     optional: true
     prompt: "Run quality gates on the implemented changes?"
     description: "Run the gate suite after implementation"
-  after_taskstoissues: null
 
 tags:
   - "quality"

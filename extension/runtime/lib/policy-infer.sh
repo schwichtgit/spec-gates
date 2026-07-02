@@ -103,11 +103,13 @@ _gates_infer_default_policy() {
         printf '%s' "$GATES_INFER_DEFAULT_POLICY"
         return 0
     fi
-    local candidate="$GATES_INFER_LIB_DIR/../scaffold/common/.specify/gates/policy.json"
+    # The seed template ships next to the runtime (extension/runtime/), so from
+    # lib/ it is one level up. When the runtime is projected into a project it
+    # is not copied, but policy-infer runs from the installed extension runtime
+    # during init, where the template is present.
+    local candidate="$GATES_INFER_LIB_DIR/../policy-template.json"
     if [[ -f "$candidate" ]]; then
-        local abs_dir
-        abs_dir="$(cd "$(dirname "$candidate")" && pwd)"
-        printf '%s/policy.json' "$abs_dir"
+        (cd "$(dirname "$candidate")" && printf '%s/policy-template.json' "$(pwd)")
         return 0
     fi
     echo "ERROR: bundled default policy not found" >&2
