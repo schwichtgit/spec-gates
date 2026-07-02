@@ -137,6 +137,12 @@ printf '%s' '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severit
 check "failing gate -> commit blocked" 1 \
     bash -c "cd '$GF' && echo b >b.txt && git add b.txt && git commit -q -m 'feat: b'"
 
+# policy git.block_main_commits=false lets a main commit through (green gate).
+printf '%s' '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error", "custom_command": "true" } }, "git": { "block_main_commits": false } }' \
+    >"$GF/.specify/gates/policy.json"
+check "git.block_main_commits=false -> main commit allowed" 0 \
+    bash -c "cd '$GF' && git switch -q main && echo c >c.txt && git add c.txt && git commit -q -m 'chore: c'"
+
 # --- Summary ---
 echo ""
 echo "$PASS of $TOTAL tests passed."

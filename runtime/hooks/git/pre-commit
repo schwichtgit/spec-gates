@@ -22,9 +22,19 @@ fi
 
 ERRORS=0
 
-# --- Block commits to protected branches ---
+PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+POLICY_LIB="$PROJECT_ROOT/.specify/gates/lib/policy.sh"
+# shellcheck source=/dev/null disable=SC1091
+[[ -f "$POLICY_LIB" ]] && source "$POLICY_LIB"
+
+# --- Block commits to protected branches (policy: git.block_main_commits) ---
+BLOCK_MAIN=true
+if command -v gates_policy_section_get >/dev/null 2>&1; then
+    [[ "$(gates_policy_section_get git block_main_commits)" == "false" ]] && BLOCK_MAIN=false
+fi
 CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
-if [[ "$CURRENT_BRANCH" == "main" || "$CURRENT_BRANCH" == "master" ]]; then
+if [[ "$BLOCK_MAIN" == "true" ]] \
+    && [[ "$CURRENT_BRANCH" == "main" || "$CURRENT_BRANCH" == "master" ]]; then
     if [[ "${GATES_ALLOW_MAIN_COMMIT:-0}" != "1" ]]; then
         echo "ERROR: Direct commits to '$CURRENT_BRANCH' are blocked." >&2
         echo "  Create a feature branch instead:" >&2
@@ -123,7 +133,6 @@ done
 
 # --- Shared quality gate (identical to the agent and CI boundaries) ---
 if [[ "${GATES_SKIP:-0}" != "1" ]]; then
-    PROJECT_ROOT="$(git rev-parse --show-toplevel)"
     VERIFY="$PROJECT_ROOT/.specify/gates/verify.sh"
     if [[ -x "$VERIFY" ]]; then
         echo "Pre-commit: running quality gate (verify.sh --boundary git)..."

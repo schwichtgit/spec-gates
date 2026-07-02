@@ -10,7 +10,7 @@ Status of each component and the review pass it still needs.
 | runtime/lib/policy-infer.sh               | cpf-policy-infer.sh     | verify inference globs against policy-template.json shape                                                                                                                                                                                                                                                                                                 |
 | runtime/lib/formatter-dispatch.sh         | \_formatter-dispatch.sh | DONE: the --check/--tool/--project-root CLI did NOT exist, so verify.sh's default `none` orchestrator was a silent no-op (every file passed). Implemented check-mode: expands include globs minus excludes, runs each tool in check mode. Tool resolution is node_modules/.bin -> PATH -> skip (never npx-downloads a version, which would break parity). |
 | runtime/lib/taskfile-detect.sh            | cpf-taskfile-detect.sh  | trivial                                                                                                                                                                                                                                                                                                                                                   |
-| runtime/policy.schema.json                | cpf-policy.schema.json  | extend for protected_files + git sections added in template                                                                                                                                                                                                                                                                                               |
+| runtime/policy.schema.json                | cpf-policy.schema.json  | DONE: added protected_files + git to the JSON schema (top-level additionalProperties:false was rejecting the very sections the template ships) and to the policy.sh validator; git.block_main_commits is now consumed by pre-commit                                                                                                                       |
 | runtime/hooks/claude/*.sh                 | CPF hooks               | DONE: verify-quality.sh slimmed 617->60 lines, now delegates to verify.sh --boundary agent (legacy language walk dropped); remaining PreToolUse hooks (protect-files, validate-bash, validate-pr, post-edit, format-changed) still need a review pass; check-upgrade.sh was intentionally dropped                                                         |
 | runtime/hooks/git/{pre-commit,commit-msg} | CPF scaffold            | DONE (pre-commit): 221->144 lines; keeps git-only safety (block-main, secret/forbidden-file scan), delegates the quality gate to verify.sh --boundary git. commit-msg (conventional + no-AI-isms) still needs a review pass                                                                                                                               |
 | tests/\*.sh                               | cpf/scripts             | DONE: rewired to the runtime/ tree. test-ci-parity.sh renamed to test-parity.sh and broadened (5-boundary routing + single-impl + identical-results). test-hooks.sh now covers agent/git delegation. test-policy.sh repointed. `bash tests/run.sh` runs all (59 tests green)                                                                              |
@@ -55,7 +55,12 @@ into a hook.
    smoke tests folded into test-hooks.sh; test-parity.sh asserts real boundary
    parity (5-boundary routing, single implementation, identical results). 59
    tests green.
-3. Extend policy.schema.json for the new sections
+3. DONE: added protected_files + git to the JSON schema and the policy.sh
+   validator (with tests); wired git.block_main_commits into pre-commit as the
+   proof-of-consumption. STILL DECORATIVE (follow-up): protected_files.extra is
+   not yet read by protect-files.sh / the pre-commit forbidden scan, and
+   git.conventional_commits / forbid_ai_isms are not yet read by commit-msg
+   (all three are currently hardcoded).
 4. Dogfood: run /speckit.gates.init against a scratch spec-kit project via `specify extension add --from <url>`
 5. DONE: self-enforcement. `.github/workflows/ci.yml` projects the runtime
    and runs the gate on this repo + `tests/run.sh`. Linters pinned via

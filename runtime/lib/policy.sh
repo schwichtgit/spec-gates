@@ -55,6 +55,39 @@ gates_policy_list() {
     ' "$file" 2>/dev/null || true
 }
 
+# Read a scalar from a TOP-LEVEL section (not under .hooks), e.g.
+# gates_policy_section_get git block_main_commits. Empty on missing.
+gates_policy_section_get() {
+    local section="${1:-}" field="${2:-}"
+    [[ -z "$section" || -z "$field" ]] && return 0
+    local file
+    file="$(gates_policy_file)"
+    [[ -f "$file" ]] || return 0
+    # NB: do not use `// ""` here -- jq's alternative operator treats a literal
+    # `false` as absent, which would turn a boolean toggle into "". Handle null
+    # explicitly so `false` round-trips as the string "false".
+    jq -r --arg s "$section" --arg f "$field" '
+        ((.[$s] // {}) | .[$f]) as $v
+        | if $v == null then ""
+          elif ($v | type) == "array" or ($v | type) == "object" then ""
+          else ($v | tostring) end
+    ' "$file" 2>/dev/null || true
+}
+
+# Read an array field from a TOP-LEVEL section, one element per line, e.g.
+# gates_policy_section_list protected_files extra.
+gates_policy_section_list() {
+    local section="${1:-}" field="${2:-}"
+    [[ -z "$section" || -z "$field" ]] && return 0
+    local file
+    file="$(gates_policy_file)"
+    [[ -f "$file" ]] || return 0
+    jq -r --arg s "$section" --arg f "$field" '
+        (.[$s][$f] // []) |
+        if type == "array" then .[] else empty end
+    ' "$file" 2>/dev/null || true
+}
+
 gates_validate_policy() {
     local file="${1:-}"
     if [[ -z "$file" ]]; then
@@ -122,6 +155,37 @@ gates_validate_policy() {
           ]
         | .[]
     ' "$file" 2>/dev/null)"
+
+    # Validate the optional top-level protected_files and git sections.
+    local section_errors
+    section_errors="$(jq -r '
+        def git_keys: ["block_main_commits", "conventional_commits", "forbid_ai_isms"];
+        def pf_errors:
+            if has("protected_files") then
+                (.protected_files) as $p
+                | if ($p | type) != "object" then ["protected_files: must be an object"]
+                  else
+                    [ $p | keys[] | select(. != "extra") | "protected_files: unknown field \"\(.)\"" ]
+                    + ( if ($p | has("extra")) and (($p.extra | type) != "array")
+                          then ["protected_files.extra: must be an array of strings"]
+                        else [ ($p.extra // [])[] | select(type != "string") | "protected_files.extra: entries must be strings" ]
+                        end )
+                  end
+            else [] end;
+        def git_errors:
+            if has("git") then
+                (.git) as $g
+                | if ($g | type) != "object" then ["git: must be an object"]
+                  else
+                    [ $g | to_entries[] | select((.key | IN(git_keys[])) | not) | "git: unknown field \"\(.key)\"" ]
+                    + [ $g | to_entries[] | select(.key | IN(git_keys[])) | select((.value | type) != "boolean") | "git: \(.key) must be a boolean" ]
+                  end
+            else [] end;
+        (pf_errors + git_errors) | .[]
+    ' "$file" 2>/dev/null)"
+    if [[ -n "$section_errors" ]]; then
+        errors="${errors:+$errors$'\n'}$section_errors"
+    fi
 
     if [[ -n "$errors" ]]; then
         echo "ERROR: policy validation failed in $file:" >&2

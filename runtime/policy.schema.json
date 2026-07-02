@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/schwichtgit/claude-project-foundation/.claude-plugin/lib/policy.schema.json",
-  "title": "gates policy",
-  "description": "Declarative hook policy for gates-scaffolded projects. Consumed by .claude-plugin/lib/policy.sh at runtime and by /gates:specforge init and upgrade for semantic validation.",
+  "$id": "https://github.com/schwichtgit/spec-gates/runtime/policy.schema.json",
+  "title": "spec-gates policy",
+  "description": "Declarative gate policy for Spec Kit projects. Consumed by .specify/gates/lib/policy.sh at runtime and validated by /speckit.gates.init and /speckit.gates.upgrade.",
   "type": "object",
   "additionalProperties": false,
   "required": ["hooks"],
@@ -20,6 +20,40 @@
       "description": "Map of hook name to hook stanza. Hook names are free-form strings matching the name used by gates_policy_get / gates_policy_list callers.",
       "additionalProperties": {
         "$ref": "#/$defs/hook"
+      }
+    },
+    "protected_files": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Files refused at the agent PreToolUse boundary and by the git forbidden-file scan, on top of the built-in secret/key defaults.",
+      "properties": {
+        "extra": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Additional paths or globs to protect."
+        }
+      }
+    },
+    "git": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Toggles for the git-boundary hooks (pre-commit / commit-msg).",
+      "properties": {
+        "block_main_commits": {
+          "type": "boolean",
+          "default": true,
+          "description": "Refuse direct commits to main/master (override per-commit with GATES_ALLOW_MAIN_COMMIT=1)."
+        },
+        "conventional_commits": {
+          "type": "boolean",
+          "default": true,
+          "description": "Require Conventional Commits subject format in commit-msg."
+        },
+        "forbid_ai_isms": {
+          "type": "boolean",
+          "default": true,
+          "description": "Reject AI-ism / self-referential phrasing in commit messages and PRs."
+        }
       }
     }
   },

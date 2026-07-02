@@ -376,6 +376,66 @@ fi
 
 unset GATES_POLICY_FILE
 
+# --- 5b: top-level protected_files and git sections ---
+echo ""
+echo "=== protected_files + git sections ==="
+
+GOOD_SECTIONS="$(write_policy good-sections '{
+  "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } },
+  "protected_files": { "extra": ["docs/secret.md"] },
+  "git": { "block_main_commits": false, "conventional_commits": true }
+}')"
+if gates_validate_policy "$GOOD_SECTIONS" >/dev/null 2>&1; then
+    pass "valid protected_files + git accepted"
+else
+    fail "valid protected_files + git rejected"
+    gates_validate_policy "$GOOD_SECTIONS" || true
+fi
+
+BAD_GIT_TYPE="$(write_policy bad-git-type '{
+  "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } },
+  "git": { "block_main_commits": "yes" }
+}')"
+ERR_OUT="$(gates_validate_policy "$BAD_GIT_TYPE" 2>&1 || true)"
+if echo "$ERR_OUT" | grep -q 'git: block_main_commits must be a boolean'; then
+    pass "non-boolean git toggle rejected"
+else
+    fail "non-boolean git toggle not rejected: $ERR_OUT"
+fi
+
+BAD_GIT_KEY="$(write_policy bad-git-key '{
+  "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } },
+  "git": { "bogus": true }
+}')"
+ERR_OUT="$(gates_validate_policy "$BAD_GIT_KEY" 2>&1 || true)"
+if echo "$ERR_OUT" | grep -q 'git: unknown field "bogus"'; then
+    pass "unknown git field rejected"
+else
+    fail "unknown git field not rejected: $ERR_OUT"
+fi
+
+BAD_PF="$(write_policy bad-pf '{
+  "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } },
+  "protected_files": { "extra": "not-an-array" }
+}')"
+ERR_OUT="$(gates_validate_policy "$BAD_PF" 2>&1 || true)"
+if echo "$ERR_OUT" | grep -q 'protected_files.extra: must be an array'; then
+    pass "protected_files.extra non-array rejected"
+else
+    fail "protected_files.extra non-array not rejected: $ERR_OUT"
+fi
+
+BAD_PF_KEY="$(write_policy bad-pf-key '{
+  "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } },
+  "protected_files": { "bogus": [] }
+}')"
+ERR_OUT="$(gates_validate_policy "$BAD_PF_KEY" 2>&1 || true)"
+if echo "$ERR_OUT" | grep -q 'protected_files: unknown field "bogus"'; then
+    pass "protected_files unknown field rejected"
+else
+    fail "protected_files unknown field not rejected: $ERR_OUT"
+fi
+
 # --- 6: malformed JSON ---
 echo ""
 echo "=== malformed JSON rejected ==="
