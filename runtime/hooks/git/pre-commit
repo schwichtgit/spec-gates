@@ -52,6 +52,14 @@ check_forbidden_files() {
     local basename
     basename=$(basename "$file")
 
+    # Template/example files are meant to be committed even when the base name
+    # looks sensitive (.env.example, config.sample, .env.template). Must come
+    # BEFORE the .env.* rule, and mirrors protect-files.sh so the agent and git
+    # boundaries agree.
+    case "$basename" in
+        *.example | *.sample | *.template) return 0 ;;
+    esac
+
     case "$basename" in
         .env | .env.*) return 1 ;;
         id_rsa* | id_ed25519* | id_ecdsa* | authorized_keys | known_hosts) return 1 ;;

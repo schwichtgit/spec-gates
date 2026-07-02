@@ -61,6 +61,7 @@ check "allowed file (src/main.ts)" 0 bash -c "echo '{\"tool_input\":{\"file_path
 check "blocked .env" 2 bash -c "echo '{\"tool_input\":{\"file_path\":\".env\"}}' | bash '$HOOKS/protect-files.sh'"
 check "blocked id_rsa" 2 bash -c "echo '{\"tool_input\":{\"file_path\":\"config/id_rsa\"}}' | bash '$HOOKS/protect-files.sh'"
 check "allowed .env.example" 0 bash -c "echo '{\"tool_input\":{\"file_path\":\".env.example\"}}' | bash '$HOOKS/protect-files.sh'"
+check "allowed .env.template" 0 bash -c "echo '{\"tool_input\":{\"file_path\":\".env.template\"}}' | bash '$HOOKS/protect-files.sh'"
 check "blocked .env.local" 2 bash -c "echo '{\"tool_input\":{\"file_path\":\".env.local\"}}' | bash '$HOOKS/protect-files.sh'"
 check "fail-open bad JSON" 0 bash -c "echo 'not-json' | bash '$HOOKS/protect-files.sh'"
 
@@ -154,6 +155,16 @@ check "protected_files.extra -> staged listed file blocked" 1 \
     bash -c "cd '$GF' && echo x >secrets.txt && git add secrets.txt && git commit -q -m 'chore: s'"
 check "protected_files.extra glob -> staged match blocked" 1 \
     bash -c "cd '$GF' && mkdir -p infra && echo x >infra/main.tf && git add infra/main.tf && git commit -q -m 'chore: tf'"
+
+# Forbidden-file allowlist: template/example files are committable even when
+# the base name looks sensitive; real secret files still blocked.
+FF="$WORKDIR/forbidden.sh"
+sed -n '/^check_forbidden_files() {/,/^}/p' "$GITHOOKS/pre-commit" >"$FF"
+check "forbidden: .env.example allowed" 0 bash -c "source '$FF'; check_forbidden_files .env.example"
+check "forbidden: config.sample allowed" 0 bash -c "source '$FF'; check_forbidden_files config.sample"
+check "forbidden: .env.template allowed" 0 bash -c "source '$FF'; check_forbidden_files .env.template"
+check "forbidden: .env blocked" 1 bash -c "source '$FF'; check_forbidden_files .env"
+check "forbidden: .env.local blocked" 1 bash -c "source '$FF'; check_forbidden_files .env.local"
 
 # ===========================================================================
 # Part D: agent-boundary protect-files consumes protected_files.extra

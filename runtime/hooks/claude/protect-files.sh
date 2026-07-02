@@ -24,8 +24,11 @@ BASENAME=$(basename "$FILE_PATH")
 
 BLOCKED=""
 
-# Allowlist: .example and .sample suffixed files are safe to edit
-if [[ "$BASENAME" == *.example ]] || [[ "$BASENAME" == *.sample ]]; then
+# Allowlist: .example / .sample / .template files are safe to edit even when
+# the base name looks sensitive (e.g. .env.example). Mirrors the git
+# pre-commit forbidden-file allowlist so the two boundaries agree.
+if [[ "$BASENAME" == *.example ]] || [[ "$BASENAME" == *.sample ]] \
+    || [[ "$BASENAME" == *.template ]]; then
     exit 0
 fi
 
