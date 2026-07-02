@@ -29,7 +29,7 @@ jobs:
       - name: Project the gate runtime
         run: |
           mkdir -p .specify/gates/lib
-          cp runtime/verify.sh .specify/gates/
+          cp runtime/verify.sh runtime/doctor.sh .specify/gates/
           cp runtime/lib/*.sh .specify/gates/lib/
           cp runtime/policy.schema.json .specify/gates/
 

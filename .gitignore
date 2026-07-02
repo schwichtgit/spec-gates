@@ -1,3 +1,4 @@
+
 node_modules/
 *.log
 /tmp/
@@ -10,5 +11,6 @@ node_modules/
 # /speckit.gates.init in real projects). Only .specify/gates/policy.json is
 # committed; the runtime copies are build artifacts.
 .specify/gates/verify.sh
+.specify/gates/doctor.sh
 .specify/gates/lib/
 .specify/gates/policy.schema.json
