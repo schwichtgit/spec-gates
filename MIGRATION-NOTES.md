@@ -13,7 +13,7 @@ Status of each component and the review pass it still needs.
 | runtime/policy.schema.json                | cpf-policy.schema.json | extend for protected_files + git sections added in template                                                                                                                                                                                                                                       |
 | runtime/hooks/claude/*.sh                 | CPF hooks              | DONE: verify-quality.sh slimmed 617->60 lines, now delegates to verify.sh --boundary agent (legacy language walk dropped); remaining PreToolUse hooks (protect-files, validate-bash, validate-pr, post-edit, format-changed) still need a review pass; check-upgrade.sh was intentionally dropped |
 | runtime/hooks/git/{pre-commit,commit-msg} | CPF scaffold           | DONE (pre-commit): 221->144 lines; keeps git-only safety (block-main, secret/forbidden-file scan), delegates the quality gate to verify.sh --boundary git. commit-msg (conventional + no-AI-isms) still needs a review pass                                                                       |
-| tests/*.sh                                | cpf/scripts            | paths reference old scaffold layout; rewire to runtime/ tree; test-ci-parity.sh is the priority                                                                                                                                                                                                   |
+| tests/\*.sh                               | cpf/scripts            | DONE: rewired to the runtime/ tree. test-ci-parity.sh renamed to test-parity.sh and broadened (5-boundary routing + single-impl + identical-results). test-hooks.sh now covers agent/git delegation. test-policy.sh repointed. `bash tests/run.sh` runs all (59 tests green)                      |
 
 ## Written new
 
@@ -51,9 +51,10 @@ into a hook.
    (~630 lines removed; parity is now structural). Fixture tests cover both
    boundaries (green->allow/pass, fail->block, block-main, secret scan,
    loop-guard, fail-open when unprojected).
-2. Rewire the three tests to the new tree; fold the fixture smoke tests into
-   tests/test-hooks.sh; get test-ci-parity.sh asserting real boundary parity
-   (all three call verify.sh) rather than tool-name presence
+2. DONE: rewired all three test suites to runtime/ (+ tests/run.sh). Fixture
+   smoke tests folded into test-hooks.sh; test-parity.sh asserts real boundary
+   parity (5-boundary routing, single implementation, identical results). 59
+   tests green.
 3. Extend policy.schema.json for the new sections
 4. Dogfood: run /speckit.gates.init against a scratch spec-kit project via `specify extension add --from <url>`
 5. Add .github/workflows/gates.yml to THIS repo (self-enforcement)

@@ -1,13 +1,20 @@
 # Tests
 
-Adapted from claude-project-foundation's shell test suite (namespaces
-renamed CPF_-> GATES_, .gates/ -> .specify/gates/). Each needs one review
-pass — see ../MIGRATION-NOTES.md.
+Shell test suites for the enforcement runtime. Run all of them with
+`bash tests/run.sh` (or run any one directly). All are bash 3.2-safe, since
+the hooks execute under macOS `/bin/bash`.
 
-- `test-policy.sh` — policy loader + schema validation behavior
-- `test-hooks.sh` — each Claude/git hook blocks and allows correctly
-- `test-ci-parity.sh` — THE invariant: verify.sh produces identical
-  results when invoked as agent, git, and ci boundary. This test is the
-  product's headline claim; it must stay green.
-
-Run all: `for t in tests/test-*.sh; do bash "$t"; done`
+- `test-parity.sh` — THE invariant, asserted three ways: every boundary
+  (3 CI projections + agent hook + git hook) routes through `verify.sh`; no
+  boundary re-implements the gate; and `verify.sh` yields identical results
+  at the agent, git, and ci boundaries. This is the product's headline
+  claim; it must stay green.
+- `test-hooks.sh` — hook behaviour. Part A: the self-contained hooks
+  (protect-files, validate-bash, validate-pr, post-edit, format-changed)
+  block and allow correctly. Parts B/C: the agent Stop hook and git
+  pre-commit correctly delegate to `verify.sh` (green -> allow/pass,
+  fail -> block, loop-guard, fail-open when the runtime is not projected,
+  block-main, secret scan).
+- `test-policy.sh` — `policy.sh` loader getters and the schema validator
+  (required fields, enum validation, custom_command rules, malformed JSON),
+  plus the shipped policy template validating cleanly.
