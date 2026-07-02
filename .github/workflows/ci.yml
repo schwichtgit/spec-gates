@@ -1,0 +1,40 @@
+# spec-gates dogfoods its own enforcement: this workflow projects the gate
+# runtime (exactly as /speckit.gates.init does in a real project) and runs it
+# against this repo, then runs the test suites. Local green == CI green because
+# both use the lockfile-pinned prettier / markdownlint-cli2 and the same
+# verify.sh.
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "26"
+
+      - name: Install pinned linters (prettier, markdownlint-cli2)
+        run: npm ci
+
+      - name: Install system tooling (jq, shellcheck)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q jq shellcheck
+
+      - name: Project the gate runtime
+        run: |
+          mkdir -p .specify/gates/lib
+          cp runtime/verify.sh runtime/doctor.sh .specify/gates/
+          cp runtime/lib/*.sh .specify/gates/lib/
+          cp runtime/policy.schema.json .specify/gates/
+
+      - name: Run the gate on this repo (dogfood)
+        run: bash .specify/gates/verify.sh --boundary ci
+
+      - name: Run the test suites
+        run: bash tests/run.sh

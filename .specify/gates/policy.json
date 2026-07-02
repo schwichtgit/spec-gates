@@ -1,0 +1,46 @@
+{
+  "_comment": "spec-gates dogfoods its own enforcement. The runtime (verify.sh + lib/) is projected from runtime/ by CI and is gitignored; only this policy is committed. Excludes .specify/** so the gate does not lint its own projected copies. node_modules/.venv are excluded at both top-level (name/**) and any nested depth (**/name/**).",
+  "hooks": {
+    "prettier": {
+      "include": ["**/*.md", "**/*.yml", "**/*.yaml", "**/*.json"],
+      "exclude": [
+        ".specify/**",
+        "node_modules/**",
+        "**/node_modules/**",
+        ".venv/**",
+        "**/.venv/**",
+        "package-lock.json"
+      ],
+      "orchestrator": "none",
+      "severity": "error"
+    },
+    "markdownlint": {
+      "include": ["**/*.md"],
+      "exclude": [
+        ".specify/**",
+        "node_modules/**",
+        "**/node_modules/**",
+        ".venv/**",
+        "**/.venv/**"
+      ],
+      "orchestrator": "none",
+      "severity": "error"
+    },
+    "shellcheck": {
+      "include": ["**/*.sh"],
+      "exclude": [
+        ".specify/**",
+        "node_modules/**",
+        "**/node_modules/**",
+        ".venv/**",
+        "**/.venv/**"
+      ],
+      "orchestrator": "none",
+      "severity": "error"
+    },
+    "verify-quality": {
+      "orchestrator": "none",
+      "severity": "error"
+    }
+  }
+}

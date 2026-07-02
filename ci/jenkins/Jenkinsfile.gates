@@ -1,0 +1,7 @@
+// spec-gates CI boundary — stage fragment for an existing Jenkinsfile
+// (projected/inserted by /speckit.gates.ci jenkins)
+stage('Quality Gates') {
+    steps {
+        sh 'bash .specify/gates/verify.sh --boundary ci'
+    }
+}

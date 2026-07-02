@@ -1,10 +1,17 @@
 # spec-gates
 
+[![CI](https://github.com/schwichtgit/spec-gates/actions/workflows/ci.yml/badge.svg)](https://github.com/schwichtgit/spec-gates/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 **Deterministic quality enforcement for [Spec Kit](https://github.com/github/spec-kit) projects.**
 
-Spec Kit is a guidance layer: templates, prompts, and checklists *ask* the
+> **Status:** early and evolving. Verified against Spec Kit **v0.12.4**; the
+> upstream extension API is still marked experimental, so pin
+> `requires.speckit_version` and expect some churn.
+
+Spec Kit is a guidance layer: templates, prompts, and checklists _ask_ the
 agent to comply. spec-gates is the enforcement layer underneath it: hooks
-and pipelines that *force* compliance — the bash call is rejected, the
+and pipelines that _force_ compliance — the bash call is rejected, the
 protected file is refused, the session cannot end with failing checks.
 
 Extracted from
@@ -35,16 +42,29 @@ enforcement half lives on here.
 
 **The parity property:** if the agent boundary passed, the git boundary
 passes; if the git boundary passed, CI passes. Every boundary runs the
-same `verify.sh` with the same policy. `tests/test-ci-parity.sh` asserts
-this invariant.
+same `verify.sh` with the same policy — `tests/test-parity.sh` asserts it:
+identical results at every boundary, and no boundary re-implements the gate.
+A fourth, server-side boundary (branch protection requiring the CI check) is
+available via `/speckit.gates.ci github --protect`.
+
+## Requirements
+
+- **jq** and **git** — the hooks and `verify.sh` require them.
+- **Node** with the linters your policy uses (default: **prettier**,
+  **markdownlint-cli2**). Pin them in `package.json` so local and CI agree.
+- **shellcheck** if you lint shell.
+- **Claude Code** for the agent boundary. The git and CI boundaries are
+  agent-agnostic.
 
 ## Install
 
 ```bash
-specify extension add gates          # once listed in the community catalog
-# or, pre-listing:
-specify extension add --source https://github.com/schwichtgit/spec-gates
+specify extension add gates --from https://github.com/schwichtgit/spec-gates
 ```
+
+Spec Kit's community catalog is discovery-only (`install_allowed: false`),
+so `--from <url>` is the install path even after `gates` is listed there;
+catalog listing buys discoverability, not a bare `specify extension add gates`.
 
 Then, in Claude Code:
 
@@ -62,13 +82,13 @@ hook offers a gate run before you move to commit/PR.
 
 ## Commands
 
-| Command                  | Purpose                                                    |
-| ------------------------ | ---------------------------------------------------------- |
-| `/speckit.gates.init`    | Infer policy, project runtime, wire agent + git hooks, self-test |
-| `/speckit.gates.verify`  | Run the full suite on demand (also runs after `implement`) |
-| `/speckit.gates.doctor`  | Health check: hooks wired, policy valid, versions in sync  |
-| `/speckit.gates.ci`      | Project CI enforcement: `github` \| `gitlab` \| `jenkins`  |
-| `/speckit.gates.upgrade` | Re-project runtime after update; never touches policy.json |
+| Command                  | Purpose                                                                                                                 |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| `/speckit.gates.init`    | Infer policy, project runtime, wire agent + git hooks, self-test                                                        |
+| `/speckit.gates.verify`  | Run the full suite on demand (also runs after `implement`)                                                              |
+| `/speckit.gates.doctor`  | Health check: hooks wired, policy valid, versions in sync                                                               |
+| `/speckit.gates.ci`      | Project CI enforcement (`github` \| `gitlab` \| `jenkins`); `--protect` requires the check + a PR on the default branch |
+| `/speckit.gates.upgrade` | Re-project runtime after update; never touches policy.json                                                              |
 
 ## Workflow-engine integration
 
@@ -99,6 +119,17 @@ as they grow hook APIs.
   extension removal and works for every collaborator who clones.
 - Fail closed: a gate that cannot demonstrably block is reported broken.
 
+## Development
+
+```bash
+npm ci              # pinned prettier + markdownlint-cli2
+bash tests/run.sh   # the full suite (parity, gate, hooks, policy)
+```
+
+The repo gates itself: `.github/workflows/ci.yml` projects the runtime and
+runs `verify.sh --boundary ci` on every PR, alongside the tests. See the pull
+request template for the contribution checklist.
+
 ## License
 
-MIT
+[MIT](LICENSE) © Frank Schwichtenberg

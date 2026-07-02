@@ -1,0 +1,15 @@
+{
+  "name": "spec-gates",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Deterministic quality enforcement for Spec Kit projects",
+  "license": "MIT",
+  "scripts": {
+    "gate": "bash .specify/gates/verify.sh --boundary ci",
+    "test": "bash tests/run.sh"
+  },
+  "devDependencies": {
+    "markdownlint-cli2": "0.23.0",
+    "prettier": "3.9.4"
+  }
+}

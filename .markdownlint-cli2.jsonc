@@ -1,0 +1,16 @@
+{
+  // spec-gates markdown lint policy.
+  //
+  // Prettier owns line wrapping (proseWrap: preserve) and formats tables/code
+  // blocks in ways MD013 cannot satisfy — prettier never wraps table rows, so
+  // MD013 line-length would fail them permanently. We cede wrapping to prettier
+  // and keep the rest of the markdownlint ruleset active. This is the same
+  // "one tool owns each concern, no two tools fight" discipline the gates
+  // enforce at runtime.
+  "config": {
+    "default": true,
+    "MD013": false,
+  },
+  "globs": ["**/*.md"],
+  "ignores": ["**/node_modules", "**/.venv"]
+}

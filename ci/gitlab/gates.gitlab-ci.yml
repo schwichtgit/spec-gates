@@ -1,0 +1,13 @@
+# spec-gates CI boundary — include or merge into .gitlab-ci.yml
+# (projected by /speckit.gates.ci gitlab)
+gates:
+  stage: test
+  image: node:22-slim
+  before_script:
+    - apt-get update -q && apt-get install -y -q jq shellcheck git
+    - npm install -g prettier markdownlint-cli2
+  script:
+    - bash .specify/gates/verify.sh --boundary ci
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'

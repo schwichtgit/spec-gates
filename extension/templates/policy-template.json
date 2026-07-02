@@ -1,0 +1,58 @@
+{
+  "_comment": "spec-gates policy. Schema: .specify/gates/policy.schema.json. Loader: .specify/gates/lib/policy.sh. USER-OWNED: init seeds this file; upgrade never overwrites. Edit include/exclude globs, orchestrator, and severity to customize gate behavior at all three boundaries. node_modules/.venv are excluded at both top-level (name/**) and any nested depth (**/name/**) for monorepos.",
+  "hooks": {
+    "prettier": {
+      "include": ["**/*.md", "**/*.yml", "**/*.yaml", "**/*.json"],
+      "exclude": [
+        "LICENSE",
+        "node_modules/**",
+        "**/node_modules/**",
+        ".venv/**",
+        "**/.venv/**"
+      ],
+      "orchestrator": "none",
+      "severity": "error"
+    },
+    "markdownlint": {
+      "include": ["**/*.md"],
+      "exclude": [
+        "node_modules/**",
+        "**/node_modules/**",
+        ".venv/**",
+        "**/.venv/**",
+        "target/**",
+        "**/target/**"
+      ],
+      "orchestrator": "none",
+      "severity": "error"
+    },
+    "shellcheck": {
+      "include": ["**/*.sh"],
+      "exclude": [
+        ".git/**",
+        "node_modules/**",
+        "**/node_modules/**",
+        ".venv/**",
+        "**/.venv/**",
+        "target/**",
+        "**/target/**",
+        "dist/**",
+        "**/dist/**"
+      ],
+      "orchestrator": "none",
+      "severity": "error"
+    },
+    "verify-quality": {
+      "orchestrator": "none",
+      "severity": "error"
+    }
+  },
+  "protected_files": {
+    "extra": [".specify/memory/constitution.md", ".specify/gates/policy.json"]
+  },
+  "git": {
+    "block_main_commits": true,
+    "conventional_commits": true,
+    "forbid_ai_isms": true
+  }
+}

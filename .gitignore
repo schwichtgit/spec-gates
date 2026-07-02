@@ -1,3 +1,4 @@
+
 node_modules/
 *.log
 /tmp/
@@ -5,3 +6,11 @@ node_modules/
 # Claude Mind local memory store (session artifact, not project content)
 .claude/mind.mv2
 .claude/mind.mv2.lock
+
+# Projected gate runtime: materialized from runtime/ by CI (and by
+# /speckit.gates.init in real projects). Only .specify/gates/policy.json is
+# committed; the runtime copies are build artifacts.
+.specify/gates/verify.sh
+.specify/gates/doctor.sh
+.specify/gates/lib/
+.specify/gates/policy.schema.json

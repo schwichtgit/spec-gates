@@ -1,0 +1,10 @@
+# Code ownership for spec-gates. Order matters; the last match wins.
+# Applies to reviews once branch protection requires code-owner review.
+
+*                       @schwichtgit
+
+# The enforcement runtime and its tests are the core of the product.
+/runtime/               @schwichtgit
+/tests/                 @schwichtgit
+/extension/             @schwichtgit
+/.github/               @schwichtgit
