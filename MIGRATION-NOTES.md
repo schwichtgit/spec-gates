@@ -36,6 +36,6 @@ Status of each component and the review pass it still needs.
 1. Slim verify-quality.sh and pre-commit to delegate to verify.sh (kills ~700 lines, makes parity structural rather than tested-for)
 2. Rewire the three tests to the new tree; get test-ci-parity.sh green
 3. Extend policy.schema.json for the new sections
-4. Dogfood: run /speckit.gates.init against a scratch spec-kit project via `specify extension add --source`
+4. Dogfood: run /speckit.gates.init against a scratch spec-kit project via `specify extension add --from <url>`
 5. Add .github/workflows/gates.yml to THIS repo (self-enforcement)
-6. Submit to the spec-kit community catalog via the extension_submission issue template
+6. Submit to the spec-kit community catalog (discovery-only) via the extension_submission issue template; installs still go through `--from <url>`

@@ -41,10 +41,12 @@ this invariant.
 ## Install
 
 ```bash
-specify extension add gates          # once listed in the community catalog
-# or, pre-listing:
-specify extension add --source https://github.com/schwichtgit/spec-gates
+specify extension add gates --from https://github.com/schwichtgit/spec-gates
 ```
+
+Spec Kit's community catalog is discovery-only (`install_allowed: false`),
+so `--from <url>` is the install path even after `gates` is listed there;
+catalog listing buys discoverability, not a bare `specify extension add gates`.
 
 Then, in Claude Code:
 

@@ -15,7 +15,10 @@ extension:
   license: MIT
 
 requires:
-  speckit_version: ">=0.9.0"
+  # The extension system ships in Spec Kit's 0.12.x line (verified against
+  # v0.12.4). The API still carries an RFC and an "experimental" label, so
+  # treat it as evolving, not a frozen contract.
+  speckit_version: ">=0.12.0"
   tools:
     - name: jq
       required: true

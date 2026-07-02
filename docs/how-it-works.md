@@ -64,3 +64,23 @@ themselves are on the protected-files list, and why the git and CI
 boundaries exist). Defense in depth is the point of the three-boundary
 design: the boundaries an agent cannot rewrite (CI, server-side branch
 protection) backstop the ones it theoretically could.
+
+## Spec Kit compatibility
+
+The extension mechanics spec-gates relies on — the `extension.yml`
+manifest (schema 1.0), `specify extension add --from <url>`, the
+`after_implement` lifecycle hook, and the workflow-engine `gate`/`shell`
+steps — were verified against Spec Kit **v0.12.4**. That API still ships
+alongside an `RFC-EXTENSION-SYSTEM.md` and an "experimental" label
+upstream, so treat it as an evolving contract: pin `requires.speckit_version`
+(currently `>=0.12.0`), and expect `/speckit.gates.doctor` to grow a
+Spec-Kit-version compatibility check as the schema settles.
+
+Two upstream facts shape how spec-gates positions itself. First, Spec
+Kit's own `gate` steps and lifecycle hooks are **advisory and
+human-gated** — a gate blocks only inside `specify workflow run` and
+merely _pauses_ (does not fail) in CI or any non-interactive context.
+Second, its lifecycle hooks are not git hooks, and nothing upstream
+projects git or CI enforcement into your repository. spec-gates exists to
+bind those advisory checkpoints to boundaries that actually fail closed —
+a rejected tool call, a blocked commit, a red build.
