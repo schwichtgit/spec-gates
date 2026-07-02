@@ -204,3 +204,130 @@ format_file() {
 
     return "$rc"
 }
+
+# ---------------------------------------------------------------------------
+# Check-mode (non-mutating) support, invoked by verify.sh's `none` orchestrator:
+#
+#   formatter-dispatch.sh --check --tool <prettier|markdownlint|shellcheck> \
+#                         --project-root <dir>
+#
+# Expands the tool's include globs (minus its exclude globs) to a file list and
+# runs the tool in check mode. Exit 0 = clean, nothing to check, or the tool is
+# not installed; nonzero = the tool reported problems. bash 3.2-safe (no
+# globstar, no mapfile).
+# ---------------------------------------------------------------------------
+
+# Print the project-relative paths (NUL-separated) that match <tool>'s include
+# globs and none of its exclude globs, under <root>.
+_gates_collect_files() { # <tool> <root>
+    local tool="$1" root="$2" f rel inc matched
+    while IFS= read -r -d '' f; do
+        rel="${f#"$root"/}"
+        matched=0
+        while IFS= read -r inc; do
+            [[ -z "$inc" ]] && continue
+            if _gates_glob_match "$rel" "$inc"; then
+                matched=1
+                break
+            fi
+        done < <(gates_policy_list "$tool" include 2>/dev/null || true)
+        [[ "$matched" -eq 1 ]] || continue
+        _gates_path_excluded_for_tool "$tool" "$f" && continue
+        printf '%s\0' "$rel"
+    done < <(find "$root" \
+        \( -name .git -o -name node_modules -o -name .venv -o -name target -o -name dist \) -prune \
+        -o -type f -print0)
+}
+
+# Resolve the binary for <tool> under <root>, preferring the project-pinned
+# install so the version is deterministic across the agent, git, and CI
+# boundaries. Order: node_modules/.bin (lockfile-pinned) -> PATH -> none.
+# Deliberately NOT `npx <tool>`: bare npx downloads "latest" (or a stale cached
+# version), which manufactures a tool version and breaks parity. Echoes the
+# binary path, or nothing when the tool is unavailable.
+_gates_tool_bin() { # <binary-name> <root>
+    local binname="$1" root="$2"
+    if [[ -x "$root/node_modules/.bin/$binname" ]]; then
+        printf '%s\n' "$root/node_modules/.bin/$binname"
+    elif command -v "$binname" >/dev/null 2>&1; then
+        printf '%s\n' "$binname"
+    fi
+}
+
+# Run <tool> in check mode over its policy-selected files under <root>.
+_gates_check_tool() { # <tool> <root>
+    local tool="$1" root="$2"
+    local files=()
+    local rel
+    while IFS= read -r -d '' rel; do
+        files+=("$rel")
+    done < <(_gates_collect_files "$tool" "$root")
+
+    if [[ "${#files[@]}" -eq 0 ]]; then
+        echo "gates: $tool: no matching files"
+        return 0
+    fi
+
+    cd "$root" || return 1
+
+    local bin
+    case "$tool" in
+        prettier)
+            bin="$(_gates_tool_bin prettier "$root")"
+            if [[ -z "$bin" ]]; then
+                echo "gates: prettier not installed (node_modules/.bin or PATH); skipping" >&2
+                return 0
+            fi
+            "$bin" --check "${files[@]}"
+            ;;
+        markdownlint)
+            bin="$(_gates_tool_bin markdownlint-cli2 "$root")"
+            if [[ -z "$bin" ]]; then
+                echo "gates: markdownlint-cli2 not installed (node_modules/.bin or PATH); skipping" >&2
+                return 0
+            fi
+            "$bin" "${files[@]}"
+            ;;
+        shellcheck)
+            bin="$(_gates_tool_bin shellcheck "$root")"
+            if [[ -z "$bin" ]]; then
+                echo "gates: shellcheck not installed (PATH); skipping" >&2
+                return 0
+            fi
+            "$bin" "${files[@]}"
+            ;;
+        *)
+            echo "gates: unknown check tool: $tool" >&2
+            return 1
+            ;;
+    esac
+}
+
+# CLI entrypoint (only when executed, not when sourced by the hooks).
+if [[ "${BASH_SOURCE[0]:-}" == "${0}" ]]; then
+    _CHECK=0
+    _TOOL=""
+    _ROOT=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --check) _CHECK=1; shift ;;
+            --tool) _TOOL="${2:-}"; shift 2 ;;
+            --project-root) _ROOT="${2:-}"; shift 2 ;;
+            *) echo "formatter-dispatch: unknown argument: $1" >&2; exit 2 ;;
+        esac
+    done
+
+    if [[ "$_CHECK" != "1" || -z "$_TOOL" || -z "$_ROOT" ]]; then
+        echo "usage: formatter-dispatch.sh --check --tool <tool> --project-root <dir>" >&2
+        exit 2
+    fi
+
+    # The exclude/include lookups need the policy loader and a project root.
+    export CLAUDE_PROJECT_DIR="$_ROOT"
+    _lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    # shellcheck source=policy.sh disable=SC1091
+    [[ -f "$_lib_dir/policy.sh" ]] && source "$_lib_dir/policy.sh"
+
+    _gates_check_tool "$_TOOL" "$_ROOT"
+    exit $?
+fi
