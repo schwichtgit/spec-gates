@@ -1,9 +1,15 @@
 {
-  "_comment": "spec-gates policy. Schema: .specify/gates/policy.schema.json. Loader: .specify/gates/lib/policy.sh. USER-OWNED: init seeds this file; upgrade never overwrites. Edit include/exclude globs, orchestrator, and severity to customize gate behavior at all three boundaries.",
+  "_comment": "spec-gates policy. Schema: .specify/gates/policy.schema.json. Loader: .specify/gates/lib/policy.sh. USER-OWNED: init seeds this file; upgrade never overwrites. Edit include/exclude globs, orchestrator, and severity to customize gate behavior at all three boundaries. node_modules/.venv are excluded at both top-level (name/**) and any nested depth (**/name/**) for monorepos.",
   "hooks": {
     "prettier": {
       "include": ["**/*.md", "**/*.yml", "**/*.yaml", "**/*.json"],
-      "exclude": ["LICENSE", "node_modules/**", "**/node_modules/**"],
+      "exclude": [
+        "LICENSE",
+        "node_modules/**",
+        "**/node_modules/**",
+        ".venv/**",
+        "**/.venv/**"
+      ],
       "orchestrator": "none",
       "severity": "error"
     },
@@ -13,6 +19,8 @@
         "node_modules/**",
         "**/node_modules/**",
         ".venv/**",
+        "**/.venv/**",
+        "target/**",
         "**/target/**"
       ],
       "orchestrator": "none",
@@ -21,11 +29,15 @@
     "shellcheck": {
       "include": ["**/*.sh"],
       "exclude": [
-        "./.git/*",
-        "*/.venv/*",
-        "*/node_modules/*",
-        "*/target/*",
-        "*/dist/*"
+        ".git/**",
+        "node_modules/**",
+        "**/node_modules/**",
+        ".venv/**",
+        "**/.venv/**",
+        "target/**",
+        "**/target/**",
+        "dist/**",
+        "**/dist/**"
       ],
       "orchestrator": "none",
       "severity": "error"
