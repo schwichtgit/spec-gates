@@ -33,10 +33,10 @@ US2 (enabled, max_records) and US3 (parity severity).
 config in v1); it is ordered first only because it is small and unblocks
 two stories.
 
-- [ ] T002 Add `attestation` section (enabled boolean, max_records integer ≥ 1, parity enum error|warning|off; additionalProperties false) to `extension/runtime/policy.schema.json`
-- [ ] T003 Extend `gates_validate_policy` in `extension/runtime/lib/policy.sh` to validate the `attestation` section (types, enums, unknown-field rejection — same pattern as the `git` section)
-- [ ] T004 Seed explicit defaults (`"attestation": { "enabled": true, "max_records": 200, "parity": "error" }`) into `extension/runtime/policy-template.json` (depends on T002, T003)
-- [ ] T005 [P] Add `attestation`-section validation cases (valid, absent-section-ok, bad types, bad enum, unknown field) to `tests/test-policy.sh`
+- [x] T002 Add `attestation` section (enabled boolean, max_records integer ≥ 1, parity enum error|warning|off; additionalProperties false) to `extension/runtime/policy.schema.json`
+- [x] T003 Extend `gates_validate_policy` in `extension/runtime/lib/policy.sh` to validate the `attestation` section (types, enums, unknown-field rejection — same pattern as the `git` section)
+- [x] T004 Seed explicit defaults (`"attestation": { "enabled": true, "max_records": 200, "parity": "error" }`) into `extension/runtime/policy-template.json` (depends on T002, T003)
+- [x] T005 [P] Add `attestation`-section validation cases (valid, absent-section-ok, bad types, bad enum, unknown field) to `tests/test-policy.sh`
 
 **Checkpoint**: policy substrate validated; user stories can start (US1
 could even have started already).

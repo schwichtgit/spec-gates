@@ -436,6 +436,118 @@ else
     fail "protected_files unknown field not rejected: $ERR_OUT"
 fi
 
+# --- 5c: attestation section (001) ---
+echo ""
+echo "=== attestation section ==="
+
+GOOD_ATT="$(write_policy good-att '{
+  "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } },
+  "attestation": { "enabled": true, "max_records": 200, "parity": "error" }
+}')"
+if gates_validate_policy "$GOOD_ATT" >/dev/null 2>&1; then
+    pass "valid attestation section accepted"
+else
+    fail "valid attestation section rejected"
+    gates_validate_policy "$GOOD_ATT" || true
+fi
+
+NO_ATT="$(write_policy no-att '{
+  "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } }
+}')"
+if gates_validate_policy "$NO_ATT" >/dev/null 2>&1; then
+    pass "absent attestation section accepted (defaults apply)"
+else
+    fail "absent attestation section rejected"
+fi
+
+PARTIAL_ATT="$(write_policy partial-att '{
+  "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } },
+  "attestation": { "parity": "warning" }
+}')"
+if gates_validate_policy "$PARTIAL_ATT" >/dev/null 2>&1; then
+    pass "partial attestation section accepted (parity only)"
+else
+    fail "partial attestation section rejected"
+    gates_validate_policy "$PARTIAL_ATT" || true
+fi
+
+BAD_ATT_ENABLED="$(write_policy bad-att-enabled '{
+  "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } },
+  "attestation": { "enabled": "yes" }
+}')"
+ERR_OUT="$(gates_validate_policy "$BAD_ATT_ENABLED" 2>&1 || true)"
+if echo "$ERR_OUT" | grep -q 'attestation: enabled must be a boolean'; then
+    pass "non-boolean attestation.enabled rejected"
+else
+    fail "non-boolean attestation.enabled not rejected: $ERR_OUT"
+fi
+
+BAD_ATT_ZERO="$(write_policy bad-att-zero '{
+  "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } },
+  "attestation": { "max_records": 0 }
+}')"
+ERR_OUT="$(gates_validate_policy "$BAD_ATT_ZERO" 2>&1 || true)"
+if echo "$ERR_OUT" | grep -q 'attestation: max_records must be an integer >= 1'; then
+    pass "attestation.max_records=0 rejected"
+else
+    fail "attestation.max_records=0 not rejected: $ERR_OUT"
+fi
+
+BAD_ATT_FLOAT="$(write_policy bad-att-float '{
+  "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } },
+  "attestation": { "max_records": 2.5 }
+}')"
+ERR_OUT="$(gates_validate_policy "$BAD_ATT_FLOAT" 2>&1 || true)"
+if echo "$ERR_OUT" | grep -q 'attestation: max_records must be an integer >= 1'; then
+    pass "non-integer attestation.max_records rejected"
+else
+    fail "non-integer attestation.max_records not rejected: $ERR_OUT"
+fi
+
+BAD_ATT_STR="$(write_policy bad-att-str '{
+  "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } },
+  "attestation": { "max_records": "200" }
+}')"
+ERR_OUT="$(gates_validate_policy "$BAD_ATT_STR" 2>&1 || true)"
+if echo "$ERR_OUT" | grep -q 'attestation: max_records must be an integer >= 1'; then
+    pass "string attestation.max_records rejected"
+else
+    fail "string attestation.max_records not rejected: $ERR_OUT"
+fi
+
+BAD_ATT_PARITY="$(write_policy bad-att-parity '{
+  "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } },
+  "attestation": { "parity": "loud" }
+}')"
+ERR_OUT="$(gates_validate_policy "$BAD_ATT_PARITY" 2>&1 || true)"
+if echo "$ERR_OUT" | grep -q 'attestation: invalid parity "loud"'; then
+    pass "bogus attestation.parity rejected with value"
+else
+    fail "bogus attestation.parity not rejected: $ERR_OUT"
+fi
+
+BAD_ATT_KEY="$(write_policy bad-att-key '{
+  "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } },
+  "attestation": { "bogus": true }
+}')"
+ERR_OUT="$(gates_validate_policy "$BAD_ATT_KEY" 2>&1 || true)"
+if echo "$ERR_OUT" | grep -q 'attestation: unknown field "bogus"'; then
+    pass "unknown attestation field rejected"
+else
+    fail "unknown attestation field not rejected: $ERR_OUT"
+fi
+
+BAD_ATT_SHAPE="$(write_policy bad-att-shape '{
+  "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } },
+  "attestation": "on"
+}')"
+ERR_OUT="$(gates_validate_policy "$BAD_ATT_SHAPE" 2>&1 || true)"
+if echo "$ERR_OUT" | grep -q 'attestation: must be an object'; then
+    pass "non-object attestation section rejected"
+else
+    fail "non-object attestation section not rejected: $ERR_OUT"
+fi
+
 # --- 6: malformed JSON ---
 echo ""
 echo "=== malformed JSON rejected ==="
