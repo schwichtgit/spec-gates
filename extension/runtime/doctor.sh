@@ -84,6 +84,27 @@ else
     done
 fi
 
+# No-op heuristic (FR-004): a gate that PASSED while checking none of its
+# candidate files is the historical silent-no-op signature. No legitimate
+# instance exists, so it is a doctor FAILURE, not a warning.
+ATT_LOG="$PROJECT_ROOT/.specify/gates/attestations.jsonl"
+if have jq && [[ -f "$ATT_LOG" ]]; then
+    echo ""
+    echo "Attestation evidence (latest record):"
+    NOOP_GATES="$(tail -n 1 "$ATT_LOG" 2>/dev/null \
+        | jq -r '(.gates // [])[]
+            | select(.result == "pass" and ((.candidates // 0) > 0) and ((.checked // 0) == 0))
+            | .name' 2>/dev/null || true)"
+    if [[ -n "$NOOP_GATES" ]]; then
+        for g in $NOOP_GATES; do
+            echo "${BAD}suspected NO-OP gate: $g — latest run passed with candidates > 0 but checked = 0"
+            MISSING=$((MISSING + 1))
+        done
+    else
+        echo "${OK}no no-op signature"
+    fi
+fi
+
 echo ""
 echo "Recommended (optional):"
 have node && echo "${OK}node (to install pinned linters via npm ci)" \

@@ -179,10 +179,13 @@ gates_validate_policy() {
         | .[]
     ' "$file" 2>/dev/null)"
 
-    # Validate the optional top-level protected_files and git sections.
+    # Validate the optional top-level protected_files, git, and attestation
+    # sections.
     local section_errors
     section_errors="$(jq -r '
         def git_keys: ["block_main_commits", "conventional_commits", "forbid_ai_isms"];
+        def att_keys: ["enabled", "max_records", "parity"];
+        def parity_values: ["error", "warning", "off"];
         def pf_errors:
             if has("protected_files") then
                 (.protected_files) as $p
@@ -204,7 +207,27 @@ gates_validate_policy() {
                     + [ $g | to_entries[] | select(.key | IN(git_keys[])) | select((.value | type) != "boolean") | "git: \(.key) must be a boolean" ]
                   end
             else [] end;
-        (pf_errors + git_errors) | .[]
+        def att_errors:
+            if has("attestation") then
+                (.attestation) as $a
+                | if ($a | type) != "object" then ["attestation: must be an object"]
+                  else
+                    [ $a | keys[] | . as $k | select((att_keys | index($k)) == null) | "attestation: unknown field \"\($k)\"" ]
+                    + ( if ($a | has("enabled")) and (($a.enabled | type) != "boolean")
+                          then ["attestation: enabled must be a boolean"]
+                        else [] end )
+                    + ( if ($a | has("max_records"))
+                          and ( (($a.max_records | type) != "number")
+                                or (($a.max_records | floor) != $a.max_records)
+                                or ($a.max_records < 1) )
+                          then ["attestation: max_records must be an integer >= 1"]
+                        else [] end )
+                    + ( if ($a | has("parity")) and ((parity_values | index($a.parity)) == null)
+                          then ["attestation: invalid parity \"\($a.parity)\" (allowed: \(parity_values | join(", ")))"]
+                        else [] end )
+                  end
+            else [] end;
+        (pf_errors + git_errors + att_errors) | .[]
     ' "$file" 2>/dev/null)"
     if [[ -n "$section_errors" ]]; then
         errors="${errors:+$errors$'\n'}$section_errors"

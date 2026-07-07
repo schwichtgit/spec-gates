@@ -55,6 +55,30 @@
           "description": "Reject AI-ism / self-referential phrasing in commit messages and PRs."
         }
       }
+    },
+    "attestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Gate-run evidence settings: attestation records appended per verify.sh run and the pins-based parity gate. Optional; absence means all defaults apply (enabled, 200 records, parity error).",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Append an attestation record to .specify/gates/attestations.jsonl on every verify.sh run (and embed it in --json). false also disables the parity gate; canaries are unaffected."
+        },
+        "max_records": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 200,
+          "description": "Cap on attestation log lines; the oldest records are dropped once the cap is exceeded."
+        },
+        "parity": {
+          "type": "string",
+          "enum": ["error", "warning", "off"],
+          "default": "error",
+          "description": "Severity of the synthetic parity gate when a resolved tool version drifts from its lockfile pin: error fails the run, warning reports without failing, off omits the gate."
+        }
+      }
     }
   },
   "$defs": {

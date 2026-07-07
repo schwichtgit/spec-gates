@@ -60,5 +60,10 @@
     "block_main_commits": true,
     "conventional_commits": true,
     "forbid_ai_isms": true
+  },
+  "attestation": {
+    "enabled": true,
+    "max_records": 200,
+    "parity": "error"
   }
 }

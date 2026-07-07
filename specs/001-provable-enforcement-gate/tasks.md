@@ -33,10 +33,10 @@ US2 (enabled, max_records) and US3 (parity severity).
 config in v1); it is ordered first only because it is small and unblocks
 two stories.
 
-- [ ] T002 Add `attestation` section (enabled boolean, max_records integer ≥ 1, parity enum error|warning|off; additionalProperties false) to `extension/runtime/policy.schema.json`
-- [ ] T003 Extend `gates_validate_policy` in `extension/runtime/lib/policy.sh` to validate the `attestation` section (types, enums, unknown-field rejection — same pattern as the `git` section)
-- [ ] T004 Seed explicit defaults (`"attestation": { "enabled": true, "max_records": 200, "parity": "error" }`) into `extension/runtime/policy-template.json` (depends on T002, T003)
-- [ ] T005 [P] Add `attestation`-section validation cases (valid, absent-section-ok, bad types, bad enum, unknown field) to `tests/test-policy.sh`
+- [x] T002 Add `attestation` section (enabled boolean, max_records integer ≥ 1, parity enum error|warning|off; additionalProperties false) to `extension/runtime/policy.schema.json`
+- [x] T003 Extend `gates_validate_policy` in `extension/runtime/lib/policy.sh` to validate the `attestation` section (types, enums, unknown-field rejection — same pattern as the `git` section)
+- [x] T004 Seed explicit defaults (`"attestation": { "enabled": true, "max_records": 200, "parity": "error" }`) into `extension/runtime/policy-template.json` (depends on T002, T003)
+- [x] T005 [P] Add `attestation`-section validation cases (valid, absent-section-ok, bad types, bad enum, unknown field) to `tests/test-policy.sh`
 
 **Checkpoint**: policy substrate validated; user stories can start (US1
 could even have started already).
@@ -82,11 +82,11 @@ max_records; forged no-op record makes doctor exit 1 naming the gate.
 
 ### Implementation for User Story 2
 
-- [ ] T014 [US2] Create `extension/runtime/lib/attest.sh`: `gates_sha256` (sha256sum→shasum chain, fail loudly — R3), `gates_tool_version` (package.json read for node tools, version-command parse for PATH tools, per-run cache — R1), `gates_pin_version` (package-lock v2+ `.packages` lookup, null when absent — R2), `gates_attest_append` (single-line jq -c append; cap via tail + atomic mv when exceeded — R4)
-- [ ] T015 [P] [US2] Surface per-tool `candidates` and `checked` counts from check-mode in `extension/runtime/lib/formatter-dispatch.sh` (machine-readable line on a dedicated fd or stderr marker consumed by verify.sh; counts already computed by `_gates_collect_files`)
-- [ ] T016 [US2] Extend `extension/runtime/verify.sh`: capture per-gate start/end seconds and results into GateEntry fields, assemble the AttestationRecord (v, ts, boundary, policy_sha256, runtime_version from `.runtime-version` when present, exit, gates[]), honor `attestation.enabled`/`max_records`, append via attest.sh, embed as top-level `"attestation"` in `--json`; a log-write failure is a stderr warning that never changes the gate outcome (depends on T014, T015)
-- [ ] T017 [US2] Add the no-op heuristic to `extension/runtime/doctor.sh`: read the latest record from `.specify/gates/attestations.jsonl` when present; any entry with result=pass, candidates>0, checked=0 → FAIL (exit 1) naming the gate (FR-004)
-- [ ] T018 [US2] Create `tests/test-attest.sh` (record present in log + `--json` after any run; required fields match `specs/001-provable-enforcement-gate/contracts/attestation-record.schema.json` shape via jq assertions; two identical runs identical modulo ts/duration; cap loop max_records+10 → wc -l ≤ cap [SC-004]; missing tool → skipped never pass; forged no-op record → doctor exits 1 naming gate; `attestation.enabled=false` → no log write, no attestation key) and add it to `tests/run.sh`
+- [x] T014 [US2] Create `extension/runtime/lib/attest.sh`: `gates_sha256` (sha256sum→shasum chain, fail loudly — R3), `gates_tool_version` (package.json read for node tools, version-command parse for PATH tools, per-run cache — R1), `gates_pin_version` (package-lock v2+ `.packages` lookup, null when absent — R2), `gates_attest_append` (single-line jq -c append; cap via tail + atomic mv when exceeded — R4)
+- [x] T015 [P] [US2] Surface per-tool `candidates` and `checked` counts from check-mode in `extension/runtime/lib/formatter-dispatch.sh` (machine-readable line on a dedicated fd or stderr marker consumed by verify.sh; counts already computed by `_gates_collect_files`)
+- [x] T016 [US2] Extend `extension/runtime/verify.sh`: capture per-gate start/end seconds and results into GateEntry fields, assemble the AttestationRecord (v, ts, boundary, policy_sha256, runtime_version from `.runtime-version` when present, exit, gates[]), honor `attestation.enabled`/`max_records`, append via attest.sh, embed as top-level `"attestation"` in `--json`; a log-write failure is a stderr warning that never changes the gate outcome (depends on T014, T015)
+- [x] T017 [US2] Add the no-op heuristic to `extension/runtime/doctor.sh`: read the latest record from `.specify/gates/attestations.jsonl` when present; any entry with result=pass, candidates>0, checked=0 → FAIL (exit 1) naming the gate (FR-004)
+- [x] T018 [US2] Create `tests/test-attest.sh` (record present in log + `--json` after any run; required fields match `specs/001-provable-enforcement-gate/contracts/attestation-record.schema.json` shape via jq assertions; two identical runs identical modulo ts/duration; cap loop max_records+10 → wc -l ≤ cap [SC-004]; missing tool → skipped never pass; forged no-op record → doctor exits 1 naming gate; `attestation.enabled=false` → no log write, no attestation key) and add it to `tests/run.sh`
 
 **Checkpoint**: quickstart Scenarios 3–4 pass; US1 still green (canaries
 unaffected by records).

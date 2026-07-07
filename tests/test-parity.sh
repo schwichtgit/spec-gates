@@ -100,9 +100,18 @@ else
     printf '%s' '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error", "custom_command": "true" } } }' \
         >"$WORKDIR/.specify/gates/policy.json"
 
-    run_boundary() { # <boundary> -> JSON with the label stripped
+    run_boundary() { # <boundary> -> JSON with the label and timing stripped
+        # The embedded attestation record legitimately differs across
+        # boundaries in its label, timestamp, and durations; everything else
+        # (policy hash, tool versions, counts, results) must be identical --
+        # that IS the parity claim, now with evidence attached.
         CLAUDE_PROJECT_DIR="$WORKDIR" bash "$WORKDIR/.specify/gates/verify.sh" \
-            --boundary "$1" --json | jq -S 'del(.boundary)'
+            --boundary "$1" --json | jq -S '
+            del(.boundary)
+            | if has("attestation") then
+                .attestation |= (del(.ts) | del(.boundary)
+                  | .gates |= map(del(.duration_s)))
+              else . end'
     }
 
     A="$(run_boundary agent)"

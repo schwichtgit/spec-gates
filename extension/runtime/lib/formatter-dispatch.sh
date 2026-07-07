@@ -254,6 +254,14 @@ _gates_tool_bin() { # <binary-name> <root>
     fi
 }
 
+# Machine-readable check-mode metadata, consumed by verify.sh for the
+# attestation record (feature 001). One line on stderr; `bin` is last so a
+# path containing spaces cannot corrupt the other fields.
+_gates_emit_meta() { # <tool> <binname> <candidates> <checked> <skipped> <bin>
+    printf '##gates-meta## tool=%s binname=%s candidates=%s checked=%s skipped=%s bin=%s\n' \
+        "$1" "$2" "$3" "$4" "$5" "$6" >&2
+}
+
 # Run <tool> in check mode over its policy-selected files under <root>.
 _gates_check_tool() { # <tool> <root>
     local tool="$1" root="$2"
@@ -262,48 +270,51 @@ _gates_check_tool() { # <tool> <root>
     while IFS= read -r -d '' rel; do
         files+=("$rel")
     done < <(_gates_collect_files "$tool" "$root")
+    local count="${#files[@]}"
 
-    if [[ "${#files[@]}" -eq 0 ]]; then
-        echo "gates: $tool: no matching files"
-        return 0
-    fi
-
-    cd "$root" || return 1
-
-    local bin
+    local binname
     case "$tool" in
-        prettier)
-            bin="$(_gates_tool_bin prettier "$root")"
-            if [[ -z "$bin" ]]; then
-                echo "gates: prettier not installed (node_modules/.bin or PATH); skipping" >&2
-                return 0
-            fi
-            "$bin" --check "${files[@]}"
-            ;;
-        markdownlint)
-            bin="$(_gates_tool_bin markdownlint-cli2 "$root")"
-            if [[ -z "$bin" ]]; then
-                echo "gates: markdownlint-cli2 not installed (node_modules/.bin or PATH); skipping" >&2
-                return 0
-            fi
-            # --no-globs: markdownlint-cli2 UNIONS a config file's "globs"
-            # with explicit file args, which would sweep in files the policy
-            # excludes. The policy's file selection must be authoritative.
-            "$bin" --no-globs "${files[@]}"
-            ;;
-        shellcheck)
-            bin="$(_gates_tool_bin shellcheck "$root")"
-            if [[ -z "$bin" ]]; then
-                echo "gates: shellcheck not installed (PATH); skipping" >&2
-                return 0
-            fi
-            "$bin" "${files[@]}"
-            ;;
+        prettier) binname="prettier" ;;
+        markdownlint) binname="markdownlint-cli2" ;;
+        shellcheck) binname="shellcheck" ;;
         *)
             echo "gates: unknown check tool: $tool" >&2
             return 1
             ;;
     esac
+    local bin
+    bin="$(_gates_tool_bin "$binname" "$root")"
+
+    if [[ "$count" -eq 0 ]]; then
+        echo "gates: $tool: no matching files"
+        _gates_emit_meta "$tool" "$binname" 0 0 "" "$bin"
+        return 0
+    fi
+    if [[ -z "$bin" ]]; then
+        echo "gates: $binname not installed (node_modules/.bin or PATH); skipping" >&2
+        _gates_emit_meta "$tool" "$binname" "$count" 0 "not-installed" ""
+        return 0
+    fi
+
+    cd "$root" || return 1
+
+    local rc=0
+    case "$tool" in
+        prettier)
+            "$bin" --check "${files[@]}" || rc=$?
+            ;;
+        markdownlint)
+            # --no-globs: markdownlint-cli2 UNIONS a config file's "globs"
+            # with explicit file args, which would sweep in files the policy
+            # excludes. The policy's file selection must be authoritative.
+            "$bin" --no-globs "${files[@]}" || rc=$?
+            ;;
+        shellcheck)
+            "$bin" "${files[@]}" || rc=$?
+            ;;
+    esac
+    _gates_emit_meta "$tool" "$binname" "$count" "$count" "" "$bin"
+    return "$rc"
 }
 
 # CLI entrypoint (only when executed, not when sourced by the hooks).
