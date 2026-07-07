@@ -48,13 +48,36 @@ fi
 # `shellcheck -x` runs, disable=SC1091 silences the unavoidable static miss.
 # shellcheck source=lib/policy.sh disable=SC1091
 source "$GATES_DIR/lib/policy.sh"
+# shellcheck source=lib/attest.sh disable=SC1091
+source "$GATES_DIR/lib/attest.sh"
 
 FAILED=0
 WARNINGS=0
 declare -a RESULTS=()
+declare -a ATT_GATES=()
 
 record() { # name status detail
     RESULTS+=("{\"name\":\"$1\",\"status\":\"$2\",\"detail\":$(jq -Rn --arg d "$3" '$d')}")
+}
+
+# Append a GateEntry (attestation shape, data-model.md) for an evaluated
+# gate. Empty strings become JSON null for the nullable fields.
+att_gate() { # name bin version pinned candidates checked result reason duration_s
+    ATT_GATES+=("$(jq -cn \
+        --arg name "$1" --arg bin "$2" --arg version "$3" --arg pinned "$4" \
+        --arg candidates "$5" --arg checked "$6" --arg result "$7" \
+        --arg reason "$8" --arg duration "$9" '
+        def num_or_null: if . == "" then null else tonumber end;
+        def str_or_null: if . == "" then null else . end;
+        { name: $name,
+          bin: ($bin | str_or_null),
+          version: ($version | str_or_null),
+          pinned: ($pinned | str_or_null),
+          candidates: ($candidates | num_or_null),
+          checked: ($checked | num_or_null),
+          result: $result,
+          reason: $reason,
+          duration_s: ($duration | tonumber) }')")
 }
 
 run_gate() { # name severity cmd...
@@ -63,17 +86,56 @@ run_gate() { # name severity cmd...
         record "$name" "planned" "$*"
         return 0
     fi
-    if "$@" >/tmp/gates-out.$$ 2>&1; then
-        record "$name" "pass" ""
-    else
-        local detail; detail="$(tail -c 2000 /tmp/gates-out.$$)"
-        if [[ "$severity" == "error" ]]; then
-            record "$name" "fail" "$detail"; FAILED=$((FAILED + 1))
-        else
-            record "$name" "warn" "$detail"; WARNINGS=$((WARNINGS + 1))
-        fi
+    local start end rc=0
+    start="$(date +%s)"
+    "$@" >/tmp/gates-out.$$ 2>&1 || rc=$?
+    end="$(date +%s)"
+
+    # Check-mode metadata (##gates-meta##, emitted by formatter-dispatch) is
+    # machinery, not gate output: parse it for the attestation entry, strip
+    # it from the visible detail. Non-file gates (task/custom) have none.
+    local meta binname="" bin="" candidates="" checked="" skipped=""
+    meta="$(grep '##gates-meta##' /tmp/gates-out.$$ 2>/dev/null | tail -n 1 || true)"
+    if [[ -n "$meta" ]]; then
+        binname="$(printf '%s' "$meta" | sed -n 's/.* binname=\([^ ]*\).*/\1/p')"
+        candidates="$(printf '%s' "$meta" | sed -n 's/.* candidates=\([0-9]*\).*/\1/p')"
+        checked="$(printf '%s' "$meta" | sed -n 's/.* checked=\([0-9]*\).*/\1/p')"
+        skipped="$(printf '%s' "$meta" | sed -n 's/.* skipped=\([^ ]*\).*/\1/p')"
+        bin="$(printf '%s' "$meta" | sed -n 's/.* bin=//p')"
     fi
+    local detail
+    detail="$(grep -v '##gates-meta##' /tmp/gates-out.$$ | tail -c 2000 || true)"
     rm -f /tmp/gates-out.$$
+
+    local version="" pinned=""
+    if [[ -n "$binname" ]]; then
+        version="$(gates_tool_version "$binname" "$PROJECT_ROOT")"
+        pinned="$(gates_pin_version "$binname" "$PROJECT_ROOT")"
+    fi
+    [[ -n "$bin" && "$bin" == "$PROJECT_ROOT/"* ]] && bin="${bin#"$PROJECT_ROOT"/}"
+
+    # A missing tool is skipped with a reason, never pass (spec edge case).
+    # The attestation reason carries no tool output: output can quote file
+    # contents, which FR-011 keeps out of records.
+    local result reason=""
+    if [[ "$rc" -eq 0 && -n "$skipped" ]]; then
+        result="skipped"; reason="$binname not installed"
+    elif [[ "$rc" -eq 0 ]]; then
+        result="pass"
+    elif [[ "$severity" == "error" ]]; then
+        result="fail"; reason="check failed"
+    else
+        result="warn"; reason="check failed (warning)"
+    fi
+
+    case "$result" in
+        pass) record "$name" "pass" "" ;;
+        skipped) record "$name" "skipped" "$reason" ;;
+        fail) record "$name" "fail" "$detail"; FAILED=$((FAILED + 1)) ;;
+        warn) record "$name" "warn" "$detail"; WARNINGS=$((WARNINGS + 1)) ;;
+    esac
+    att_gate "$name" "$bin" "$version" "$pinned" "$candidates" "$checked" \
+        "$result" "$reason" "$((end - start))"
 }
 
 # ---------------------------------------------------------------------------
@@ -110,6 +172,47 @@ case "$ORCH" in
 esac
 
 # ---------------------------------------------------------------------------
+# Attestation record (feature 001): one per non-dry run unless the policy
+# disables it. A failure to hash or to write the log is a stderr warning
+# only — evidence loss must never mask or manufacture a gate outcome.
+# ---------------------------------------------------------------------------
+EXIT_CODE=0
+[[ "$FAILED" -gt 0 ]] && EXIT_CODE=2
+
+ATTESTATION=""
+ATT_ENABLED="$(gates_policy_section_get attestation enabled)"
+if [[ "$DRY_RUN" != "1" && "$ATT_ENABLED" != "false" ]]; then
+    if POLICY_SHA="$(gates_sha256 "$POLICY_FILE")"; then
+        RUNTIME_VERSION=""
+        if [[ -f "$GATES_DIR/.runtime-version" ]]; then
+            RUNTIME_VERSION="$(head -n 1 "$GATES_DIR/.runtime-version" 2>/dev/null || true)"
+        fi
+        ATT_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        att_joined=""
+        if [[ ${#ATT_GATES[@]} -gt 0 ]]; then
+            att_joined="$(IFS=,; printf '%s' "${ATT_GATES[*]}")"
+        fi
+        ATTESTATION="$(jq -cn --arg ts "$ATT_TS" --arg boundary "$BOUNDARY" \
+            --arg sha "$POLICY_SHA" --arg rv "$RUNTIME_VERSION" \
+            --argjson exit "$EXIT_CODE" --argjson gates "[$att_joined]" '
+            { v: 1,
+              ts: $ts,
+              boundary: (if ["agent","git","ci"] | index($boundary) then $boundary else "unspecified" end),
+              policy_sha256: $sha,
+              runtime_version: (if $rv == "" then null else $rv end),
+              exit: $exit,
+              gates: $gates }')"
+        MAX_RECORDS="$(gates_policy_section_get attestation max_records)"
+        [[ -z "$MAX_RECORDS" ]] && MAX_RECORDS=200
+        if ! gates_attest_append "$ATTESTATION" "$GATES_DIR/attestations.jsonl" "$MAX_RECORDS"; then
+            echo "gates: warning: could not write $GATES_DIR/attestations.jsonl (gate outcome unaffected)" >&2
+        fi
+    else
+        echo "gates: warning: attestation skipped — cannot hash policy (gate outcome unaffected)" >&2
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # Report
 # ---------------------------------------------------------------------------
 # Note: "${RESULTS[@]}" on an empty array is an unbound-variable error under
@@ -120,8 +223,13 @@ if [[ "$JSON" == "1" ]]; then
     if [[ ${#RESULTS[@]} -gt 0 ]]; then
         joined="$(IFS=,; printf '%s' "${RESULTS[*]}")"
     fi
-    printf '{"boundary":"%s","failed":%d,"warnings":%d,"gates":[%s]}\n' \
-        "$BOUNDARY" "$FAILED" "$WARNINGS" "$joined"
+    if [[ -n "$ATTESTATION" ]]; then
+        printf '{"boundary":"%s","failed":%d,"warnings":%d,"gates":[%s],"attestation":%s}\n' \
+            "$BOUNDARY" "$FAILED" "$WARNINGS" "$joined" "$ATTESTATION"
+    else
+        printf '{"boundary":"%s","failed":%d,"warnings":%d,"gates":[%s]}\n' \
+            "$BOUNDARY" "$FAILED" "$WARNINGS" "$joined"
+    fi
 else
     echo "gates: boundary=$BOUNDARY failed=$FAILED warnings=$WARNINGS"
     if [[ ${#RESULTS[@]} -gt 0 ]]; then
@@ -138,5 +246,4 @@ else
     fi
 fi
 
-[[ "$FAILED" -gt 0 ]] && exit 2
-exit 0
+exit "$EXIT_CODE"
