@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/schwichtgit/spec-gates/specs/001-provable-enforcement-gate/contracts/attestation-record.schema.json",
+  "title": "spec-gates attestation record",
+  "description": "One record per verify.sh run, appended to .specify/gates/attestations.jsonl and embedded in --json output. Consumers must ignore unknown fields.",
+  "type": "object",
+  "required": ["v", "ts", "boundary", "policy_sha256", "exit", "gates"],
+  "properties": {
+    "v": { "const": 1 },
+    "ts": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "boundary": { "enum": ["agent", "git", "ci", "unspecified"] },
+    "policy_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "runtime_version": { "type": ["string", "null"] },
+    "exit": { "type": "integer", "minimum": 0 },
+    "gates": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/gateEntry" }
+    }
+  },
+  "$defs": {
+    "gateEntry": {
+      "type": "object",
+      "required": ["name", "result", "duration_s"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "bin": { "type": ["string", "null"] },
+        "version": { "type": ["string", "null"] },
+        "pinned": { "type": ["string", "null"] },
+        "candidates": { "type": ["integer", "null"], "minimum": 0 },
+        "checked": { "type": ["integer", "null"], "minimum": 0 },
+        "result": { "enum": ["pass", "fail", "warn", "skipped", "planned"] },
+        "reason": { "type": "string" },
+        "duration_s": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}
