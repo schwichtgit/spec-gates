@@ -27,6 +27,25 @@ periodically proves it still blocks known violations (canaries). The design
 rule in the README — "a gate that cannot demonstrably block is reported
 broken" — becomes a standing, automated invariant instead of a principle.
 
+## Clarifications
+
+### Session 2026-07-07
+
+- Q: How does CI obtain a reference attestation for parity verification,
+  given the attestation log defaults to gitignored? → A: No transport —
+  each boundary verifies its own attestation against committed
+  expectations (resolved tool versions vs `package-lock.json` pins, policy
+  hash vs the committed `policy.json`); boundaries are proven equal
+  transitively.
+- Q: When doctor detects a suspected no-op gate (candidates > 0, zero files
+  checked, result pass), is that a warning or a failure? → A: A failure —
+  doctor exits nonzero naming the gate, same class as a required-tool gap;
+  the combination has no legitimate false positive.
+- Q: What is the parity severity default when the policy has no
+  `attestation` section? → A: `error` — drift fails that boundary's gate
+  run with tool, both versions, and remedy named; projects opt into
+  `warning` explicitly.
+
 ## User Scenarios & Testing _(mandatory)_
 
 ### User Story 1 - The gate proves it still blocks (Priority: P1)
@@ -87,30 +106,37 @@ and duration. Change the policy; the policy hash changes.
    **Then** they are identical.
 3. **Given** a gate that reports pass while checking zero files even though
    files matching its include globs exist, **When** doctor inspects the
-   latest attestation, **Then** it reports a suspected no-op gate.
+   latest attestation, **Then** doctor fails (nonzero exit) naming the
+   suspected no-op gate.
 
 ---
 
 ### User Story 3 - Parity is verified, not assumed (Priority: P3)
 
-CI verifies that the gate it just ran is the same gate the developer's
-boundaries ran: same policy hash, same tool versions. If the agent boundary
-attested prettier 3.9.4 but CI resolves 3.5.3 — or the policy file changed
-between the local run and the push — the discrepancy is reported at the
-severity the policy specifies (error blocks, warning reports).
+Every boundary verifies that the gate it just ran matches the project's
+committed expectations: each resolved tool's version must match the pinned
+version (e.g., in `package-lock.json`), and the policy in effect is
+identified by content hash. If a developer's machine resolves prettier
+3.5.3 while the project pins 3.9.4 — or CI does — that boundary's own gate
+run reports the drift, with both versions named, at the severity the policy
+specifies (error blocks, warning reports). Because every boundary passes
+the same committed reference, agent, git, and CI runs are proven equivalent
+transitively, with no attestation transport between machines.
 
 **Why this priority**: this converts the README's parity claim into a
-checked property. It depends on Story 2's records existing at two
-boundaries, so it lands last.
+checked property. It depends on Story 2's attestation fields (resolved
+binary + version per tool), so it lands last.
 
 **Acceptance Scenarios**:
 
-1. **Given** an agent-boundary attestation committed alongside a change,
-   **When** CI runs the gate and compares attestations, **Then** matching
-   policy hash + tool versions passes and any mismatch is reported with
-   both values named.
-2. **Given** the policy's parity severity is `error`, **When** tool versions
-   differ between boundaries, **Then** the CI gate run fails.
+1. **Given** a project with pinned tool versions, **When** the gate runs at
+   any boundary and every resolved tool version matches its pin, **Then**
+   parity verification passes silently.
+2. **Given** a resolved tool version that differs from its pin, **When**
+   the gate runs, **Then** the drift is reported naming the tool, the
+   resolved version, and the pinned version.
+3. **Given** the policy's parity severity is `error`, **When** a tool
+   version differs from its pin, **Then** that boundary's gate run fails.
 
 ---
 
@@ -155,8 +181,11 @@ boundaries, so it lands last.
   object emitted to the log.
 - **FR-004**: A gate whose include globs match at least one candidate file
   but which checked zero files MUST be distinguishable in the attestation
-  (`candidates > 0, files_checked = 0`), and `doctor` MUST flag this
-  combination as a suspected no-op gate.
+  (`candidates > 0, files_checked = 0`), and `doctor` MUST treat this
+  combination on a passing gate as a failure: exit nonzero and name the
+  suspected no-op gate (the combination has no legitimate false positive —
+  candidates are counted after excludes, and a missing tool records
+  `skipped`, never `pass`).
 - **FR-005**: A canary suite MUST verify, in an isolated sandbox, that each
   of the following is rejected: (a) a formatting violation via the format
   gate; (b) a shell lint violation via the shellcheck gate; (c) a
@@ -169,14 +198,18 @@ boundaries, so it lands last.
   failure paths).
 - **FR-007**: `doctor` MUST offer canary execution, and the projected CI
   template MUST run the canary suite alongside the gate.
-- **FR-008**: A parity verification mode MUST compare two attestations
-  (e.g., latest agent-boundary vs current CI run) on policy hash and
-  per-tool version, reporting any mismatch with both values; its severity
-  (error/warning) MUST be policy-configurable.
+- **FR-008**: Parity verification MUST compare the current run's
+  attestation against the project's committed expectations — each resolved
+  tool version against its pinned version (from the project's lockfile
+  pins) and the policy content hash against the committed policy file —
+  reporting any mismatch with both values named; its severity
+  (error/warning) MUST be policy-configurable. No cross-boundary transport
+  of attestation records is required.
 - **FR-009**: The policy schema MUST gain an optional `attestation` section
   (enabled flag, max record count, parity severity) validated by both the
   JSON schema and the shell validator; absence of the section means
-  attestations enabled with defaults.
+  attestations enabled with defaults: `enabled: true`, `max_records: 200`,
+  `parity: error`.
 - **FR-010**: All new code MUST run on bash 3.2 (macOS `/bin/bash`) with
   `jq` as the only hard dependency, offline.
 - **FR-011**: Attestation records MUST NOT contain file contents.
@@ -201,9 +234,10 @@ boundaries, so it lands last.
   removed/stubbed) is detected by the canary suite in a single run — proven
   by a regression test that breaks the dispatch and asserts the suite fails
   naming that gate.
-- **SC-002**: A tool-version difference between two boundaries (e.g., two
-  prettier versions) is surfaced by parity verification in the first CI run
-  after it appears, with both versions named in the report.
+- **SC-002**: A resolved tool version that differs from the project's pin
+  (e.g., prettier 3.5.3 resolved where 3.9.4 is pinned) is surfaced by
+  parity verification in that boundary's very next gate run, with both
+  versions named in the report.
 - **SC-003**: Attestation writing adds no more than 1 second to a gate run
   on this repository's own gate.
 - **SC-004**: The attestation log never exceeds the configured cap across
@@ -230,5 +264,10 @@ boundaries, so it lands last.
   consumers of the attestation format and hash machinery.
 - Whether the attestation log is committed or gitignored is a per-project
   choice; the default seeds it as gitignored (records are evidence, not
-  source), with parity verification reading the agent attestation from the
-  log when present.
+  source). Parity verification does not depend on the log being shared:
+  each boundary checks its own run against committed pins (Clarifications,
+  2026-07-07).
+- Parity's pin source is the project's existing dependency pinning (e.g.,
+  `package-lock.json` for node-resolved linters); tools without a pin
+  source (e.g., system `shellcheck`) are attested but exempt from pin
+  comparison in v1.
