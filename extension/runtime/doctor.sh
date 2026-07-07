@@ -12,6 +12,18 @@ set -uo pipefail
 # Exit 0 = everything required (incl. policy-enabled linters) is present.
 # Exit 1 = something required is missing.
 
+# --canary delegates to the canary suite (projected as a sibling of this
+# script), propagating its exit code and output.
+if [[ "${1:-}" == "--canary" ]]; then
+    shift
+    CANARY_SH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/canary.sh"
+    if [[ ! -f "$CANARY_SH" ]]; then
+        echo "doctor: canary.sh not found next to doctor.sh — re-project the runtime (/speckit.gates.init)" >&2
+        exit 1
+    fi
+    exec bash "$CANARY_SH" "$@"
+fi
+
 PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 GATES_LIB_DIR="$PROJECT_ROOT/.specify/gates/lib"
 

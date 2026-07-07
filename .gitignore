@@ -12,5 +12,9 @@ node_modules/
 # committed; the runtime copies are build artifacts.
 .specify/gates/verify.sh
 .specify/gates/doctor.sh
+.specify/gates/canary.sh
 .specify/gates/lib/
 .specify/gates/policy.schema.json
+
+# Gate run evidence (attestation log): disposable local artifact, never source.
+.specify/gates/attestations.jsonl
