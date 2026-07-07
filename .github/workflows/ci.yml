@@ -29,12 +29,15 @@ jobs:
       - name: Project the gate runtime
         run: |
           mkdir -p .specify/gates/lib
-          cp extension/runtime/verify.sh extension/runtime/doctor.sh .specify/gates/
+          cp extension/runtime/verify.sh extension/runtime/doctor.sh extension/runtime/canary.sh .specify/gates/
           cp extension/runtime/lib/*.sh .specify/gates/lib/
           cp extension/runtime/policy.schema.json .specify/gates/
 
       - name: Run the gate on this repo (dogfood)
         run: bash .specify/gates/verify.sh --boundary ci
+
+      - name: Prove the gate still blocks (canaries)
+        run: bash .specify/gates/canary.sh
 
       - name: Run the test suites
         run: bash tests/run.sh

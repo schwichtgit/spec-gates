@@ -3,5 +3,8 @@
 stage('Quality Gates') {
     steps {
         sh 'bash .specify/gates/verify.sh --boundary ci'
+        // A failure here means a BROKEN GATE (a canary violation was
+        // accepted), not a dirty tree.
+        sh 'bash .specify/gates/canary.sh'
     }
 }

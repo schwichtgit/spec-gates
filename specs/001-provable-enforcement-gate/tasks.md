@@ -20,7 +20,7 @@ independently deliverable — it does not depend on Phase 2 (noted below).
 
 **Purpose**: repository plumbing shared by all stories
 
-- [ ] T001 Add projected-artifact ignore entries (`.specify/gates/attestations.jsonl`, `.specify/gates/canary.sh`, `.specify/gates/lib/attest.sh` is covered by the existing `lib/` rule) to `.gitignore`
+- [x] T001 Add projected-artifact ignore entries (`.specify/gates/attestations.jsonl`, `.specify/gates/canary.sh`, `.specify/gates/lib/attest.sh` is covered by the existing `lib/` rule) to `.gitignore`
 
 ---
 
@@ -55,14 +55,14 @@ restore → 0 again.
 
 ### Implementation for User Story 1
 
-- [ ] T006 [US1] Create `extension/runtime/canary.sh`: sandbox lifecycle (mktemp -d, trap cleanup on all exits, exit 2 on setup failure per contract), CLI parsing (`--json`, `--only <ids>`), result collection and summary (status blocked/accepted/skipped per canary, exit 0/1)
-- [ ] T007 [US1] Implement gate canaries `format` and `shell` in `extension/runtime/canary.sh`: project runtime into sandbox (copy verify.sh + lib/, minimal policy, symlink host `node_modules` when present — pattern from `tests/test-gate.sh`), plant a prettier-dirty file / an SC2086-class script, require `verify.sh` exit 2 with the gate failing
-- [ ] T008 [US1] Implement hook canaries `bash` and `protect` in `extension/runtime/canary.sh`: pipe crafted tool-call JSON (`rm -rf /`; `.env` edit) to `validate-bash.sh` / `protect-files.sh` from the projected hooks, require exit 2
-- [ ] T009 [US1] Implement `secret` canary in `extension/runtime/canary.sh`: sandbox `git init` fixture with the pre-commit hook installed, stage an AWS-key-shaped string, require the commit to be blocked
-- [ ] T010 [P] [US1] Add `--canary` delegation (exec canary.sh, propagate exit and output) to `extension/runtime/doctor.sh` (parallel with T007–T009 once T006 exists)
-- [ ] T011 [US1] Wire projection + CI: project `canary.sh` and add a named canary step in `.github/workflows/ci.yml`; add the same step to `extension/ci/github/gates.yml`
-- [ ] T012 [P] [US1] Add the canary step equivalents to `extension/ci/gitlab/gates.gitlab-ci.yml` and `extension/ci/jenkins/Jenkinsfile.gates`
-- [ ] T013 [US1] Create `tests/test-canary.sh` (healthy suite → 0 with all blocked; broken dispatch stub → 1 naming format gate, restore → 0 [SC-001]; sandbox isolation: no file created/modified outside sandbox [FR-006]; `--only` subset; skipped semantics for absent non-enabled tools) and add it to `tests/run.sh`
+- [x] T006 [US1] Create `extension/runtime/canary.sh`: sandbox lifecycle (mktemp -d, trap cleanup on all exits, exit 2 on setup failure per contract), CLI parsing (`--json`, `--only <ids>`), result collection and summary (status blocked/accepted/skipped per canary, exit 0/1)
+- [x] T007 [US1] Implement gate canaries `format` and `shell` in `extension/runtime/canary.sh`: project runtime into sandbox (copy verify.sh + lib/, minimal policy, symlink host `node_modules` when present — pattern from `tests/test-gate.sh`), plant a prettier-dirty file / an SC2086-class script, require `verify.sh` exit 2 with the gate failing
+- [x] T008 [US1] Implement hook canaries `bash` and `protect` in `extension/runtime/canary.sh`: pipe crafted tool-call JSON (`rm -rf /`; `.env` edit) to `validate-bash.sh` / `protect-files.sh` from the projected hooks, require exit 2
+- [x] T009 [US1] Implement `secret` canary in `extension/runtime/canary.sh`: sandbox `git init` fixture with the pre-commit hook installed, stage an AWS-key-shaped string, require the commit to be blocked
+- [x] T010 [P] [US1] Add `--canary` delegation (exec canary.sh, propagate exit and output) to `extension/runtime/doctor.sh` (parallel with T007–T009 once T006 exists)
+- [x] T011 [US1] Wire projection + CI: project `canary.sh` and add a named canary step in `.github/workflows/ci.yml`; add the same step to `extension/ci/github/gates.yml`
+- [x] T012 [P] [US1] Add the canary step equivalents to `extension/ci/gitlab/gates.gitlab-ci.yml` and `extension/ci/jenkins/Jenkinsfile.gates`
+- [x] T013 [US1] Create `tests/test-canary.sh` (healthy suite → 0 with all blocked; broken dispatch stub → 1 naming format gate, restore → 0 [SC-001]; sandbox isolation: no file created/modified outside sandbox [FR-006]; `--only` subset; skipped semantics for absent non-enabled tools) and add it to `tests/run.sh`
 
 **Checkpoint**: MVP — quickstart Scenarios 1–2 pass; enforcement is
 demonstrably alive even with zero attestation code written.

@@ -8,6 +8,9 @@ gates:
     - npm install -g prettier markdownlint-cli2
   script:
     - bash .specify/gates/verify.sh --boundary ci
+    # A failure here means a BROKEN GATE (a canary violation was accepted),
+    # not a dirty tree.
+    - bash .specify/gates/canary.sh
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == "main"'

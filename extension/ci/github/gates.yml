@@ -23,3 +23,7 @@ jobs:
           npm install -g prettier markdownlint-cli2
       - name: Run quality gates
         run: bash .specify/gates/verify.sh --boundary ci
+      # A red step here means a BROKEN GATE, not a dirty tree: a canary
+      # (known violation) was accepted instead of blocked.
+      - name: Prove the gate still blocks (canaries)
+        run: bash .specify/gates/canary.sh
