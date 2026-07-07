@@ -112,6 +112,25 @@ else
     skip "exclude-glob check" "run npm ci to install pinned prettier"
 fi
 
+# --- markdownlint excludes hold even when a config file declares globs ---
+# markdownlint-cli2 UNIONS a config's "globs" with explicit file args; the
+# gate must pass --no-globs so policy file selection stays authoritative.
+echo ""
+echo "=== markdownlint config globs do not bypass policy excludes ==="
+if have_node_linters; then
+    D="$WORKDIR/mdglobs"
+    project "$D" '{ "hooks": { "markdownlint": { "include": ["docs/**"], "exclude": ["machinery/**"], "orchestrator": "none", "severity": "error" }, "verify-quality": { "orchestrator": "none", "severity": "error" } } }'
+    printf '{ "globs": ["**/*.md"] }\n' >"$D/.markdownlint-cli2.jsonc"
+    mkdir -p "$D/docs" "$D/machinery"
+    printf '# Title\n\nClean body.\n' >"$D/docs/ok.md"
+    printf '#bad heading\n#another\n' >"$D/machinery/vendor.md"
+    expect "excluded bad md ignored despite config globs" "$(gate "$D")" 0
+    printf '#bad heading\n#another\n' >"$D/docs/bad.md"
+    expect "included bad md still caught" "$(gate "$D")" 2
+else
+    skip "markdownlint config-glob check" "run npm ci to install pinned linters"
+fi
+
 # --- custom orchestrator reads custom_command and maps exit codes ---
 echo ""
 echo "=== custom orchestrator ==="

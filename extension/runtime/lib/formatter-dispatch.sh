@@ -286,7 +286,10 @@ _gates_check_tool() { # <tool> <root>
                 echo "gates: markdownlint-cli2 not installed (node_modules/.bin or PATH); skipping" >&2
                 return 0
             fi
-            "$bin" "${files[@]}"
+            # --no-globs: markdownlint-cli2 UNIONS a config file's "globs"
+            # with explicit file args, which would sweep in files the policy
+            # excludes. The policy's file selection must be authoritative.
+            "$bin" --no-globs "${files[@]}"
             ;;
         shellcheck)
             bin="$(_gates_tool_bin shellcheck "$root")"
