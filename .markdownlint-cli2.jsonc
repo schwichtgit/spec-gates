@@ -12,5 +12,5 @@
     "MD013": false,
   },
   "globs": ["**/*.md"],
-  "ignores": ["**/node_modules", "**/.venv"]
+  "ignores": ["**/node_modules", "**/.venv", ".specify", ".claude"]
 }
