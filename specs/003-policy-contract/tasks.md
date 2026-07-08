@@ -125,11 +125,91 @@ when the invariant check is stubbed.
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T025 Finalize this file's accept blocks (dogfood): reconcile with what got implemented and give SC-001–SC-005 each a `# verifies:` reference via offline mini-fixtures (this repo itself stays dormant — no `extends` here), keeping total enforced execution within 002's 30s block budget
-- [ ] T026 [P] Document the contract in `README.md`: extends declaration, sync/propose commands, the three committed artifacts, deviation semantics, link `contracts/artifact-layout.md`
-- [ ] T027 [P] Document the flow in `docs/how-it-works.md`: declare → sync → materialize → prove pipeline, deviation classification, reviewable updates, propose loop, attestation `contract` object, the new canary
-- [ ] T028 Run quickstart.md Scenarios 1–8 end-to-end on macOS bash 3.2, record the contract-gate overhead delta against SC-004 in the PR description
-- [ ] T029 Final check: `bash tests/run.sh` all green and the repo's own gate green (SC-006); the Status flip to `Complete` happens as the last commit of `/speckit-implement` once every box above is checked
+- [x] T025 Finalize this file's accept blocks (dogfood): reconcile with what got implemented and give SC-001–SC-005 each a `# verifies:` reference via offline mini-fixtures (this repo itself stays dormant — no `extends` here), keeping total enforced execution within 002's 30s block budget
+
+  ```accept
+  # verifies: SC-001
+  set -eu
+  w="$(mktemp -d)"; trap 'rm -rf "$w"' EXIT
+  git init -q "$w/base"
+  printf '%s' '{"hooks":{"verify-quality":{"orchestrator":"none","severity":"error"}},"spec":{"enabled":true}}' | jq -S . >"$w/base/policy.json"
+  git -C "$w/base" add -A && git -C "$w/base" -c user.email=t@t -c user.name=t commit -qm base && git -C "$w/base" tag v1.0.0
+  mkdir -p "$w/c/.specify/gates"
+  cp -R .specify/gates/lib "$w/c/.specify/gates/lib"
+  cp .specify/gates/verify.sh .specify/gates/contract.sh "$w/c/.specify/gates/"
+  jq -n --arg src "$w/base" '{hooks:{"verify-quality":{orchestrator:"none",severity:"error"}},spec:{enabled:false},extends:{source:$src,version:"v1.0.0"}}' >"$w/c/.specify/gates/policy.json"
+  CLAUDE_PROJECT_DIR="$w/c" bash "$w/c/.specify/gates/contract.sh" sync >/dev/null
+  CLAUDE_PROJECT_DIR="$w/c" bash "$w/c/.specify/gates/verify.sh" --boundary ci >/dev/null 2>&1
+  printf ' ' >>"$w/c/.specify/gates/policy.effective.json"
+  rc=0; out="$(CLAUDE_PROJECT_DIR="$w/c" bash "$w/c/.specify/gates/verify.sh" --boundary ci 2>&1)" || rc=$?
+  [ "$rc" -eq 2 ]
+  printf '%s' "$out" | grep -q 'effective policy drifted'
+  ```
+
+  ```accept
+  # verifies: SC-003
+  set -eu
+  w="$(mktemp -d)"; trap 'rm -rf "$w"' EXIT
+  git init -q "$w/base"
+  printf '%s' '{"hooks":{"verify-quality":{"orchestrator":"none","severity":"error"}}}' | jq -S . >"$w/base/policy.json"
+  git -C "$w/base" add -A && git -C "$w/base" -c user.email=t@t -c user.name=t commit -qm base && git -C "$w/base" tag v1.0.0
+  mkdir -p "$w/c/.specify/gates"
+  cp -R .specify/gates/lib "$w/c/.specify/gates/lib"
+  cp .specify/gates/verify.sh .specify/gates/contract.sh "$w/c/.specify/gates/"
+  jq -n --arg src "$w/base" '{hooks:{"verify-quality":{orchestrator:"none",severity:"error"}},extends:{source:$src,version:"v1.0.0"}}' >"$w/c/.specify/gates/policy.json"
+  CLAUDE_PROJECT_DIR="$w/c" bash "$w/c/.specify/gates/contract.sh" sync >/dev/null
+  git init -q "$w/c" && git -C "$w/c" checkout -q -b main
+  git -C "$w/c" config user.email t@t && git -C "$w/c" config user.name t
+  git -C "$w/c" add -A && git -C "$w/c" commit -qm adopt
+  printf '%s' '{"hooks":{"verify-quality":{"orchestrator":"none","severity":"error"},"shellcheck":{"include":["**/*.sh"],"orchestrator":"none","severity":"error"}}}' | jq -S . >"$w/base/policy.json"
+  git -C "$w/base" add -A && git -C "$w/base" -c user.email=t@t -c user.name=t commit -qm tighten && git -C "$w/base" tag v1.1.0
+  CLAUDE_PROJECT_DIR="$w/c" bash "$w/c/.specify/gates/contract.sh" sync --update >/dev/null
+  git -C "$w/c" rev-parse --verify -q refs/heads/gates/baseline-v1.1.0 >/dev/null
+  [ "$(jq -r '.version' "$w/c/.specify/gates/baseline.lock.json")" = "v1.0.0" ]
+  ```
+
+  ```accept
+  # verifies: SC-004
+  set -eu
+  w="$(mktemp -d)"; trap 'rm -rf "$w"' EXIT
+  git init -q "$w/base"
+  printf '%s' '{"hooks":{"verify-quality":{"orchestrator":"none","severity":"error"}}}' | jq -S . >"$w/base/policy.json"
+  git -C "$w/base" add -A && git -C "$w/base" -c user.email=t@t -c user.name=t commit -qm base && git -C "$w/base" tag v1.0.0
+  mkdir -p "$w/c/.specify/gates"
+  cp -R .specify/gates/lib "$w/c/.specify/gates/lib"
+  cp .specify/gates/contract.sh "$w/c/.specify/gates/"
+  jq -n --arg src "$w/base" '{hooks:{"verify-quality":{orchestrator:"none",severity:"error"}},extends:{source:$src,version:"v1.0.0"}}' >"$w/c/.specify/gates/policy.json"
+  CLAUDE_PROJECT_DIR="$w/c" bash "$w/c/.specify/gates/contract.sh" sync >/dev/null
+  rm -rf "$w/base"
+  start="$(date +%s)"
+  ( . .specify/gates/lib/policy.sh; . .specify/gates/lib/attest.sh; . .specify/gates/lib/contract.sh; gates_contract_check "$w/c"; [ "$CONTRACT_STATUS" = "pass" ] )
+  end="$(date +%s)"
+  [ $((end - start)) -le 1 ]
+  ```
+
+  ```accept
+  # verifies: SC-005
+  set -eu
+  w="$(mktemp -d)"; trap 'rm -rf "$w"' EXIT
+  git init -q "$w/base"
+  printf '%s' '{"hooks":{"verify-quality":{"orchestrator":"none","severity":"error"},"shellcheck":{"include":["**/*.sh"],"orchestrator":"none","severity":"error"}}}' | jq -S . >"$w/base/policy.json"
+  git -C "$w/base" add -A && git -C "$w/base" -c user.email=t@t -c user.name=t commit -qm base && git -C "$w/base" tag v1.0.0
+  mkdir -p "$w/c/.specify/gates"
+  cp -R .specify/gates/lib "$w/c/.specify/gates/lib"
+  cp .specify/gates/contract.sh "$w/c/.specify/gates/"
+  jq -n --arg src "$w/base" '{hooks:{"verify-quality":{orchestrator:"none",severity:"error"},shellcheck:{include:["**/*.sh"],orchestrator:"none",severity:"warning"}},extends:{source:$src,version:"v1.0.0"}}' >"$w/c/.specify/gates/policy.json"
+  CLAUDE_PROJECT_DIR="$w/c" bash "$w/c/.specify/gates/contract.sh" sync >/dev/null
+  CLAUDE_PROJECT_DIR="$w/c" bash "$w/c/.specify/gates/contract.sh" propose --rationale "dogfood: SC-005 acceptance" >/dev/null
+  p=""
+  for f in "$w/c/.specify/gates/proposals/"*.patch; do p="$f"; break; done
+  grep -q 'dogfood: SC-005 acceptance' "$p"
+  grep -q 'weakened: hooks.shellcheck.severity' "$p"
+  ```
+
+- [x] T026 [P] Document the contract in `README.md`: extends declaration, sync/propose commands, the three committed artifacts, deviation semantics, link `contracts/artifact-layout.md`
+- [x] T027 [P] Document the flow in `docs/how-it-works.md`: declare → sync → materialize → prove pipeline, deviation classification, reviewable updates, propose loop, attestation `contract` object, the new canary
+- [x] T028 Run quickstart.md Scenarios 1–8 end-to-end on macOS bash 3.2, record the contract-gate overhead delta against SC-004 in the PR description
+- [x] T029 Final check: `bash tests/run.sh` all green and the repo's own gate green (SC-006); the Status flip to `Complete` happens as the last commit of `/speckit-implement` once every box above is checked
 
 ---
 
