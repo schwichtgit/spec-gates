@@ -7,18 +7,18 @@ touches user files — are security issues even when no data is exfiltrated.
 
 ## Supported versions
 
-| Version                 | Supported |
-| ----------------------- | --------- |
-| Latest release (v0.1.x) | yes       |
-| Older tags              | no        |
+Only the most recent tagged release receives fixes. Anything older is
+unsupported: upgrade to the latest release and re-verify before reporting.
+(This section is deliberately version-agnostic so it never goes stale.)
 
 ## Reporting a vulnerability
 
 Please do **not** open a public issue for security reports.
 
 - Preferred: [GitHub private vulnerability reporting](https://github.com/schwichtgit/spec-gates/security/advisories/new)
-- Alternatively: email <schwicht@googlemail.com> with `spec-gates security` in
-  the subject
+- Alternatively: email schwicht+spec-gates-security AT gmail.com (replace
+  the spelled-out AT; the alias keeps scrapers and filters honest) with
+  `spec-gates security` in the subject
 
 You can expect an acknowledgement within a week. Confirmed issues are fixed on
 `main`, released as a new tagged version, and credited in the release notes
