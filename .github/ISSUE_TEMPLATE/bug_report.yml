@@ -1,0 +1,52 @@
+name: Bug report
+description: A gate, hook, or command misbehaves
+labels: ["bug"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: spec-gates version
+      description: From the release you installed, or `.specify/gates/.runtime-version` in your project
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: boundary
+    attributes:
+      label: Boundary
+      description: Where the problem shows up
+      options:
+        - Agent (Claude Code hooks)
+        - Git (pre-commit / commit-msg)
+        - CI
+        - Commands (/speckit.gates.*)
+        - More than one / not sure
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got. Paste the gate output — it names files and lines on purpose.
+      placeholder: |
+        Ran: bash .specify/gates/verify.sh --boundary agent
+        Expected: ...
+        Got: ...
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, bash version (`bash --version`), jq version, and — if relevant — the `spec`/`attestation` sections of your policy.json
+      placeholder: |
+        macOS 15 / bash 3.2.57
+        jq 1.7
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Attestation / doctor output (optional)
+      description: The last record from `.specify/gates/attestations.jsonl` and/or `doctor.sh` output often pinpoints the broken gate.
+      render: text
