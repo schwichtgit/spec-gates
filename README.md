@@ -176,7 +176,7 @@ declaration are completely unaffected.
 ## Install
 
 ```bash
-specify extension add gates --from https://github.com/schwichtgit/spec-gates/releases/download/v0.1.0/gates-0.1.0.zip
+specify extension add gates --from https://github.com/schwichtgit/spec-gates/releases/download/v0.2.0/gates-0.2.0.zip
 ```
 
 The URL must point at a release **asset** (a flat package with
