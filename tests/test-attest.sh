@@ -326,6 +326,47 @@ expect "spec.enabled=false -> no spec object in the record" \
 expect "spec.enabled=false -> no spec gate entry" \
     "$(printf '%s' "$DIS_OUT" | jq -r '[.attestation.gates[] | select(.name == "spec")] | length')" 0
 
+# --- 12: the contract object (feature 003, FR-010) ---
+echo ""
+echo "=== contract object: evidence, drift reason, dormant absence ==="
+
+DCB="$WORKDIR/contract-base"
+git init -q "$DCB"
+printf '%s' '{"hooks":{"verify-quality":{"orchestrator":"custom","severity":"error","custom_command":"true"}},"spec":{"enabled":true}}' \
+    | jq -S . >"$DCB/policy.json"
+git -C "$DCB" add -A
+git -C "$DCB" -c user.email=b@t -c user.name=b commit -qm base
+git -C "$DCB" tag v1.0.0
+
+DCC="$WORKDIR/contract-consumer"
+project "$DCC" "$(jq -cn --arg src "$DCB" '{hooks: {"verify-quality": {orchestrator: "custom", severity: "error", custom_command: "true"}}, spec: {enabled: false}, extends: {source: $src, version: "v1.0.0"}}')"
+cp "$REPO_ROOT/extension/runtime/contract.sh" "$DCC/.specify/gates/"
+CLAUDE_PROJECT_DIR="$DCC" bash "$DCC/.specify/gates/contract.sh" sync >/dev/null 2>&1
+CON_OUT="$(spec_json "$DCC")"
+expect "attestation carries the contract object" \
+    "$(printf '%s' "$CON_OUT" | jq -r '.attestation | has("contract")')" true
+expect "contract source/version match the pin" \
+    "$(printf '%s' "$CON_OUT" | jq -r '.attestation.contract | "\(.source == "'"$DCB"'"):\(.version)"')" "true:v1.0.0"
+expect "contract digest matches the lock" \
+    "$(printf '%s' "$CON_OUT" | jq -r '.attestation.contract.digest')" \
+    "$(jq -r '.digest' "$DCC/.specify/gates/baseline.lock.json")"
+expect "deviation counts recorded (spec.enabled weakened)" \
+    "$(printf '%s' "$CON_OUT" | jq -r '.attestation.contract.deviations | "\(.weakened):\(.changed)"')" "1:0"
+expect "contract gate entry pass" \
+    "$(printf '%s' "$CON_OUT" | jq -r '.attestation.gates[] | select(.name == "contract") | .result')" "pass"
+expect "policy_sha256 hashes the EFFECTIVE policy in a contract repo" \
+    "$(printf '%s' "$CON_OUT" | jq -r '.attestation.policy_sha256')" \
+    "$(shasum -a 256 "$DCC/.specify/gates/policy.effective.json" 2>/dev/null | cut -d' ' -f1 || sha256sum "$DCC/.specify/gates/policy.effective.json" | cut -d' ' -f1)"
+
+printf ' ' >>"$DCC/.specify/gates/policy.effective.json"
+DRIFT_OUT="$(spec_json "$DCC")"
+expect "drifted contract gate entry carries the reason" \
+    "$(printf '%s' "$DRIFT_OUT" | jq -r '.attestation.gates[] | select(.name == "contract") | .reason' | grep -c 'drifted')" 1
+
+DORMANT_OUT="$(gate_json "$D")"
+expect "dormant repo has no contract object" \
+    "$(printf '%s' "$DORMANT_OUT" | jq -r '.attestation | has("contract")')" false
+
 echo ""
 echo "$PASS passed, $FAIL failed, $SKIP skipped ($TOTAL total)"
 [[ "$FAIL" -gt 0 ]] && exit 1

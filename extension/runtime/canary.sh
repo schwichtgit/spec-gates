@@ -19,6 +19,8 @@ set -uo pipefail
 #   secret  -- staged AWS-key string  -> pre-commit secret scan    (blocked)
 #   spec    -- Complete feature with a failing accept block
 #                                     -> verify.sh spec gate       (exit 2)
+#   contract -- tampered effective policy in a synced sandbox
+#                                     -> verify.sh contract gate   (exit 2)
 #
 # Usage:
 #   canary.sh [--json] [--only <id>[,<id>...]]
@@ -47,7 +49,7 @@ done
 CANARY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 
-CANARY_SET="format shell bash protect secret spec"
+CANARY_SET="format shell bash protect secret spec contract"
 
 if [[ -n "$ONLY" ]]; then
     IFS=',' read -r -a _only_ids <<<"$ONLY"
@@ -151,10 +153,10 @@ pre_commit_hook() {
 # sandbox resolve the same pinned linters the real gate uses.
 project_sandbox() { # <dir> <policy-json>
     local dir="$1" policy="$2"
-    [[ -f "$CANARY_DIR/verify.sh" && -d "$CANARY_DIR/lib" ]] \
-        || setup_fail "verify.sh/lib not found next to canary.sh in $CANARY_DIR (re-project the runtime)"
+    [[ -f "$CANARY_DIR/verify.sh" && -f "$CANARY_DIR/contract.sh" && -d "$CANARY_DIR/lib" ]] \
+        || setup_fail "verify.sh/contract.sh/lib not found next to canary.sh in $CANARY_DIR (re-project the runtime)"
     mkdir -p "$dir/.specify/gates/lib" || setup_fail "mkdir $dir"
-    cp "$CANARY_DIR/verify.sh" "$dir/.specify/gates/" || setup_fail "copy verify.sh"
+    cp "$CANARY_DIR/verify.sh" "$CANARY_DIR/contract.sh" "$dir/.specify/gates/" || setup_fail "copy verify.sh/contract.sh"
     cp "$CANARY_DIR/lib/"*.sh "$dir/.specify/gates/lib/" || setup_fail "copy lib"
     printf '%s' "$policy" >"$dir/.specify/gates/policy.json" || setup_fail "write policy"
     if [[ -d "$PROJECT_ROOT/node_modules" ]]; then
@@ -320,6 +322,41 @@ run_spec_canary() {
 }
 
 # ---------------------------------------------------------------------------
+# Contract canary (feature 003): a synced sandbox contract whose effective
+# policy is then tampered must be rejected by the sandboxed contract gate.
+# The fixture baseline lives inside the sandbox (plain-path git remote) --
+# no network, no user files. Requires git only because sync does.
+# ---------------------------------------------------------------------------
+run_contract_canary() {
+    if ! command -v git >/dev/null 2>&1; then
+        record contract skipped "git not installed -- a policy contract cannot exist without it" 0
+        return 0
+    fi
+    local b="$WORKDIR/contract-base"
+    mkdir -p "$b" || setup_fail "contract baseline dir"
+    git init -q "$b" >/dev/null 2>&1 || setup_fail "contract baseline git init"
+    printf '%s' '{"hooks":{"verify-quality":{"orchestrator":"none","severity":"error"}}}' \
+        | jq -S . >"$b/policy.json" || setup_fail "contract baseline policy"
+    git -C "$b" add -A >/dev/null 2>&1
+    git -C "$b" -c user.email=canary@example.invalid -c user.name=gates-canary \
+        commit -qm "canary baseline" >/dev/null 2>&1 || setup_fail "contract baseline commit"
+    git -C "$b" tag v1.0.0 >/dev/null 2>&1 || setup_fail "contract baseline tag"
+    local d="$WORKDIR/contract"
+    project_sandbox "$d" "$(jq -cn --arg src "$b" \
+        '{hooks: {"verify-quality": {orchestrator: "none", severity: "error"}}, extends: {source: $src, version: "v1.0.0"}}')"
+    CLAUDE_PROJECT_DIR="$d" bash "$d/.specify/gates/contract.sh" sync >/dev/null 2>&1 \
+        || setup_fail "contract sandbox sync"
+    printf ' ' >>"$d/.specify/gates/policy.effective.json" || setup_fail "contract tamper"
+    local rc
+    rc="$(sandbox_verify "$d")"
+    if [[ "$rc" -eq 2 ]]; then
+        record contract blocked "contract gate rejected a tampered effective policy" 0
+    else
+        record contract accepted "verify.sh exit $rc on a tampered effective policy -- the contract gate did not block" 1
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # Run + report
 # ---------------------------------------------------------------------------
 for id in $CANARY_SET; do
@@ -331,6 +368,7 @@ for id in $CANARY_SET; do
         protect) run_protect_canary ;;
         secret) run_secret_canary ;;
         spec) run_spec_canary ;;
+        contract) run_contract_canary ;;
     esac
 done
 

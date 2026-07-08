@@ -28,7 +28,20 @@ gates_policy_file() {
     if [[ -z "$project_dir" ]]; then
         project_dir="$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")"
     fi
-    printf '%s\n' "$project_dir/.specify/gates/policy.json"
+    local overlay="$project_dir/.specify/gates/policy.json"
+    local effective="$project_dir/.specify/gates/policy.effective.json"
+    # Contract resolution (feature 003): an overlay that extends a baseline is
+    # enforced through the materialized effective policy. The grep is a cheap
+    # short-circuit for the dormant case (no extends anywhere in the file);
+    # jq then confirms a real top-level declaration. Integrity of the
+    # effective file is the contract gate's job, not the resolver's.
+    if [[ -f "$effective" && -f "$overlay" ]] \
+        && grep -q '"extends"' "$overlay" 2>/dev/null \
+        && jq -e 'has("extends")' "$overlay" >/dev/null 2>&1; then
+        printf '%s\n' "$effective"
+        return 0
+    fi
+    printf '%s\n' "$overlay"
 }
 
 gates_policy_get() {
@@ -188,6 +201,7 @@ gates_validate_policy() {
         def parity_values: ["error", "warning", "off"];
         def spec_keys: ["enabled", "severity", "include", "exclude", "timeout_s"];
         def spec_sev_values: ["error", "warning"];
+        def ext_keys: ["source", "version", "file"];
         def pf_errors:
             if has("protected_files") then
                 (.protected_files) as $p
@@ -261,7 +275,26 @@ gates_validate_policy() {
                         else [] end )
                   end
             else [] end;
-        (pf_errors + git_errors + att_errors + spec_errors) | .[]
+        def ext_errors:
+            if has("extends") then
+                (.extends) as $e
+                | if ($e | type) != "object" then ["extends: must be an object"]
+                  else
+                    [ $e | keys[] | . as $k | select((ext_keys | index($k)) == null) | "extends: unknown field \"\($k)\"" ]
+                    + ( if ($e | has("source")) | not then ["extends: source is required"]
+                        elif ($e.source | type) != "string" or ($e.source | length) == 0
+                          then ["extends: source must be a non-empty string"]
+                        else [] end )
+                    + ( if ($e | has("version")) | not then ["extends: version is required"]
+                        elif ($e.version | type) != "string" or ($e.version | length) == 0
+                          then ["extends: version must be a non-empty string"]
+                        else [] end )
+                    + ( if ($e | has("file")) and (($e.file | type) != "string" or ($e.file | length) == 0)
+                          then ["extends: file must be a non-empty string"]
+                        else [] end )
+                  end
+            else [] end;
+        (pf_errors + git_errors + att_errors + spec_errors + ext_errors) | .[]
     ' "$file" 2>/dev/null)"
     if [[ -n "$section_errors" ]]; then
         errors="${errors:+$errors$'\n'}$section_errors"

@@ -126,6 +126,44 @@ section, with its defaults:
 "spec": { "enabled": true, "severity": "error", "include": ["*"], "exclude": [], "timeout_s": 30 }
 ```
 
+## Policy as a versioned contract
+
+An organization runs one baseline policy across a fleet of repos by
+declaring, in each repo's `policy.json`:
+
+```json
+"extends": { "source": "https://github.com/acme/policy-baseline", "version": "v2.3.0" }
+```
+
+`/speckit.gates.sync` fetches that version once, pins it (version +
+SHA-256 digest), commits a snapshot, and materializes the **effective
+policy** — baseline with the local file applied as an overlay — which is
+what every boundary then enforces. Gate runs never touch the network: a
+synthetic `contract` gate proves offline, on every run, that the snapshot
+matches the pin and the effective policy matches recomputation. Editing
+any artifact by hand blocks the next run naming what drifted.
+
+Drift is reviewable in both directions:
+
+- **Overlays may deviate — transparently.** A repo can weaken a baseline
+  rule (disable, lower a severity, narrow its scope), but every weakening
+  is a named, attested deviation: `contract: deviation (weakened):
+hooks.shellcheck.severity: baseline "error" -> overlay "warning"`.
+  Deviations never change the exit code; they change what the org can see.
+- **Updates arrive as changes, not surprises.** `sync --update` moves the
+  pin to a newer baseline version on its own `gates/baseline-<v>` branch
+  with the classified enforcement delta in the commit body; enforcement
+  follows only when it merges.
+- **Deviations can go home.** `/speckit.gates.propose` packages the
+  deviation inventory as a change request against the baseline source —
+  origin, pinned version, classification, and your rationale included.
+
+The three artifacts (`baseline.json`, `baseline.lock.json`,
+`policy.effective.json`) are committed contract state (formats:
+[`specs/003-policy-contract/contracts/artifact-layout.md`](specs/003-policy-contract/contracts/artifact-layout.md));
+`policy.json` stays the only file you edit. Repos without an `extends`
+declaration are completely unaffected.
+
 ## Requirements
 
 - **jq** and **git** — the hooks and `verify.sh` require them.
@@ -171,6 +209,8 @@ hook offers a gate run before you move to commit/PR.
 | `/speckit.gates.doctor`  | Health check: hooks wired, policy valid, versions in sync                                                               |
 | `/speckit.gates.ci`      | Project CI enforcement (`github` \| `gitlab` \| `jenkins`); `--protect` requires the check + a PR on the default branch |
 | `/speckit.gates.upgrade` | Re-project runtime after update; never touches policy.json                                                              |
+| `/speckit.gates.sync`    | Pin + materialize the `extends` baseline; `--update` moves the pin as a reviewable branch                               |
+| `/speckit.gates.propose` | Package this repo's policy deviations as an upstream change request against the baseline                                |
 
 ## Workflow-engine integration
 

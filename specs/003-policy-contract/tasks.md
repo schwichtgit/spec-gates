@@ -25,7 +25,7 @@ flips to `Complete` (last commit).
 **Purpose**: projection plumbing — unlike 002, this feature adds a new
 projected entry script, so the lists need edits.
 
-- [ ] T001 Extend the projection surfaces for `contract.sh`: add it to the `cp` line in `.github/workflows/ci.yml`, to the file map in `extension/commands/speckit.gates.init.md` and `extension/commands/speckit.gates.upgrade.md`, and confirm `.gitignore` ignores `.specify/gates/contract.sh` (projected runtime copy) while NOT matching the three committed contract artifacts (`baseline.json`, `baseline.lock.json`, `policy.effective.json`); adjust `tests/test-ci-parity.sh` expectations if they enumerate projected files
+- [x] T001 Extend the projection surfaces for `contract.sh`: add it to the `cp` line in `.github/workflows/ci.yml`, to the file map in `extension/commands/speckit.gates.init.md` and `extension/commands/speckit.gates.upgrade.md`, and confirm `.gitignore` ignores `.specify/gates/contract.sh` (projected runtime copy) while NOT matching the three committed contract artifacts (`baseline.json`, `baseline.lock.json`, `policy.effective.json`); adjust `tests/test-ci-parity.sh` expectations if they enumerate projected files
 
 ---
 
@@ -34,11 +34,11 @@ projected entry script, so the lists need edits.
 **Purpose**: the optional `extends` section, effective-policy resolution,
 and the pure functions every story consumes.
 
-- [ ] T002 Add the optional `extends` section (object: `source` string required, `version` string required, `file` string optional default `policy.json`; `additionalProperties: false`) to `extension/runtime/policy.schema.json`, and a commented example to `extension/runtime/policy-template.json` (absent by default — the feature is dormant out of the box)
-- [ ] T003 Extend `gates_validate_policy` in `extension/runtime/lib/policy.sh` to validate the `extends` section (required fields, types, unknown-field rejection — same pattern as the `spec` section)
-- [ ] T004 Implement effective-policy resolution in `gates_policy_file` (`extension/runtime/lib/policy.sh`): when `policy.json` declares `extends` and `policy.effective.json` exists, all accessors read the effective file; `GATES_POLICY_FILE` env override keeps absolute precedence; no `extends` → unchanged behavior (FR-001)
-- [ ] T005 [P] Add `extends` validation and resolution cases to `tests/test-policy.sh`: valid section, absent-section-ok, missing source/version, unknown field, non-object; resolution picks effective when present, `GATES_POLICY_FILE` still wins
-- [ ] T006 Create `extension/runtime/lib/contract.sh` with the pure core (no network): `jq -S` canonicalization helper, sha256 digest shim (reuse 001's dual-binary pattern), lock read/write, the R4 merge (`baseline * (overlay - extends)` + extends re-attached), the R5 deviation classifier (weakened/changed per defined-order fields), and the R6 invariant checks (artifacts present, snapshot digest = pin, recompute = effective bytes, declaration = pin)
+- [x] T002 Add the optional `extends` section (object: `source` string required, `version` string required, `file` string optional default `policy.json`; `additionalProperties: false`) to `extension/runtime/policy.schema.json`, and a commented example to `extension/runtime/policy-template.json` (absent by default — the feature is dormant out of the box)
+- [x] T003 Extend `gates_validate_policy` in `extension/runtime/lib/policy.sh` to validate the `extends` section (required fields, types, unknown-field rejection — same pattern as the `spec` section)
+- [x] T004 Implement effective-policy resolution in `gates_policy_file` (`extension/runtime/lib/policy.sh`): when `policy.json` declares `extends` and `policy.effective.json` exists, all accessors read the effective file; `GATES_POLICY_FILE` env override keeps absolute precedence; no `extends` → unchanged behavior (FR-001)
+- [x] T005 [P] Add `extends` validation and resolution cases to `tests/test-policy.sh`: valid section, absent-section-ok, missing source/version, unknown field, non-object; resolution picks effective when present, `GATES_POLICY_FILE` still wins
+- [x] T006 Create `extension/runtime/lib/contract.sh` with the pure core (no network): `jq -S` canonicalization helper, sha256 digest shim (reuse 001's dual-binary pattern), lock read/write, the R4 merge (`baseline * (overlay - extends)` + extends re-attached), the R5 deviation classifier (weakened/changed per defined-order fields), and the R6 invariant checks (artifacts present, snapshot digest = pin, recompute = effective bytes, declaration = pin)
 
 **Checkpoint**: schema validates `extends`; accessors resolve the
 effective policy; merge/classify/prove are unit-testable pure functions.
@@ -58,12 +58,12 @@ exit code; a repo without `extends` is byte-for-byte unaffected.
 
 ### Implementation for User Story 1
 
-- [ ] T007 [US1] Implement baseline fetch in `extension/runtime/lib/contract.sh` (research R2): clone into `mktemp -d` (shallow `--branch <version>` first, full clone + checkout fallback for SHAs), local-path sources, branch-name refusal, chained-baseline refusal (snapshot must not contain `extends`), schema validation of the fetched baseline — every failure named, prior artifacts untouched
-- [ ] T008 [US1] Create the projected entry script `extension/runtime/contract.sh` with the `sync` subcommand (contracts/cli-contracts.md): reads the declaration, fetches the declared version, writes pin + snapshot + effective canonicalized, validates the effective result, prints the deviation inventory, never touches `policy.json`, exit codes 0/1/2 as contracted
-- [ ] T009 [US1] Wire the synthetic `contract` gate into `extension/runtime/verify.sh` immediately after policy validation and before the tool gates: dormant when no `extends` (no gate entry); otherwise prove the four invariants fail-closed at error severity naming the drifted artifact and the repair command; deviations print informationally and never change the exit code; `--dry-run` lists the gate as `planned`
-- [ ] T010 [US1] Emit the attestation extension in `extension/runtime/verify.sh`: `contract` GateEntry in `gates[]` (synthetic, tool fields null, reason names the violated invariant) and the top-level `contract` object (source/version/digest/effective_sha256/deviations counts), both absent when dormant (FR-010)
-- [ ] T011 [P] [US1] Create `tests/test-contract.sh` (project-into-fixture pattern + a `mkbaseline` helper building a tagged fixture baseline repo): sync happy path writes three canonical artifacts (SC-001); the four invariant violations each block naming the artifact (SC-002); deviations classified per data-model table and informational (FR-006); dormant repo byte-identical behavior + no contract attestation (SC-006); sync failures (branch-name version, chained baseline, schema-invalid baseline, unreachable source) leave prior artifacts intact; offline verify after removing the fixture source
-- [ ] T012 [US1] Register `test-contract` in `tests/run.sh`
+- [x] T007 [US1] Implement baseline fetch in `extension/runtime/lib/contract.sh` (research R2): clone into `mktemp -d` (shallow `--branch <version>` first, full clone + checkout fallback for SHAs), local-path sources, branch-name refusal, chained-baseline refusal (snapshot must not contain `extends`), schema validation of the fetched baseline — every failure named, prior artifacts untouched
+- [x] T008 [US1] Create the projected entry script `extension/runtime/contract.sh` with the `sync` subcommand (contracts/cli-contracts.md): reads the declaration, fetches the declared version, writes pin + snapshot + effective canonicalized, validates the effective result, prints the deviation inventory, never touches `policy.json`, exit codes 0/1/2 as contracted
+- [x] T009 [US1] Wire the synthetic `contract` gate into `extension/runtime/verify.sh` immediately after policy validation and before the tool gates: dormant when no `extends` (no gate entry); otherwise prove the four invariants fail-closed at error severity naming the drifted artifact and the repair command; deviations print informationally and never change the exit code; `--dry-run` lists the gate as `planned`
+- [x] T010 [US1] Emit the attestation extension in `extension/runtime/verify.sh`: `contract` GateEntry in `gates[]` (synthetic, tool fields null, reason names the violated invariant) and the top-level `contract` object (source/version/digest/effective_sha256/deviations counts), both absent when dormant (FR-010)
+- [x] T011 [P] [US1] Create `tests/test-contract.sh` (project-into-fixture pattern + a `mkbaseline` helper building a tagged fixture baseline repo): sync happy path writes three canonical artifacts (SC-001); the four invariant violations each block naming the artifact (SC-002); deviations classified per data-model table and informational (FR-006); dormant repo byte-identical behavior + no contract attestation (SC-006); sync failures (branch-name version, chained baseline, schema-invalid baseline, unreachable source) leave prior artifacts intact; offline verify after removing the fixture source
+- [x] T012 [US1] Register `test-contract` in `tests/run.sh`
 
 **Checkpoint**: US1 fully functional — a fixture org baseline is inherited,
 pinned, enforced, and drift-proven at every boundary.
@@ -82,9 +82,9 @@ enforces `v1.0.0`; re-running at the highest tag reports already-up-to-date.
 
 ### Implementation for User Story 2
 
-- [ ] T013 [US2] Implement version discovery in `extension/runtime/lib/contract.sh` (research R7): `git ls-remote --tags` listing, peeled-ref stripping, `v?[0-9]*` filtering, and the awk numeric-segment comparator (no `sort -V` — BSD floor); `--update` with an explicit version bypasses discovery
-- [ ] T014 [US2] Implement `sync --update [VERSION]` delivery in `extension/runtime/contract.sh` (research R8): target = explicit version or highest tag; equal to pin → "already up to date" exit 0 touching nothing; otherwise branch `gates/baseline-<version>` from HEAD, one commit updating the three artifacts with old→new version, digests, and the classified enforcement delta in the body; `gh` PR when available + GitHub remote, else branch + instructions; outside a git work tree print the delta only; never commit to the current branch (SC-003)
-- [ ] T015 [P] [US2] Add update regression cases to `tests/test-contract.sh`: explicit-version update, highest-tag selection across `v1.0.0`/`v1.2.0`/`v1.10.0` (numeric, not lexicographic), already-up-to-date no-op, branch contains all three artifacts in one commit while the work tree still enforces the old pin (SC-003), schema-invalid new baseline refused with prior state intact
+- [x] T013 [US2] Implement version discovery in `extension/runtime/lib/contract.sh` (research R7): `git ls-remote --tags` listing, peeled-ref stripping, `v?[0-9]*` filtering, and the awk numeric-segment comparator (no `sort -V` — BSD floor); `--update` with an explicit version bypasses discovery
+- [x] T014 [US2] Implement `sync --update [VERSION]` delivery in `extension/runtime/contract.sh` (research R8): target = explicit version or highest tag; equal to pin → "already up to date" exit 0 touching nothing; otherwise branch `gates/baseline-<version>` from HEAD, one commit updating the three artifacts with old→new version, digests, and the classified enforcement delta in the body; `gh` PR when available + GitHub remote, else branch + instructions; outside a git work tree print the delta only; never commit to the current branch (SC-003)
+- [x] T015 [P] [US2] Add update regression cases to `tests/test-contract.sh`: explicit-version update, highest-tag selection across `v1.0.0`/`v1.2.0`/`v1.10.0` (numeric, not lexicographic), already-up-to-date no-op, branch contains all three artifacts in one commit while the work tree still enforces the old pin (SC-003), schema-invalid new baseline refused with prior state intact
 
 **Checkpoint**: US1 and US2 — the contract is versioned and updates only
 through reviewable changes.
@@ -103,21 +103,21 @@ when the invariant check is stubbed.
 
 ### Implementation for User Story 3
 
-- [ ] T016 [US3] Implement the `propose` subcommand in `extension/runtime/contract.sh` + `lib/contract.sh` (research R9): live deviation inventory (empty → "nothing to propose" exit 0); clone the pinned source, apply the deviating paths onto the baseline document, branch `propose/<consumer>-<YYYYMMDD>`, commit body with origin repo, pinned version, per-deviation classification, and the required rationale (`--rationale` flag or interactive prompt); `gh` PR when possible, else patch under `.specify/gates/proposals/` + instructions
-- [ ] T017 [P] [US3] Add propose regression cases to `tests/test-contract.sh`: deviation applied onto the baseline document with origin/version/classification/rationale present (SC-005), nothing-to-propose exit 0 producing nothing, rationale refusal in non-interactive mode without `--rationale`
-- [ ] T018 [P] [US3] Add the optional `contract` property to `specs/001-provable-enforcement-gate/contracts/attestation-record.schema.json` (additive; record stays `v: 1` per the forward-compatibility rule)
-- [ ] T019 [P] [US3] Add attestation-shape cases to `tests/test-attest.sh`: `contract` object fields and deviation counts correct, absent when dormant, GateEntry present with reason on drift
-- [ ] T020 [US3] Add the `contract` canary to `extension/runtime/canary.sh` (contracts/cli-contracts.md): sandboxed fixture baseline (plain-path remote inside the sandbox), sync, tamper `policy.effective.json`, sandboxed `verify.sh` must exit 2 naming the contract gate or the suite fails; wire into `--only`; ensure `project_sandbox` copies `contract.sh`
+- [x] T016 [US3] Implement the `propose` subcommand in `extension/runtime/contract.sh` + `lib/contract.sh` (research R9): live deviation inventory (empty → "nothing to propose" exit 0); clone the pinned source, apply the deviating paths onto the baseline document, branch `propose/<consumer>-<YYYYMMDD>`, commit body with origin repo, pinned version, per-deviation classification, and the required rationale (`--rationale` flag or interactive prompt); `gh` PR when possible, else patch under `.specify/gates/proposals/` + instructions
+- [x] T017 [P] [US3] Add propose regression cases to `tests/test-contract.sh`: deviation applied onto the baseline document with origin/version/classification/rationale present (SC-005), nothing-to-propose exit 0 producing nothing, rationale refusal in non-interactive mode without `--rationale`
+- [x] T018 [P] [US3] Add the optional `contract` property to `specs/001-provable-enforcement-gate/contracts/attestation-record.schema.json` (additive; record stays `v: 1` per the forward-compatibility rule)
+- [x] T019 [P] [US3] Add attestation-shape cases to `tests/test-attest.sh`: `contract` object fields and deviation counts correct, absent when dormant, GateEntry present with reason on drift
+- [x] T020 [US3] Add the `contract` canary to `extension/runtime/canary.sh` (contracts/cli-contracts.md): sandboxed fixture baseline (plain-path remote inside the sandbox), sync, tamper `policy.effective.json`, sandboxed `verify.sh` must exit 2 naming the contract gate or the suite fails; wire into `--only`; ensure `project_sandbox` copies `contract.sh`
 
   ```accept
   # verifies: SC-002
   bash .specify/gates/doctor.sh --canary --only contract
   ```
 
-- [ ] T021 [P] [US3] Add contract-canary cases to `tests/test-canary.sh`: healthy fixture `blocked`; invariant check stubbed to a no-op → suite exit 1 naming the contract gate
-- [ ] T022 [US3] Extend `extension/runtime/doctor.sh` with the contract section (FR-011): declaration/pin/snapshot-match/effective-match/deviation inventory from local info only, exit 1 on the four gate invariants, `[rec]` nudge when `extends` is declared but never synced
-- [ ] T023 [P] [US3] Add doctor contract cases to `tests/test-doctor.sh`: healthy report, each invariant violation fails, unsynced nudge
-- [ ] T024 [US3] Add the two extension commands: `extension/commands/speckit.gates.sync.md`, `extension/commands/speckit.gates.propose.md`, and register both in `extension/extension.yml` (7 commands; FR-013)
+- [x] T021 [P] [US3] Add contract-canary cases to `tests/test-canary.sh`: healthy fixture `blocked`; invariant check stubbed to a no-op → suite exit 1 naming the contract gate
+- [x] T022 [US3] Extend `extension/runtime/doctor.sh` with the contract section (FR-011): declaration/pin/snapshot-match/effective-match/deviation inventory from local info only, exit 1 on the four gate invariants, `[rec]` nudge when `extends` is declared but never synced
+- [x] T023 [P] [US3] Add doctor contract cases to `tests/test-doctor.sh`: healthy report, each invariant violation fails, unsynced nudge
+- [x] T024 [US3] Add the two extension commands: `extension/commands/speckit.gates.sync.md`, `extension/commands/speckit.gates.propose.md`, and register both in `extension/extension.yml` (7 commands; FR-013)
 
 **Checkpoint**: all three stories functional and provable.
 
@@ -125,11 +125,91 @@ when the invariant check is stubbed.
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T025 Finalize this file's accept blocks (dogfood): reconcile with what got implemented and give SC-001–SC-005 each a `# verifies:` reference via offline mini-fixtures (this repo itself stays dormant — no `extends` here), keeping total enforced execution within 002's 30s block budget
-- [ ] T026 [P] Document the contract in `README.md`: extends declaration, sync/propose commands, the three committed artifacts, deviation semantics, link `contracts/artifact-layout.md`
-- [ ] T027 [P] Document the flow in `docs/how-it-works.md`: declare → sync → materialize → prove pipeline, deviation classification, reviewable updates, propose loop, attestation `contract` object, the new canary
-- [ ] T028 Run quickstart.md Scenarios 1–8 end-to-end on macOS bash 3.2, record the contract-gate overhead delta against SC-004 in the PR description
-- [ ] T029 Final check: `bash tests/run.sh` all green and the repo's own gate green (SC-006); the Status flip to `Complete` happens as the last commit of `/speckit-implement` once every box above is checked
+- [x] T025 Finalize this file's accept blocks (dogfood): reconcile with what got implemented and give SC-001–SC-005 each a `# verifies:` reference via offline mini-fixtures (this repo itself stays dormant — no `extends` here), keeping total enforced execution within 002's 30s block budget
+
+  ```accept
+  # verifies: SC-001
+  set -eu
+  w="$(mktemp -d)"; trap 'rm -rf "$w"' EXIT
+  git init -q "$w/base"
+  printf '%s' '{"hooks":{"verify-quality":{"orchestrator":"none","severity":"error"}},"spec":{"enabled":true}}' | jq -S . >"$w/base/policy.json"
+  git -C "$w/base" add -A && git -C "$w/base" -c user.email=t@t -c user.name=t commit -qm base && git -C "$w/base" tag v1.0.0
+  mkdir -p "$w/c/.specify/gates"
+  cp -R .specify/gates/lib "$w/c/.specify/gates/lib"
+  cp .specify/gates/verify.sh .specify/gates/contract.sh "$w/c/.specify/gates/"
+  jq -n --arg src "$w/base" '{hooks:{"verify-quality":{orchestrator:"none",severity:"error"}},spec:{enabled:false},extends:{source:$src,version:"v1.0.0"}}' >"$w/c/.specify/gates/policy.json"
+  CLAUDE_PROJECT_DIR="$w/c" bash "$w/c/.specify/gates/contract.sh" sync >/dev/null
+  CLAUDE_PROJECT_DIR="$w/c" bash "$w/c/.specify/gates/verify.sh" --boundary ci >/dev/null 2>&1
+  printf ' ' >>"$w/c/.specify/gates/policy.effective.json"
+  rc=0; out="$(CLAUDE_PROJECT_DIR="$w/c" bash "$w/c/.specify/gates/verify.sh" --boundary ci 2>&1)" || rc=$?
+  [ "$rc" -eq 2 ]
+  printf '%s' "$out" | grep -q 'effective policy drifted'
+  ```
+
+  ```accept
+  # verifies: SC-003
+  set -eu
+  w="$(mktemp -d)"; trap 'rm -rf "$w"' EXIT
+  git init -q "$w/base"
+  printf '%s' '{"hooks":{"verify-quality":{"orchestrator":"none","severity":"error"}}}' | jq -S . >"$w/base/policy.json"
+  git -C "$w/base" add -A && git -C "$w/base" -c user.email=t@t -c user.name=t commit -qm base && git -C "$w/base" tag v1.0.0
+  mkdir -p "$w/c/.specify/gates"
+  cp -R .specify/gates/lib "$w/c/.specify/gates/lib"
+  cp .specify/gates/verify.sh .specify/gates/contract.sh "$w/c/.specify/gates/"
+  jq -n --arg src "$w/base" '{hooks:{"verify-quality":{orchestrator:"none",severity:"error"}},extends:{source:$src,version:"v1.0.0"}}' >"$w/c/.specify/gates/policy.json"
+  CLAUDE_PROJECT_DIR="$w/c" bash "$w/c/.specify/gates/contract.sh" sync >/dev/null
+  git init -q "$w/c" && git -C "$w/c" checkout -q -b main
+  git -C "$w/c" config user.email t@t && git -C "$w/c" config user.name t
+  git -C "$w/c" add -A && git -C "$w/c" commit -qm adopt
+  printf '%s' '{"hooks":{"verify-quality":{"orchestrator":"none","severity":"error"},"shellcheck":{"include":["**/*.sh"],"orchestrator":"none","severity":"error"}}}' | jq -S . >"$w/base/policy.json"
+  git -C "$w/base" add -A && git -C "$w/base" -c user.email=t@t -c user.name=t commit -qm tighten && git -C "$w/base" tag v1.1.0
+  CLAUDE_PROJECT_DIR="$w/c" bash "$w/c/.specify/gates/contract.sh" sync --update >/dev/null
+  git -C "$w/c" rev-parse --verify -q refs/heads/gates/baseline-v1.1.0 >/dev/null
+  [ "$(jq -r '.version' "$w/c/.specify/gates/baseline.lock.json")" = "v1.0.0" ]
+  ```
+
+  ```accept
+  # verifies: SC-004
+  set -eu
+  w="$(mktemp -d)"; trap 'rm -rf "$w"' EXIT
+  git init -q "$w/base"
+  printf '%s' '{"hooks":{"verify-quality":{"orchestrator":"none","severity":"error"}}}' | jq -S . >"$w/base/policy.json"
+  git -C "$w/base" add -A && git -C "$w/base" -c user.email=t@t -c user.name=t commit -qm base && git -C "$w/base" tag v1.0.0
+  mkdir -p "$w/c/.specify/gates"
+  cp -R .specify/gates/lib "$w/c/.specify/gates/lib"
+  cp .specify/gates/contract.sh "$w/c/.specify/gates/"
+  jq -n --arg src "$w/base" '{hooks:{"verify-quality":{orchestrator:"none",severity:"error"}},extends:{source:$src,version:"v1.0.0"}}' >"$w/c/.specify/gates/policy.json"
+  CLAUDE_PROJECT_DIR="$w/c" bash "$w/c/.specify/gates/contract.sh" sync >/dev/null
+  rm -rf "$w/base"
+  start="$(date +%s)"
+  ( . .specify/gates/lib/policy.sh; . .specify/gates/lib/attest.sh; . .specify/gates/lib/contract.sh; gates_contract_check "$w/c"; [ "$CONTRACT_STATUS" = "pass" ] )
+  end="$(date +%s)"
+  [ $((end - start)) -le 1 ]
+  ```
+
+  ```accept
+  # verifies: SC-005
+  set -eu
+  w="$(mktemp -d)"; trap 'rm -rf "$w"' EXIT
+  git init -q "$w/base"
+  printf '%s' '{"hooks":{"verify-quality":{"orchestrator":"none","severity":"error"},"shellcheck":{"include":["**/*.sh"],"orchestrator":"none","severity":"error"}}}' | jq -S . >"$w/base/policy.json"
+  git -C "$w/base" add -A && git -C "$w/base" -c user.email=t@t -c user.name=t commit -qm base && git -C "$w/base" tag v1.0.0
+  mkdir -p "$w/c/.specify/gates"
+  cp -R .specify/gates/lib "$w/c/.specify/gates/lib"
+  cp .specify/gates/contract.sh "$w/c/.specify/gates/"
+  jq -n --arg src "$w/base" '{hooks:{"verify-quality":{orchestrator:"none",severity:"error"},shellcheck:{include:["**/*.sh"],orchestrator:"none",severity:"warning"}},extends:{source:$src,version:"v1.0.0"}}' >"$w/c/.specify/gates/policy.json"
+  CLAUDE_PROJECT_DIR="$w/c" bash "$w/c/.specify/gates/contract.sh" sync >/dev/null
+  CLAUDE_PROJECT_DIR="$w/c" bash "$w/c/.specify/gates/contract.sh" propose --rationale "dogfood: SC-005 acceptance" >/dev/null
+  p=""
+  for f in "$w/c/.specify/gates/proposals/"*.patch; do p="$f"; break; done
+  grep -q 'dogfood: SC-005 acceptance' "$p"
+  grep -q 'weakened: hooks.shellcheck.severity' "$p"
+  ```
+
+- [x] T026 [P] Document the contract in `README.md`: extends declaration, sync/propose commands, the three committed artifacts, deviation semantics, link `contracts/artifact-layout.md`
+- [x] T027 [P] Document the flow in `docs/how-it-works.md`: declare → sync → materialize → prove pipeline, deviation classification, reviewable updates, propose loop, attestation `contract` object, the new canary
+- [x] T028 Run quickstart.md Scenarios 1–8 end-to-end on macOS bash 3.2, record the contract-gate overhead delta against SC-004 in the PR description
+- [x] T029 Final check: `bash tests/run.sh` all green and the repo's own gate green (SC-006); the Status flip to `Complete` happens as the last commit of `/speckit-implement` once every box above is checked
 
 ---
 

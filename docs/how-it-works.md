@@ -131,6 +131,62 @@ reports what the gate sees (features, blocks, complete count), fails on
 parse errors, and nudges when every task is checked but the `Complete`
 flip is missing.
 
+## Policy as a versioned contract
+
+The tool gates hold code to the policy; the `contract` gate holds the
+policy itself to an organization's baseline. A repo opts in by declaring
+`extends` (source + version) in `policy.json`, which turns that file into
+an **overlay** on a versioned upstream document:
+
+1. **Sync (the only network moment).** `contract.sh sync` fetches the
+   declared version (shallow-by-tag, full-clone fallback for commit ids;
+   branch names refused — a moving pin is not a pin), validates it against
+   the policy schema, refuses chained baselines, and writes three
+   committed artifacts: the canonicalized snapshot (`baseline.json`), the
+   pin (`baseline.lock.json`: source, version, SHA-256 digest), and the
+   materialized **effective policy** (`policy.effective.json`) — a
+   deterministic recursive merge where the overlay wins and arrays replace
+   wholesale.
+2. **Enforce.** Every boundary reads the effective policy through the
+   same resolver; `GATES_POLICY_FILE` keeps absolute precedence for
+   tests. The attestation's `policy_sha256` hashes what was actually
+   enforced.
+3. **Prove (offline, every run).** The synthetic `contract` gate runs
+   before the tool gates — policy integrity precedes policy enforcement —
+   and proves four invariants from local files alone: artifacts present,
+   snapshot matches the pinned digest, declaration matches the pin, and
+   the effective policy matches byte-for-byte recomputation. Any
+   violation fails closed naming the drifted artifact and the repair
+   command.
+
+**Transparent deviation.** Overlays may override anything, including
+weakening baseline rules — but never silently. Overrides on fields with a
+defined order (enabled `true→false`, severity along
+`error > warning > off`, narrowed `include`, widened `exclude`) are
+classified `weakened`; other overrides are `changed`; strengthenings and
+additions are ordinary overlay behavior. The inventory is recomputed live
+from snapshot + overlay (it cannot go stale), printed informationally —
+never affecting the exit code — counted in the attestation `contract`
+object, and reused verbatim by `propose`.
+
+**Reviewable drift, both directions.** `sync --update [version]` moves
+the pin to an explicit version or the highest tag (an awk numeric
+comparator — no `sort -V` on the BSD floor), building the change on a
+`gates/baseline-<v>` branch in a temporary worktree so the checkout keeps
+enforcing the old pin until the branch merges. `propose` applies the
+deviating paths onto the baseline document in a temp clone and delivers
+it upstream as a branch/PR (or a patch under `.specify/gates/proposals/`
+when `gh` cannot), carrying origin, pinned version, per-deviation
+classification, and a required rationale.
+
+**Evidence and self-test.** Attestations gain a `contract` GateEntry and
+a top-level `contract` object (source, version, digests, deviation
+counts). A `contract` canary syncs a sandbox against a fixture baseline
+inside the sandbox, tampers the effective policy, and requires the
+sandboxed gate to reject it. `doctor` reports the full contract state
+from local information and fails on exactly the invariants the gate
+blocks on. Repos without `extends` see none of this machinery.
+
 ## Why projection, not symlinks or plugin-resident hooks
 
 The runtime is copied into `.specify/gates/` and `.claude/hooks/gates/`.

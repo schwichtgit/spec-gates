@@ -42,6 +42,12 @@ provides:
     - name: speckit.gates.upgrade
       file: commands/speckit.gates.upgrade.md
       description: "Re-project the enforcement runtime after an extension update (never touches policy.json)"
+    - name: speckit.gates.sync
+      file: commands/speckit.gates.sync.md
+      description: "Sync the policy baseline contract: pin, snapshot, and materialize the effective policy (--update moves the pin as a reviewable change)"
+    - name: speckit.gates.propose
+      file: commands/speckit.gates.propose.md
+      description: "Propose this repo's policy deviations upstream as a change request against the baseline"
 
   config:
     - name: "policy.json"
