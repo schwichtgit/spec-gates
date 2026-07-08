@@ -149,9 +149,9 @@ entry; stub the accept-block runner to a no-op and run the canary suite
 
 **Acceptance Scenarios**:
 
-1. **Given** any gate run, **When** it completes, **Then** the attestation
-   record contains a `spec` gate entry with features discovered and accept
-   blocks run/passed/failed counts.
+1. **Given** any gate run with the `spec` gate enabled, **When** it
+   completes, **Then** the attestation record contains a `spec` gate entry
+   with features discovered and accept blocks run/passed/failed counts.
 2. **Given** a spec gate whose execution has been stubbed to a no-op,
    **When** the canary suite runs, **Then** the suite exits nonzero naming
    the spec gate.
@@ -192,6 +192,11 @@ entry; stub the accept-block runner to a no-op and run the canary suite
 - Two features' accept blocks interfere (shared temp path, port): execution
   is serialized in deterministic order; blocks are documented as required to
   be self-contained and read-only.
+- An accept block invokes the gate runner itself (directly, or indirectly
+  via the canary suite): the nested run must not re-enter accept-block
+  execution — the runner guards against recursion, and the self-test suite
+  remains able to probe the `spec` gate in its sandbox from inside a block
+  (mechanism in the CLI contracts).
 
 ## Requirements _(mandatory)_
 
@@ -218,7 +223,7 @@ entry; stub the accept-block runner to a no-op and run the canary suite
   task is checked and every accept block passes, at the policy's severity
   (default `error`). For a feature not marked complete, accept blocks MUST
   be parsed and validated but not executed during normal runs; on-demand
-  execution (explicit gate-runner flag or doctor) reports their results
+  execution (an explicit gate-runner flag) reports their results
   informationally and MUST NOT block.
 - **FR-005**: A malformed accept block MUST fail the `spec` gate naming the
   file and location; unparseable criteria are never silently skipped.

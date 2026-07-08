@@ -31,8 +31,10 @@ verify.sh --boundary agent|git|ci [--json] [--dry-run] [--accept <feature|all>]
 - **Added — `--accept <feature|all>`**: additionally executes accept blocks
   of the named incomplete feature(s) and prints per-criterion results as
   informational output. Never changes the exit code for incomplete
-  features; complete features are enforced as always. Unknown feature name
-  → exit 1 (internal error class) naming the available features.
+  features; complete features are enforced as always. Naming a Complete
+  feature is a no-op beyond that normal enforcement (a note line says so).
+  Unknown feature name → exit 1 (internal error class) naming the
+  available features.
 - **`--dry-run`**: the `spec` gate reports `planned` like other gates; no
   discovery side effects to plan, so the entry is the gate name only.
 - **Recursion guard**: block execution exports `GATES_SPEC_EXEC=1`; a
@@ -66,6 +68,12 @@ canary.sh [--json] [--only <id>[,<id>...]]
   rejected by the sandboxed `verify.sh` run. Not rejected → suite exit 1
   naming the spec gate. `--only spec` selects it; `--json` shape unchanged
   (one more element in `canaries[]`).
+- **Sentinel clearing**: `canary.sh` unsets `GATES_SPEC_EXEC` when
+  launching its sandboxed `verify.sh` runs — otherwise a canary invoked
+  from inside an accept block would inherit the recursion guard, skip the
+  sandbox's `spec` gate, and falsely report the fixture as accepted.
+  Recursion stays bounded: the fixture's only block is `false`, which
+  invokes nothing.
 
 ## `policy.json` (extended, user-owned)
 
