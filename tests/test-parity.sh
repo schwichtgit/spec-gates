@@ -135,6 +135,22 @@ else
     fi
 fi
 
+# --- version lockstep: every version-bearing file agrees ---
+# The release workflow refuses a tag that disagrees, but that check fires
+# at tag time; this one fires on every PR, so drift can never even reach a
+# tag. extension.yml is the source of truth.
+echo ""
+echo "=== version lockstep (extension.yml == package.json) ==="
+
+EXT_VERSION="$(sed -n 's/^  version: "\(.*\)"$/\1/p' "$REPO_ROOT/extension/extension.yml" | head -n 1)"
+PKG_VERSION="$(jq -r '.version' "$REPO_ROOT/package.json")"
+LOCK_VERSION="$(jq -r '.version' "$REPO_ROOT/package-lock.json" 2>/dev/null || echo "$PKG_VERSION")"
+if [[ -n "$EXT_VERSION" && "$EXT_VERSION" == "$PKG_VERSION" && "$EXT_VERSION" == "$LOCK_VERSION" ]]; then
+    pass "extension.yml, package.json, package-lock.json all at $EXT_VERSION"
+else
+    fail "version drift: extension.yml=$EXT_VERSION package.json=$PKG_VERSION package-lock.json=$LOCK_VERSION (fix: npm version <X.Y.Z> --no-git-tag-version and bump extension.yml together)"
+fi
+
 echo ""
 echo "$PASSED of $TOTAL tests passed"
 [[ "$FAILED" -eq 0 ]] && exit 0 || exit 1

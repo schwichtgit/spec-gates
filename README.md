@@ -176,12 +176,16 @@ declaration are completely unaffected.
 ## Install
 
 ```bash
-specify extension add gates --from https://github.com/schwichtgit/spec-gates/releases/download/v0.2.0/gates-0.2.0.zip
+specify extension add gates --from https://github.com/schwichtgit/spec-gates/releases/latest/download/gates.zip
 ```
 
-The URL must point at a release **asset** (a flat package with
-`extension.yml` at its root) — the repository/source archive does not
-install, because the manifest lives in `extension/` inside this repo.
+That URL always resolves to the newest release. To pin a specific
+version instead (recommended for fleets), use the versioned asset from
+the [releases page](https://github.com/schwichtgit/spec-gates/releases),
+e.g. `releases/download/vX.Y.Z/gates-X.Y.Z.zip`. Either way the URL must
+point at a release **asset** (a flat package with `extension.yml` at its
+root) — the repository/source archive does not install, because the
+manifest lives in `extension/` inside this repo.
 Spec Kit's community catalog is discovery-only (`install_allowed: false`),
 so `--from <url>` is the install path even after `gates` is listed there;
 catalog listing buys discoverability, not a bare `specify extension add gates`.
