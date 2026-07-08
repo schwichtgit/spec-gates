@@ -108,7 +108,7 @@ and the suite fails naming the spec gate when the runner is stubbed.
 - [ ] T017 [US3] Emit the attestation extension in `extension/runtime/verify.sh`: `spec` GateEntry in `gates[]` (candidates = features, checked = blocks executed) and the top-level `spec` object (features/parsed/executed/passed/failed/results[]), absent when `spec.enabled` is false (FR-008)
 - [ ] T018 [P] [US3] Add the optional `spec` property to `specs/001-provable-enforcement-gate/contracts/attestation-record.schema.json` (additive, record stays `v: 1` per the forward-compatibility rule)
 - [ ] T019 [P] [US3] Add attestation-shape cases to `tests/test-attest.sh`: `spec` object counts present and correct, absent when policy-disabled, `results[]` outcomes match fixtures
-- [ ] T020 [US3] Add the `spec` canary to `extension/runtime/canary.sh` (research R8): sandbox feature `900-canary-fixture` with Status `Complete`, one checked task, one `false` accept block; sandboxed `verify.sh` must reject it or the suite fails naming the spec gate; wire into `--only`
+- [ ] T020 [US3] Add the `spec` canary to `extension/runtime/canary.sh` (research R8): sandbox feature `900-canary-fixture` with Status `Complete`, one checked task, one `false` accept block; sandboxed `verify.sh` must reject it or the suite fails naming the spec gate; wire into `--only`; unset `GATES_SPEC_EXEC` for the sandboxed run so the canary still probes the spec gate when invoked from inside an accept block (cli-contracts.md sentinel clearing)
 
   ```accept
   # verifies: SC-003

@@ -46,11 +46,15 @@ containing `spec.md`, lexicographic order).
 
 ### Outcome rules (FR-004)
 
+Rows are evaluated top-down; the first match wins. Task drift blocks even
+when a feature has zero accept blocks — `no-criteria` only applies once
+every task is checked.
+
 | `complete` | Condition                                           | `outcome`       | Effect on run                    |
 | ---------- | --------------------------------------------------- | --------------- | -------------------------------- |
-| true       | `tasks_unchecked = 0` and `blocks_failed = 0`       | `enforced-pass` | none                             |
 | true       | `tasks_unchecked > 0` or `blocks_failed > 0`        | `enforced-fail` | `spec` gate fail/warn (severity) |
-| true       | `blocks_parsed = 0`                                 | `no-criteria`   | informational note, never blocks |
+| true       | `tasks_unchecked = 0` and `blocks_parsed = 0`       | `no-criteria`   | informational note, never blocks |
+| true       | `tasks_unchecked = 0` and `blocks_failed = 0`       | `enforced-pass` | none                             |
 | false      | always (parse-only; executed only under `--accept`) | `informational` | never blocks                     |
 
 A parse error in **any** feature (complete or not) fails the `spec` gate
