@@ -105,9 +105,9 @@ boundary whose resolved tool versions drift from the lockfile pins.
 
 ### Implementation for User Story 3
 
-- [ ] T019 [US3] Add pin-comparison helper to `extension/runtime/lib/attest.sh`: given the assembled gate entries, produce the mismatch list (entries with pinned non-null and version ≠ pinned)
-- [ ] T020 [US3] Add the synthetic `parity` gate to `extension/runtime/verify.sh`: evaluated after tool gates from already-detected versions (R7), severity from `attestation.parity` (default error; warning reports without failing; off omits the entry), reason format `<tool>: resolved <version>, pinned <pinned> (run npm ci)`; entry included in report, `--json`, and the attestation record (depends on T019)
-- [ ] T021 [US3] Add parity cases to `tests/test-attest.sh`: versions match pins → parity pass; stubbed drift → exit 2 naming tool + both versions [SC-002]; severity warning → exit 0 + warn entry; off → no entry; tool with pinned=null exempt
+- [x] T019 [US3] Add pin-comparison helper to `extension/runtime/lib/attest.sh`: given the assembled gate entries, produce the mismatch list (entries with pinned non-null and version ≠ pinned)
+- [x] T020 [US3] Add the synthetic `parity` gate to `extension/runtime/verify.sh`: evaluated after tool gates from already-detected versions (R7), severity from `attestation.parity` (default error; warning reports without failing; off omits the entry), reason format `<tool>: resolved <version>, pinned <pinned> (run npm ci)`; entry included in report, `--json`, and the attestation record (depends on T019)
+- [x] T021 [US3] Add parity cases to `tests/test-attest.sh`: versions match pins → parity pass; stubbed drift → exit 2 naming tool + both versions [SC-002]; severity warning → exit 0 + warn entry; off → no entry; tool with pinned=null exempt
 
 **Checkpoint**: all three stories independently green; drift on any
 boundary blocks by default.

@@ -208,6 +208,56 @@ expect "red gate exits 2" "$(gate "$DF")" 2
 RED="$(tail -1 "$DF/.specify/gates/attestations.jsonl" | jq -r '"\(.exit):\(.gates[0].result)"')"
 expect "record shows exit=2 and result=fail" "$RED" "2:fail"
 
+# --- 10: the synthetic parity gate (US3) ---
+echo ""
+echo "=== parity gate: pins vs resolved versions (SC-002) ==="
+if have_node_linters; then
+    DP="$WORKDIR/parity"
+    project "$DP" "$NONE_PRETTIER"
+    printf '# Title\n\nBody.\n' >"$DP/README.md"
+
+    PAR_OK="$(gate_json "$DP" | jq -r '.attestation.gates[] | select(.name == "parity") | .result')"
+    expect "versions match pins -> parity pass" "$PAR_OK" pass
+
+    # Stub drift by editing the pin in the fixture's own lockfile copy.
+    jq '.packages["node_modules/prettier"].version = "9.9.9"' \
+        "$DP/package-lock.json" >"$DP/pl.tmp" && mv "$DP/pl.tmp" "$DP/package-lock.json"
+    RC_DRIFT=0
+    DRIFT_OUT="$(CLAUDE_PROJECT_DIR="$DP" bash "$DP/.specify/gates/verify.sh" --boundary ci 2>&1)" || RC_DRIFT=$?
+    expect "version drift -> gate fails (exit 2)" "$RC_DRIFT" 2
+    expect "report names the tool and both versions" \
+        "$(printf '%s' "$DRIFT_OUT" | grep -c 'parity -- prettier: resolved 3\..*, pinned 9\.9\.9 (run npm ci)' || true)" 1
+    DRIFT_REC="$(tail -1 "$DP/.specify/gates/attestations.jsonl" \
+        | jq -r '.gates[] | select(.name == "parity") | "\(.result):\(.reason | contains("pinned 9.9.9"))"')"
+    expect "attestation carries the parity fail entry with reason" "$DRIFT_REC" "fail:true"
+
+    # Severity warning: same drift reports without failing.
+    jq '. + {"attestation": {"parity": "warning"}}' "$DP/.specify/gates/policy.json" \
+        >"$DP/p.tmp" && mv "$DP/p.tmp" "$DP/.specify/gates/policy.json"
+    expect "severity warning -> exit 0 despite drift" "$(gate "$DP")" 0
+    WARN_REC="$(tail -1 "$DP/.specify/gates/attestations.jsonl" \
+        | jq -r '.gates[] | select(.name == "parity") | .result')"
+    expect "warning drift recorded as warn entry" "$WARN_REC" warn
+
+    # Severity off: no parity entry anywhere.
+    jq '.attestation.parity = "off"' "$DP/.specify/gates/policy.json" \
+        >"$DP/p.tmp" && mv "$DP/p.tmp" "$DP/.specify/gates/policy.json"
+    OFF_OUT="$(gate_json "$DP")"
+    expect "parity off -> no entry in gates or attestation" \
+        "$(printf '%s' "$OFF_OUT" | jq -r '([.gates[].name] + [.attestation.gates[].name]) | any(. == "parity")')" false
+
+    # No pin source: tool attested but exempt from comparison.
+    DU="$WORKDIR/unpinned"
+    project "$DU" "$NONE_PRETTIER"
+    rm -f "$DU/package-lock.json"
+    printf '# Title\n\nBody.\n' >"$DU/README.md"
+    UNPINNED="$(gate_json "$DU" | jq -r '.attestation.gates
+        | "\(.[] | select(.name == "prettier") | .pinned):\(.[] | select(.name == "parity") | .result)"')"
+    expect "unpinned tool (no lockfile) -> pinned null, parity pass" "$UNPINNED" "null:pass"
+else
+    skip "parity gate checks" "run npm ci to install pinned prettier"
+fi
+
 echo ""
 echo "$PASS passed, $FAIL failed, $SKIP skipped ($TOTAL total)"
 [[ "$FAIL" -gt 0 ]] && exit 1
