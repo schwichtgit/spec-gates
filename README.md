@@ -1,5 +1,7 @@
 # spec-gates
 
+![spec-gates — a caliper holding a growing project to its spec](docs/assets/spec-gates.png)
+
 [![CI](https://github.com/schwichtgit/spec-gates/actions/workflows/ci.yml/badge.svg)](https://github.com/schwichtgit/spec-gates/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
