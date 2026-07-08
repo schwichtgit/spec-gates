@@ -21,6 +21,20 @@ request on the default branch.
 
 ## Steps
 
+0. **Prerequisites — the remote must exist.** CI enforcement runs on the
+   hosting platform, so a remote project/repository must exist BEFORE this
+   is useful. Check `git remote get-url origin`:
+   - No remote (typical greenfield): STOP and say so explicitly. Guide the
+     user: create the project on the platform first (GitHub: `gh repo
+create`; GitLab: `glab repo create` or the web UI; Jenkins: the SCM
+     the job will poll), then `git remote add origin <url>` and push.
+     Offer to re-run afterwards. Projecting the pipeline file locally
+     without a remote is fine to offer, but be clear nothing enforces
+     until the repo exists server-side and the branch is pushed.
+   - Remote present: verify it is reachable (`git ls-remote origin` — a
+     created-locally-only project fails here) before proceeding, and
+     match the platform argument against the remote URL (warn on
+     `gitlab` with a github.com remote and vice versa).
 1. Resolve the extension's `ci/<platform>/` directory.
 2. Show the user what will be written:
    - github → `.github/workflows/gates.yml`
