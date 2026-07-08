@@ -143,6 +143,31 @@ else
     skip "broken-dispatch canary checks" "run npm ci to install pinned prettier"
 fi
 
+# --- SC-003: the spec canary catches a no-op accept-block runner ---
+echo ""
+echo "=== spec canary (feature 002, SC-003) ==="
+expect "healthy fixture: spec canary blocked (exit 0)" \
+    "$(canary "$FIX" --only spec)" 0
+SPECJSON="$(CLAUDE_PROJECT_DIR="$FIX" bash "$FIX/.specify/gates/canary.sh" --json --only spec)"
+expect "spec canary reports status=blocked" \
+    "$(printf '%s' "$SPECJSON" | jq -r '.canaries[0].status')" blocked
+expect "doctor --canary --only spec propagates exit 0" \
+    "$(rc=0; CLAUDE_PROJECT_DIR="$FIX" bash "$FIX/.specify/gates/doctor.sh" --canary --only spec >/dev/null 2>&1 || rc=$?; echo "$rc")" 0
+
+# Stub the accept-block runner to a no-op: every block "passes", so the
+# sandboxed spec gate accepts the failing fixture — the suite must fail
+# naming the spec gate (the spec-gate analogue of the no-op-dispatch bug).
+printf '\ngates_spec_run_block() { SPEC_BLOCK_DETAIL=""; return 0; }\n' \
+    >>"$FIX/.specify/gates/lib/spec-gate.sh"
+RC_SPEC=0
+OUT_SPEC="$(CLAUDE_PROJECT_DIR="$FIX" bash "$FIX/.specify/gates/canary.sh" --only spec 2>&1)" || RC_SPEC=$?
+expect "no-op block runner -> suite fails (exit 1)" "$RC_SPEC" 1
+expect "output names the spec canary as ACCEPTED" \
+    "$(printf '%s' "$OUT_SPEC" | grep -c 'spec.*ACCEPTED\|ACCEPTED.*spec' || true)" 1
+cp "$REPO_ROOT/extension/runtime/lib/spec-gate.sh" "$FIX/.specify/gates/lib/"
+expect "restored runner -> spec canary green again (exit 0)" \
+    "$(canary "$FIX" --only spec)" 0
+
 # --- skipped semantics: absent tool, and the policy-enabled gap rule ---
 echo ""
 echo "=== skipped vs enforcement-gap semantics ==="

@@ -258,6 +258,74 @@ else
     skip "parity gate checks" "run npm ci to install pinned prettier"
 fi
 
+# --- 11: the spec object (feature 002, FR-008) ---
+echo ""
+echo "=== spec object: counts, outcomes, policy-disabled absence ==="
+
+# GATES_SPEC_EXEC is cleared so these cases still exercise the spec gate
+# when the suite itself runs from inside an accept block (the dogfood case).
+spec_json() { # <dir>
+    CLAUDE_PROJECT_DIR="$1" env -u GATES_SPEC_EXEC \
+        bash "$1/.specify/gates/verify.sh" --boundary ci --json 2>/dev/null || true
+}
+
+DS="$WORKDIR/spec-shape"
+project "$DS" "$CUSTOM_TRUE"
+mkdir -p "$DS/specs/100-done" "$DS/specs/200-wip"
+printf '# Done\n\n**Status**: Complete\n' >"$DS/specs/100-done/spec.md"
+cat >"$DS/specs/100-done/tasks.md" <<'EOF'
+- [x] T001 Task
+
+  ```accept
+  # verifies: SC-900
+  true
+  ```
+EOF
+printf '# WIP\n\n**Status**: Draft\n' >"$DS/specs/200-wip/spec.md"
+cat >"$DS/specs/200-wip/tasks.md" <<'EOF'
+- [ ] T001 Open task
+
+  ```accept
+  false
+  ```
+EOF
+SPEC_OUT="$(spec_json "$DS")"
+expect "attestation carries the spec object" \
+    "$(printf '%s' "$SPEC_OUT" | jq -r '.attestation | has("spec")')" true
+expect "spec counts: features/parsed/executed/passed/failed" \
+    "$(printf '%s' "$SPEC_OUT" | jq -r '.attestation.spec | "\(.features):\(.parsed):\(.executed):\(.passed):\(.failed)"')" \
+    "2:2:1:1:0"
+expect "results[] outcome for the Complete feature is enforced-pass" \
+    "$(printf '%s' "$SPEC_OUT" | jq -r '.attestation.spec.results[] | select(.feature == "100-done") | .outcome')" \
+    "enforced-pass"
+expect "results[] outcome for the Draft feature is informational" \
+    "$(printf '%s' "$SPEC_OUT" | jq -r '.attestation.spec.results[] | select(.feature == "200-wip") | .outcome')" \
+    "informational"
+expect "spec gate entry: candidates=features, checked=executed" \
+    "$(printf '%s' "$SPEC_OUT" | jq -r '.attestation.gates[] | select(.name == "spec") | "\(.candidates):\(.checked):\(.result)"')" \
+    "2:1:pass"
+expect "log record embeds the same spec object" \
+    "$(diff <(printf '%s' "$SPEC_OUT" | jq -S '.attestation.spec') \
+        <(tail -1 "$DS/.specify/gates/attestations.jsonl" | jq -S '.spec') >/dev/null \
+        && echo same || echo differ)" same
+
+DSD="$WORKDIR/spec-disabled"
+project "$DSD" '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error", "custom_command": "true" } }, "spec": { "enabled": false } }'
+mkdir -p "$DSD/specs/100-done"
+printf '# Done\n\n**Status**: Complete\n' >"$DSD/specs/100-done/spec.md"
+cat >"$DSD/specs/100-done/tasks.md" <<'EOF'
+- [x] T001 Task
+
+  ```accept
+  false
+  ```
+EOF
+DIS_OUT="$(spec_json "$DSD")"
+expect "spec.enabled=false -> no spec object in the record" \
+    "$(printf '%s' "$DIS_OUT" | jq -r '.attestation | has("spec")')" false
+expect "spec.enabled=false -> no spec gate entry" \
+    "$(printf '%s' "$DIS_OUT" | jq -r '[.attestation.gates[] | select(.name == "spec")] | length')" 0
+
 echo ""
 echo "$PASS passed, $FAIL failed, $SKIP skipped ($TOTAL total)"
 [[ "$FAIL" -gt 0 ]] && exit 1

@@ -18,9 +18,64 @@
     "gates": {
       "type": "array",
       "items": { "$ref": "#/$defs/gateEntry" }
+    },
+    "spec": {
+      "type": "object",
+      "description": "Spec-conformance gate summary (feature 002). Optional and additive: absent when the spec gate is policy-disabled, and the record stays v: 1 because consumers ignore unknown fields.",
+      "required": [
+        "features",
+        "parsed",
+        "executed",
+        "passed",
+        "failed",
+        "results"
+      ],
+      "properties": {
+        "features": { "type": "integer", "minimum": 0 },
+        "parsed": { "type": "integer", "minimum": 0 },
+        "executed": { "type": "integer", "minimum": 0 },
+        "passed": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "results": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/featureConformance" }
+        }
+      }
     }
   },
   "$defs": {
+    "featureConformance": {
+      "type": "object",
+      "required": [
+        "feature",
+        "complete",
+        "tasks_total",
+        "tasks_unchecked",
+        "blocks_parsed",
+        "blocks_executed",
+        "blocks_passed",
+        "blocks_failed",
+        "outcome"
+      ],
+      "properties": {
+        "feature": { "type": "string", "minLength": 1 },
+        "complete": { "type": "boolean" },
+        "tasks_total": { "type": "integer", "minimum": 0 },
+        "tasks_unchecked": { "type": "integer", "minimum": 0 },
+        "blocks_parsed": { "type": "integer", "minimum": 0 },
+        "blocks_executed": { "type": "integer", "minimum": 0 },
+        "blocks_passed": { "type": "integer", "minimum": 0 },
+        "blocks_failed": { "type": "integer", "minimum": 0 },
+        "outcome": {
+          "enum": [
+            "enforced-pass",
+            "enforced-fail",
+            "informational",
+            "no-criteria"
+          ]
+        }
+      }
+    },
     "gateEntry": {
       "type": "object",
       "required": ["name", "result", "duration_s"],

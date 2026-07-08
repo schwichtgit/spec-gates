@@ -31,6 +31,8 @@ GATES_LIB_DIR="$PROJECT_ROOT/.specify/gates/lib"
 [[ -f "$GATES_LIB_DIR/policy.sh" ]] && source "$GATES_LIB_DIR/policy.sh"
 # shellcheck source=/dev/null disable=SC1091
 [[ -f "$GATES_LIB_DIR/formatter-dispatch.sh" ]] && source "$GATES_LIB_DIR/formatter-dispatch.sh"
+# shellcheck source=/dev/null disable=SC1091
+[[ -f "$GATES_LIB_DIR/spec-gate.sh" ]] && source "$GATES_LIB_DIR/spec-gate.sh"
 
 MISSING=0
 OK="  [ok]  "
@@ -103,6 +105,60 @@ if have jq && [[ -f "$ATT_LOG" ]]; then
     else
         echo "${OK}no no-op signature"
     fi
+fi
+
+# Spec conformance (feature 002): what the spec gate sees. Discovery and
+# parse counts are informational; a parse error is a doctor FAILURE (the
+# gate fails closed on it, so surface it here with the same weight). A
+# feature with every task checked but no Complete marker gets a nudge —
+# enforcement is one Status flip away.
+if declare -f gates_spec_features >/dev/null 2>&1 \
+    && declare -f gates_policy_section_list >/dev/null 2>&1; then
+    echo ""
+    echo "Spec conformance (accept blocks in specs/*/tasks.md):"
+    SPEC_TMP="$(mktemp -d 2>/dev/null || mktemp -d -t gates-doctor-spec)"
+    SPEC_FEATURES=0
+    SPEC_BLOCKS=0
+    SPEC_COMPLETE=0
+    while IFS= read -r f; do
+        [[ -z "$f" ]] && continue
+        SPEC_FEATURES=$((SPEC_FEATURES + 1))
+        fdir="$PROJECT_ROOT/specs/$f"
+        mkdir -p "$SPEC_TMP/$f"
+        parse_out=""
+        [[ -f "$fdir/tasks.md" ]] && parse_out="$(gates_spec_parse "$fdir/tasks.md" "$SPEC_TMP/$f")"
+        nblocks=0
+        tasks_total=0
+        tasks_unchecked=0
+        ferrors=0
+        while IFS=$'\t' read -r tag a1 a2 rest; do
+            [[ -z "$tag" ]] && continue
+            case "$tag" in
+                ERROR)
+                    echo "${BAD}specs/$f/tasks.md:$a1: $a2"
+                    MISSING=$((MISSING + 1))
+                    ferrors=$((ferrors + 1))
+                    ;;
+                BLOCK) nblocks=$((nblocks + 1)) ;;
+                TASKS)
+                    tasks_total="$a1"
+                    tasks_unchecked="$a2"
+                    ;;
+            esac
+        done <<<"$parse_out"
+        SPEC_BLOCKS=$((SPEC_BLOCKS + nblocks))
+        if gates_spec_complete "$fdir/spec.md"; then
+            SPEC_COMPLETE=$((SPEC_COMPLETE + 1))
+            [[ "$ferrors" -eq 0 ]] \
+                && echo "${OK}$f — Complete, $nblocks accept block(s), enforced"
+        elif [[ "$tasks_total" -gt 0 && "$tasks_unchecked" -eq 0 ]]; then
+            echo "${REC}$f — every task checked but Status is not Complete; set **Status**: Complete in spec.md to turn enforcement on"
+        elif [[ "$ferrors" -eq 0 ]]; then
+            echo "${SKIP}$f — $nblocks accept block(s), not enforced ($tasks_unchecked of $tasks_total tasks open)"
+        fi
+    done <<<"$(gates_spec_features "$PROJECT_ROOT")"
+    rm -rf "$SPEC_TMP"
+    echo "  $SPEC_FEATURES feature(s), $SPEC_BLOCKS accept block(s) parsed, $SPEC_COMPLETE complete"
 fi
 
 echo ""
