@@ -45,6 +45,43 @@ Dispatch follows the policy's `verify-quality.orchestrator`:
 Exit codes: `0` green, `1` internal error, `2` gate failure. `--json`
 emits a single machine-readable object for workflow steps and CI.
 
+## Evidence, canaries, and verified parity
+
+Three separate silent-no-op enforcement bugs in this project's own history
+taught one lesson: an enforcement layer must prove it is still enforcing.
+
+**Attestation records.** Every `verify.sh` run appends one compact JSON
+line to `.specify/gates/attestations.jsonl` and embeds the same object in
+`--json`: schema version, timestamp, boundary, the SHA-256 of the policy
+file, and one entry per gate — resolved binary, detected version, lockfile
+pin, candidate vs checked file counts, result, duration. The log is capped
+(`attestation.max_records`, default 200) via append plus atomic rewrite,
+is gitignored by default, and never contains file contents. Evidence loss
+cannot change a gate outcome: a write failure is a stderr warning, never a
+result. `doctor` reads the latest record and fails on the no-op signature —
+`result=pass` with `candidates > 0` and `checked = 0` — because no
+legitimate run looks like that.
+
+**Canaries.** `canary.sh` (projected next to `verify.sh`) plants known
+violations in `mktemp` sandboxes and requires the real entrypoints to
+reject them: the format and shell probes run through `verify.sh` itself,
+the hook probes pipe crafted tool-call JSON through the projected hooks,
+and the secret probe stages an AWS-key-shaped string in a sandbox git repo
+with the pre-commit hook installed. The suite copies the runtime from the
+projected directory, so a broken _projected_ gate — not just a broken
+source tree — is what gets caught. Probes never read or write user project
+files. An accepted probe fails the suite naming the gate; CI runs the
+suite on every build.
+
+**Pins-based parity.** The parity property used to be an argument ("same
+script, same policy"); now it is checked. A synthetic `parity` gate inside
+`verify.sh` compares every tool's resolved version against the project's
+lockfile pin, and the record's policy hash captures policy identity — so
+agent, git, and CI runs are proven equivalent transitively. The lockfile
+is the shared source of truth; no attestation has to travel between
+boundaries. Drift fails the run by default (`attestation.parity: error`);
+tools with no pin source are attested but exempt.
+
 ## Why projection, not symlinks or plugin-resident hooks
 
 The runtime is copied into `.specify/gates/` and `.claude/hooks/gates/`.

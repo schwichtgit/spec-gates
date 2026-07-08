@@ -29,6 +29,10 @@ verify.sh --boundary agent|git|ci [--json] [--dry-run]
 - **Failure to write the log** (permissions, disk): reported as a warning
   on stderr; the gate result is not affected (evidence loss must not mask
   or manufacture a gate outcome).
+- **Changed — skipped surfaces**: a policy-enabled tool that is not
+  installed is reported as `skipped` (with a reason) in the report,
+  `--json` `gates[]`, and the attestation record — never `pass` (spec
+  edge case). Additive status value; the entry shape is unchanged.
 
 ## `canary.sh` (new, projected alongside `verify.sh`)
 
@@ -68,8 +72,9 @@ Optional `attestation` section — defaults apply when absent (FR-009):
 
 Validated by `policy.schema.json` and `gates_validate_policy`: unknown
 fields rejected; `enabled` boolean; `max_records` integer ≥ 1; `parity` ∈
-`error|warning|off`. Seeded commented-out in `policy-template.json`; `init`
-seeds, `upgrade` never overwrites (standing rule).
+`error|warning|off`. Seeded with explicit defaults in
+`policy-template.json` (strict JSON has no comments); `init` seeds,
+`upgrade` never overwrites (standing rule).
 
 ## CI templates (extended)
 

@@ -116,10 +116,10 @@ boundary blocks by default.
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T022 [P] Document attestations, canaries, and parity in `README.md` (three-boundary section + design rules) and `docs/how-it-works.md` (evidence/canary model, pins-based parity rationale)
-- [ ] T023 [P] Reconcile `specs/001-provable-enforcement-gate/contracts/cli-contracts.md` against the implemented surfaces; correct the contract or the code where they drifted (contract is the arbiter)
-- [ ] T024 Execute all six quickstart scenarios end-to-end on macOS (bash 3.2) including measured SC-003 (attestation overhead ≤ 1s) and SC-005 (canaries ≤ 30s); note results in the PR description
-- [ ] T025 Full self-dogfood green with everything enabled: `bash tests/run.sh` (7 suites), repo self-gate with parity on, `bash .specify/gates/canary.sh`, CI green on the PR (SC-006)
+- [x] T022 [P] Document attestations, canaries, and parity in `README.md` (three-boundary section + design rules) and `docs/how-it-works.md` (evidence/canary model, pins-based parity rationale)
+- [x] T023 [P] Reconcile `specs/001-provable-enforcement-gate/contracts/cli-contracts.md` against the implemented surfaces; correct the contract or the code where they drifted (contract is the arbiter)
+- [x] T024 Execute all six quickstart scenarios end-to-end on macOS (bash 3.2) including measured SC-003 (attestation overhead ≤ 1s) and SC-005 (canaries ≤ 30s); note results in the PR description
+- [x] T025 Full self-dogfood green with everything enabled: `bash tests/run.sh` (7 suites), repo self-gate with parity on, `bash .specify/gates/canary.sh`, CI green on the PR (SC-006)
 
 ---
 
