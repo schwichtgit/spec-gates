@@ -15,6 +15,30 @@
       "type": "string",
       "description": "Optional schema reference for editor tooling."
     },
+    "extends": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "version"],
+      "description": "Versioned baseline contract (feature 003). This policy file becomes an overlay on the named baseline: /speckit.gates.sync fetches source@version once, pins it (baseline.lock.json), snapshots it (baseline.json), and materializes the merged effective policy (policy.effective.json) that every boundary enforces. Absent = the contract machinery is fully dormant.",
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Anything git accepts as a remote: https/ssh URL, file:// URL, or local path to the baseline repository."
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Tag or commit identifier to pin. Branch names are refused at sync time — a moving pin is not a pin."
+        },
+        "file": {
+          "type": "string",
+          "minLength": 1,
+          "default": "policy.json",
+          "description": "Path of the baseline policy document inside the source repository."
+        }
+      }
+    },
     "hooks": {
       "type": "object",
       "description": "Map of hook name to hook stanza. Hook names are free-form strings matching the name used by gates_policy_get / gates_policy_list callers.",

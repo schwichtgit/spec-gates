@@ -4,8 +4,9 @@ description: "Re-project the enforcement runtime after an extension update (neve
 
 # Upgrade Gates Runtime
 
-Re-project `verify.sh`, `lib/`, hook scripts, and the schema from the
-currently installed extension version into the project.
+Re-project `verify.sh`, `doctor.sh`, `canary.sh`, `contract.sh`, `lib/`,
+hook scripts, and the schema from the currently installed extension
+version into the project.
 
 ## Rules
 

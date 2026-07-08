@@ -627,6 +627,105 @@ else
     fail "non-object spec section not rejected: $ERR_OUT"
 fi
 
+# --- 5e: extends section (003) ---
+echo ""
+echo "=== extends section ==="
+
+GOOD_EXT="$(write_policy good-ext '{
+  "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } },
+  "extends": { "source": "https://github.com/acme/policy-baseline", "version": "v1.0.0", "file": "policy.json" }
+}')"
+if gates_validate_policy "$GOOD_EXT" >/dev/null 2>&1; then
+    pass "valid extends section accepted"
+else
+    fail "valid extends section rejected"
+    gates_validate_policy "$GOOD_EXT" || true
+fi
+
+EXT_NO_VERSION="$(write_policy ext-no-version '{
+  "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } },
+  "extends": { "source": "/tmp/baseline" }
+}')"
+ERR_OUT="$(gates_validate_policy "$EXT_NO_VERSION" 2>&1 || true)"
+if echo "$ERR_OUT" | grep -q 'extends: version is required'; then
+    pass "extends without version rejected"
+else
+    fail "extends without version not rejected: $ERR_OUT"
+fi
+
+EXT_EMPTY_SOURCE="$(write_policy ext-empty-source '{
+  "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } },
+  "extends": { "source": "", "version": "v1.0.0" }
+}')"
+ERR_OUT="$(gates_validate_policy "$EXT_EMPTY_SOURCE" 2>&1 || true)"
+if echo "$ERR_OUT" | grep -q 'extends: source must be a non-empty string'; then
+    pass "empty extends.source rejected"
+else
+    fail "empty extends.source not rejected: $ERR_OUT"
+fi
+
+EXT_BAD_KEY="$(write_policy ext-bad-key '{
+  "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } },
+  "extends": { "source": "/tmp/baseline", "version": "v1.0.0", "branch": "main" }
+}')"
+ERR_OUT="$(gates_validate_policy "$EXT_BAD_KEY" 2>&1 || true)"
+if echo "$ERR_OUT" | grep -q 'extends: unknown field "branch"'; then
+    pass "unknown extends field rejected"
+else
+    fail "unknown extends field not rejected: $ERR_OUT"
+fi
+
+EXT_BAD_SHAPE="$(write_policy ext-bad-shape '{
+  "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } },
+  "extends": "https://github.com/acme/policy-baseline@v1"
+}')"
+ERR_OUT="$(gates_validate_policy "$EXT_BAD_SHAPE" 2>&1 || true)"
+if echo "$ERR_OUT" | grep -q 'extends: must be an object'; then
+    pass "non-object extends section rejected"
+else
+    fail "non-object extends section not rejected: $ERR_OUT"
+fi
+
+# --- 5f: effective-policy resolution (003) ---
+echo ""
+echo "=== effective-policy resolution ==="
+
+RESDIR="$WORKDIR/resolve/.specify/gates"
+mkdir -p "$RESDIR"
+printf '%s' '{ "hooks": {}, "extends": { "source": "/tmp/b", "version": "v1" } }' >"$RESDIR/policy.json"
+printf '%s' '{ "hooks": {} }' >"$RESDIR/policy.effective.json"
+GOT="$(env -u GATES_POLICY_FILE CLAUDE_PROJECT_DIR="$WORKDIR/resolve" bash -c "source '$LIB'; gates_policy_file")"
+if [[ "$GOT" == "$RESDIR/policy.effective.json" ]]; then
+    pass "extends + effective present -> resolver picks the effective policy"
+else
+    fail "resolver picked $GOT (want effective)"
+fi
+
+rm "$RESDIR/policy.effective.json"
+GOT="$(env -u GATES_POLICY_FILE CLAUDE_PROJECT_DIR="$WORKDIR/resolve" bash -c "source '$LIB'; gates_policy_file")"
+if [[ "$GOT" == "$RESDIR/policy.json" ]]; then
+    pass "extends without effective -> resolver falls back to the overlay"
+else
+    fail "resolver picked $GOT (want overlay)"
+fi
+
+printf '%s' '{ "hooks": {} }' >"$RESDIR/policy.json"
+printf '%s' '{ "hooks": {} }' >"$RESDIR/policy.effective.json"
+GOT="$(env -u GATES_POLICY_FILE CLAUDE_PROJECT_DIR="$WORKDIR/resolve" bash -c "source '$LIB'; gates_policy_file")"
+if [[ "$GOT" == "$RESDIR/policy.json" ]]; then
+    pass "no extends -> resolver ignores a stray effective file"
+else
+    fail "resolver picked $GOT (want overlay; dormant repo)"
+fi
+
+printf '%s' '{ "hooks": {}, "extends": { "source": "/tmp/b", "version": "v1" } }' >"$RESDIR/policy.json"
+GOT="$(GATES_POLICY_FILE="$WORKDIR/override.json" CLAUDE_PROJECT_DIR="$WORKDIR/resolve" bash -c "source '$LIB'; gates_policy_file")"
+if [[ "$GOT" == "$WORKDIR/override.json" ]]; then
+    pass "GATES_POLICY_FILE override still wins over contract resolution"
+else
+    fail "resolver picked $GOT (want the env override)"
+fi
+
 # --- 6: malformed JSON ---
 echo ""
 echo "=== malformed JSON rejected ==="

@@ -18,10 +18,13 @@ node_modules/
 
 # Projected gate runtime: materialized from extension/runtime/ by CI (and by
 # /speckit.gates.init in real projects). Only .specify/gates/policy.json is
-# committed; the runtime copies are build artifacts.
+# committed; the runtime copies are build artifacts. The contract artifacts
+# (baseline.json, baseline.lock.json, policy.effective.json) are NOT listed
+# here on purpose — they are committed contract state, not runtime copies.
 .specify/gates/verify.sh
 .specify/gates/doctor.sh
 .specify/gates/canary.sh
+.specify/gates/contract.sh
 .specify/gates/lib/
 .specify/gates/policy.schema.json
 

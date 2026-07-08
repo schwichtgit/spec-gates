@@ -1,5 +1,5 @@
 {
-  "_comment": "spec-gates policy. Schema: .specify/gates/policy.schema.json. Loader: .specify/gates/lib/policy.sh. USER-OWNED: init seeds this file; upgrade never overwrites. Edit include/exclude globs, orchestrator, and severity to customize gate behavior at all three boundaries. node_modules/.venv are excluded at both top-level (name/**) and any nested depth (**/name/**) for monorepos.",
+  "_comment": "spec-gates policy. Schema: .specify/gates/policy.schema.json. Loader: .specify/gates/lib/policy.sh. USER-OWNED: init seeds this file; upgrade never overwrites. Edit include/exclude globs, orchestrator, and severity to customize gate behavior at all three boundaries. node_modules/.venv are excluded at both top-level (name/**) and any nested depth (**/name/**) for monorepos. To inherit an org baseline policy, add \"extends\": { \"source\": \"<git url or path>\", \"version\": \"<tag or commit>\" } and run /speckit.gates.sync — this file then overlays the baseline (see feature 003).",
   "hooks": {
     "prettier": {
       "include": ["**/*.md", "**/*.yml", "**/*.yaml", "**/*.json"],

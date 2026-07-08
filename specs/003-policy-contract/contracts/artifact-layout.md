@@ -72,8 +72,13 @@ effective = canonicalize( (snapshot * (overlay - extends)) + overlay.extends )
 | --- | ------------------------------------------------------------- | ------------------------------------------------ |
 | 1   | pin, snapshot, and effective all exist                        | `contract: not synced (<file> missing)`          |
 | 2   | `sha256(baseline.json)` equals lock `digest`                  | `contract: baseline snapshot does not match pin` |
-| 3   | recomputed merge equals `policy.effective.json` byte-for-byte | `contract: effective policy drifted`             |
-| 4   | overlay `extends` equals lock `source`/`version`/`file`       | `contract: declaration changed since last sync`  |
+| 3   | overlay `extends` equals lock `source`/`version`/`file`       | `contract: declaration changed since last sync`  |
+| 4   | recomputed merge equals `policy.effective.json` byte-for-byte | `contract: effective policy drifted`             |
+
+Evaluation order is the table order: the declaration check precedes the
+recompute so that an edited `extends` gets the precise message (an edited
+declaration also perturbs the merge, which would otherwise mask it as
+generic drift).
 
 A repo whose overlay has no `extends` is exempt from all four (dormant).
 Deviations (see data-model classification) are reported informationally and

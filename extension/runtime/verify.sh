@@ -58,6 +58,8 @@ source "$GATES_DIR/lib/policy.sh"
 source "$GATES_DIR/lib/attest.sh"
 # shellcheck source=lib/spec-gate.sh disable=SC1091
 source "$GATES_DIR/lib/spec-gate.sh"
+# shellcheck source=lib/contract.sh disable=SC1091
+source "$GATES_DIR/lib/contract.sh"
 
 FAILED=0
 WARNINGS=0
@@ -145,6 +147,49 @@ run_gate() { # name severity cmd...
     att_gate "$name" "$bin" "$version" "$pinned" "$candidates" "$checked" \
         "$result" "$reason" "$((end - start))"
 }
+
+# ---------------------------------------------------------------------------
+# Contract gate (feature 003): when policy.json extends a versioned baseline,
+# prove — offline, before any gate consults the policy — that the committed
+# snapshot matches the pin, the effective policy matches recomputation, and
+# the declaration matches what was synced. Policy integrity precedes policy
+# enforcement, so this runs before the tool gates. Dormant (no extends): no
+# gate entry at all. Deviations are informational and never change the exit
+# code (FR-006).
+# ---------------------------------------------------------------------------
+CONTRACT_ATT_JSON=""
+contract_start="$(date +%s)"
+gates_contract_check "$PROJECT_ROOT"
+contract_end="$(date +%s)"
+if [[ "$CONTRACT_STATUS" != "dormant" ]]; then
+    if [[ "$DRY_RUN" == "1" ]]; then
+        record "contract" "planned" "baseline contract integrity (extends)"
+    elif [[ "$CONTRACT_STATUS" == "pass" ]]; then
+        record "contract" "pass" ""
+        att_gate "contract" "" "" "" "" "" "pass" "" "$((contract_end - contract_start))"
+        if [[ "$JSON" == "0" && -n "$CONTRACT_DEVIATIONS" ]]; then
+            # shellcheck disable=SC2034  # dev_rest swallows the JSON-path field
+            while IFS=$'\t' read -r dev_class dev_path dev_from dev_to dev_rest; do
+                [[ -z "$dev_class" ]] && continue
+                echo "contract: deviation ($dev_class): $dev_path: baseline $dev_from -> overlay $dev_to"
+            done <<<"$CONTRACT_DEVIATIONS"
+        fi
+    else
+        # A broken contract is never a warning: fixed error severity (R6).
+        record "contract" "fail" "$CONTRACT_DETAIL"
+        FAILED=$((FAILED + 1))
+        att_gate "contract" "" "" "" "" "" "fail" "$CONTRACT_DETAIL" "$((contract_end - contract_start))"
+    fi
+    if [[ "$DRY_RUN" != "1" ]]; then
+        CONTRACT_ATT_JSON="$(jq -cn --arg s "$CONTRACT_SOURCE" --arg v "$CONTRACT_VERSION" \
+            --arg d "$CONTRACT_PIN_DIGEST" --arg e "$CONTRACT_EFFECTIVE_SHA256" \
+            --argjson w "${CONTRACT_WEAKENED:-0}" --argjson c "${CONTRACT_CHANGED:-0}" '
+            { source: $s, version: $v,
+              digest: (if $d == "" then null else $d end),
+              effective_sha256: (if $e == "" then null else $e end),
+              deviations: { weakened: $w, changed: $c } }')"
+    fi
+fi
 
 # ---------------------------------------------------------------------------
 # Gate dispatch. Orchestrator semantics carried over from CPF (ADR-005):
@@ -269,7 +314,9 @@ EXIT_CODE=0
 
 ATTESTATION=""
 if [[ "$DRY_RUN" != "1" && "$ATT_ENABLED" != "false" ]]; then
-    if POLICY_SHA="$(gates_sha256 "$POLICY_FILE")"; then
+    # The hash is of the policy the run actually enforced: the materialized
+    # effective policy in a contract repo, policy.json everywhere else.
+    if POLICY_SHA="$(gates_sha256 "$(gates_policy_file)")"; then
         RUNTIME_VERSION=""
         if [[ -f "$GATES_DIR/.runtime-version" ]]; then
             RUNTIME_VERSION="$(head -n 1 "$GATES_DIR/.runtime-version" 2>/dev/null || true)"
@@ -279,12 +326,13 @@ if [[ "$DRY_RUN" != "1" && "$ATT_ENABLED" != "false" ]]; then
         if [[ ${#ATT_GATES[@]} -gt 0 ]]; then
             att_joined="$(IFS=,; printf '%s' "${ATT_GATES[*]}")"
         fi
-        # The optional spec object (feature 002) is additive; v stays 1 and
-        # consumers ignore unknown fields (001 forward-compatibility rule).
+        # The optional spec (002) and contract (003) objects are additive;
+        # v stays 1 and consumers ignore unknown fields (001 rule).
         ATTESTATION="$(jq -cn --arg ts "$ATT_TS" --arg boundary "$BOUNDARY" \
             --arg sha "$POLICY_SHA" --arg rv "$RUNTIME_VERSION" \
             --argjson exit "$EXIT_CODE" --argjson gates "[$att_joined]" \
-            --argjson spec "${SPEC_ATT_JSON:-null}" '
+            --argjson spec "${SPEC_ATT_JSON:-null}" \
+            --argjson contract "${CONTRACT_ATT_JSON:-null}" '
             { v: 1,
               ts: $ts,
               boundary: (if ["agent","git","ci"] | index($boundary) then $boundary else "unspecified" end),
@@ -292,7 +340,8 @@ if [[ "$DRY_RUN" != "1" && "$ATT_ENABLED" != "false" ]]; then
               runtime_version: (if $rv == "" then null else $rv end),
               exit: $exit,
               gates: $gates }
-            + (if $spec != null then { spec: $spec } else {} end)')"
+            + (if $spec != null then { spec: $spec } else {} end)
+            + (if $contract != null then { contract: $contract } else {} end)')"
         MAX_RECORDS="$(gates_policy_section_get attestation max_records)"
         [[ -z "$MAX_RECORDS" ]] && MAX_RECORDS=200
         if ! gates_attest_append "$ATTESTATION" "$GATES_DIR/attestations.jsonl" "$MAX_RECORDS"; then
