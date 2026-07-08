@@ -171,6 +171,37 @@ case "$ORCH" in
         ;;
 esac
 
+ATT_ENABLED="$(gates_policy_section_get attestation enabled)"
+
+# ---------------------------------------------------------------------------
+# Synthetic parity gate (R7): every boundary compares the tool versions just
+# detected against the lockfile pins, so agent, git, and CI runs are proven
+# equivalent transitively — no attestation transport needed. Severity comes
+# from attestation.parity (default error; warning reports without failing;
+# off omits the entry). Disabled attestations disable parity too.
+# ---------------------------------------------------------------------------
+PARITY_SEV="$(gates_policy_section_get attestation parity)"
+[[ -z "$PARITY_SEV" ]] && PARITY_SEV="error"
+if [[ "$DRY_RUN" != "1" && "$ATT_ENABLED" != "false" && "$PARITY_SEV" != "off" ]]; then
+    parity_input="[]"
+    if [[ ${#ATT_GATES[@]} -gt 0 ]]; then
+        parity_input="[$(IFS=,; printf '%s' "${ATT_GATES[*]}")]"
+    fi
+    PARITY_DRIFT="$(gates_pin_mismatches "$parity_input")"
+    if [[ -z "$PARITY_DRIFT" ]]; then
+        record "parity" "pass" ""
+        att_gate "parity" "" "" "" "" "" "pass" "" 0
+    elif [[ "$PARITY_SEV" == "error" ]]; then
+        record "parity" "fail" "$PARITY_DRIFT"
+        FAILED=$((FAILED + 1))
+        att_gate "parity" "" "" "" "" "" "fail" "$PARITY_DRIFT" 0
+    else
+        record "parity" "warn" "$PARITY_DRIFT"
+        WARNINGS=$((WARNINGS + 1))
+        att_gate "parity" "" "" "" "" "" "warn" "$PARITY_DRIFT" 0
+    fi
+fi
+
 # ---------------------------------------------------------------------------
 # Attestation record (feature 001): one per non-dry run unless the policy
 # disables it. A failure to hash or to write the log is a stderr warning
@@ -180,7 +211,6 @@ EXIT_CODE=0
 [[ "$FAILED" -gt 0 ]] && EXIT_CODE=2
 
 ATTESTATION=""
-ATT_ENABLED="$(gates_policy_section_get attestation enabled)"
 if [[ "$DRY_RUN" != "1" && "$ATT_ENABLED" != "false" ]]; then
     if POLICY_SHA="$(gates_sha256 "$POLICY_FILE")"; then
         RUNTIME_VERSION=""

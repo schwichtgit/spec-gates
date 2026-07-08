@@ -70,6 +70,19 @@ gates_pin_version() { # <pkgname> <root>
     jq -r --arg p "node_modules/$pkg" '.packages[$p].version // empty' "$lock" 2>/dev/null || true
 }
 
+# Pin comparison for the synthetic parity gate (R7): given the assembled
+# GateEntry objects as a JSON array, print one "; "-joined line naming each
+# drifted tool, or nothing when every pinned tool matches. Tools with no pin
+# (pinned null) are exempt; tools with no detected version (skipped/missing)
+# are exempt too — their absence is surfaced as `skipped`, not as drift.
+gates_pin_mismatches() { # <gates-json-array>
+    printf '%s' "${1:-[]}" | jq -r '
+        [ .[]
+          | select(.pinned != null and .version != null and .version != .pinned)
+          | "\(.name): resolved \(.version), pinned \(.pinned) (run npm ci)" ]
+        | join("; ")' 2>/dev/null || true
+}
+
 # Append one single-line record, then cap: records are well under PIPE_BUF so
 # the append is a single atomic-in-practice write; the cap rewrite goes
 # through a temp file in the same directory + mv (atomic rename), so readers
