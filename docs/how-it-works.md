@@ -82,6 +82,55 @@ is the shared source of truth; no attestation has to travel between
 boundaries. Drift fails the run by default (`attestation.parity: error`);
 tools with no pin source are attested but exempt.
 
+## Spec conformance: acceptance criteria as executable gates
+
+The tool gates hold code to linters; the `spec` gate holds a feature to
+its own specification. The pipeline runs inside `verify.sh` on every run,
+after the tool gates and before `parity`:
+
+1. **Discover** — direct children of `specs/` containing a `spec.md`, in
+   lexicographic order, minus `spec.exclude` globs. No `specs/` directory
+   means zero features and a trivial pass.
+2. **Parse** — an awk fence state machine reads each feature's `tasks.md`:
+   ` ```accept ` fences become criteria (commands, optional
+   `# verifies:` label, owning task), checkbox counts are taken
+   fence-aware so a `- [ ]` inside a code sample never counts. Malformed
+   shapes — unterminated fence, command-less block, block with no
+   preceding task — fail the gate at `spec.severity` naming
+   `tasks.md:<line>`. Parsing is fail-closed by design: a criterion the
+   gate cannot read is a red run, not a skipped check.
+3. **Execute** — for features whose `spec.md` says `**Status**: Complete`
+   (and for any feature named via `--accept`), blocks run serially from
+   the repo root with output captured (shown only on failure), a
+   per-block watchdog (`spec.timeout_s`, default 30s), and
+   `git status --porcelain` snapshots around each block — a block that
+   mutates the working tree fails its criterion, and nothing is ever
+   auto-reverted.
+4. **Enforce** — a Complete feature fails the `spec` gate on any
+   unchecked task or failing block, naming the feature, the task or
+   criterion, and the cause. Incomplete features are informational
+   (`spec: <feature> — N criteria parsed, not enforced`); a Complete
+   feature with zero blocks is flagged as having nothing executable to
+   hold it to, but does not block.
+
+**Recursion guard.** An accept block that invokes `verify.sh` (this
+repository's own blocks do) would re-enter the spec gate and recurse.
+Blocks execute with `GATES_SPEC_EXEC=1` exported, and `verify.sh` skips
+the spec gate entirely when it is set. Consumers that must probe the spec
+gate from inside a block — the canary suite, the test suites — clear the
+sentinel explicitly for their sandboxed runs.
+
+**Evidence and self-test.** The attestation record gains a `spec` gate
+entry (`candidates` = features, `checked` = blocks executed) and a
+top-level `spec` object with per-run counts and per-feature outcomes
+(`enforced-pass | enforced-fail | informational | no-criteria`). A `spec`
+canary projects a sandbox feature marked Complete with a `false` accept
+block and requires the sandboxed gate to reject it — stubbing the block
+runner to a no-op fails the canary suite naming the spec gate. `doctor`
+reports what the gate sees (features, blocks, complete count), fails on
+parse errors, and nudges when every task is checked but the `Complete`
+flip is missing.
+
 ## Why projection, not symlinks or plugin-resident hooks
 
 The runtime is copied into `.specify/gates/` and `.claude/hooks/gates/`.

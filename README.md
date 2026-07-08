@@ -79,6 +79,51 @@ The optional policy section, with its defaults:
 "attestation": { "enabled": true, "max_records": 200, "parity": "error" }
 ```
 
+## Spec conformance
+
+A spec's acceptance criteria are usually prose — checked by hand, if at
+all. The `spec` gate makes them executable: fence a shell snippet as
+` ```accept ` under any task in `specs/<feature>/tasks.md` and it becomes
+a criterion the gate can run (exit 0 = the criterion holds):
+
+````markdown
+- [x] T042 Ship the exporter
+
+  ```accept
+  # verifies: SC-003
+  bash tests/test-exporter.sh
+  ```
+````
+
+The full grammar lives in
+[`specs/002-spec-conformance-gate/contracts/accept-block.md`](specs/002-spec-conformance-gate/contracts/accept-block.md).
+Malformed blocks (unterminated fence, no commands, no preceding task) fail
+the gate naming `tasks.md:<line>` — an unreadable criterion is never
+silently skipped.
+
+Enforcement follows the feature's own completion claim, read from
+`spec.md`:
+
+- **In progress** (any `**Status**:` other than `Complete`) — blocks are
+  parsed and reported on every run, executed only on demand:
+  `verify.sh --accept <feature|all>` runs them informationally, never
+  changing the exit code.
+- **`**Status**: Complete`** — the claim is enforced. Any unchecked
+  `- [ ]` task or failing accept block fails the run, naming the feature,
+  the task or criterion, and the cause (exit code, `timeout after <N>s`,
+  or a working-tree mutation — blocks are read-only by contract and never
+  auto-reverted).
+
+Results land in the attestation record (a `spec` gate entry plus per-run
+counts and per-feature outcomes), a `spec` canary proves the gate still
+blocks, and `doctor` reports discovery — including a nudge when every
+task is checked but the Status flip is missing. The optional policy
+section, with its defaults:
+
+```json
+"spec": { "enabled": true, "severity": "error", "include": ["*"], "exclude": [], "timeout_s": 30 }
+```
+
 ## Requirements
 
 - **jq** and **git** — the hooks and `verify.sh` require them.
