@@ -138,9 +138,12 @@ section, with its defaults:
 ## Install
 
 ```bash
-specify extension add gates --from https://github.com/schwichtgit/spec-gates
+specify extension add gates --from https://github.com/schwichtgit/spec-gates/releases/download/v0.1.0/gates-0.1.0.zip
 ```
 
+The URL must point at a release **asset** (a flat package with
+`extension.yml` at its root) — the repository/source archive does not
+install, because the manifest lives in `extension/` inside this repo.
 Spec Kit's community catalog is discovery-only (`install_allowed: false`),
 so `--from <url>` is the install path even after `gates` is listed there;
 catalog listing buys discoverability, not a bare `specify extension add gates`.

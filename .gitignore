@@ -1,7 +1,16 @@
+# OS and editor droppings
+.DS_Store
+Thumbs.db
+*.swp
+*~
 
 node_modules/
 *.log
 /tmp/
+
+# Local runtime-version marker written by /speckit.gates.init in real
+# projects; in this repo the runtime runs from source.
+.specify/gates/.runtime-version
 
 # Claude Mind local memory store (session artifact, not project content)
 .claude/mind.mv2
