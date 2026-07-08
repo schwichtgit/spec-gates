@@ -105,19 +105,19 @@ when the invariant check is stubbed.
 
 - [x] T016 [US3] Implement the `propose` subcommand in `extension/runtime/contract.sh` + `lib/contract.sh` (research R9): live deviation inventory (empty → "nothing to propose" exit 0); clone the pinned source, apply the deviating paths onto the baseline document, branch `propose/<consumer>-<YYYYMMDD>`, commit body with origin repo, pinned version, per-deviation classification, and the required rationale (`--rationale` flag or interactive prompt); `gh` PR when possible, else patch under `.specify/gates/proposals/` + instructions
 - [x] T017 [P] [US3] Add propose regression cases to `tests/test-contract.sh`: deviation applied onto the baseline document with origin/version/classification/rationale present (SC-005), nothing-to-propose exit 0 producing nothing, rationale refusal in non-interactive mode without `--rationale`
-- [ ] T018 [P] [US3] Add the optional `contract` property to `specs/001-provable-enforcement-gate/contracts/attestation-record.schema.json` (additive; record stays `v: 1` per the forward-compatibility rule)
-- [ ] T019 [P] [US3] Add attestation-shape cases to `tests/test-attest.sh`: `contract` object fields and deviation counts correct, absent when dormant, GateEntry present with reason on drift
-- [ ] T020 [US3] Add the `contract` canary to `extension/runtime/canary.sh` (contracts/cli-contracts.md): sandboxed fixture baseline (plain-path remote inside the sandbox), sync, tamper `policy.effective.json`, sandboxed `verify.sh` must exit 2 naming the contract gate or the suite fails; wire into `--only`; ensure `project_sandbox` copies `contract.sh`
+- [x] T018 [P] [US3] Add the optional `contract` property to `specs/001-provable-enforcement-gate/contracts/attestation-record.schema.json` (additive; record stays `v: 1` per the forward-compatibility rule)
+- [x] T019 [P] [US3] Add attestation-shape cases to `tests/test-attest.sh`: `contract` object fields and deviation counts correct, absent when dormant, GateEntry present with reason on drift
+- [x] T020 [US3] Add the `contract` canary to `extension/runtime/canary.sh` (contracts/cli-contracts.md): sandboxed fixture baseline (plain-path remote inside the sandbox), sync, tamper `policy.effective.json`, sandboxed `verify.sh` must exit 2 naming the contract gate or the suite fails; wire into `--only`; ensure `project_sandbox` copies `contract.sh`
 
   ```accept
   # verifies: SC-002
   bash .specify/gates/doctor.sh --canary --only contract
   ```
 
-- [ ] T021 [P] [US3] Add contract-canary cases to `tests/test-canary.sh`: healthy fixture `blocked`; invariant check stubbed to a no-op → suite exit 1 naming the contract gate
-- [ ] T022 [US3] Extend `extension/runtime/doctor.sh` with the contract section (FR-011): declaration/pin/snapshot-match/effective-match/deviation inventory from local info only, exit 1 on the four gate invariants, `[rec]` nudge when `extends` is declared but never synced
-- [ ] T023 [P] [US3] Add doctor contract cases to `tests/test-doctor.sh`: healthy report, each invariant violation fails, unsynced nudge
-- [ ] T024 [US3] Add the two extension commands: `extension/commands/speckit.gates.sync.md`, `extension/commands/speckit.gates.propose.md`, and register both in `extension/extension.yml` (7 commands; FR-013)
+- [x] T021 [P] [US3] Add contract-canary cases to `tests/test-canary.sh`: healthy fixture `blocked`; invariant check stubbed to a no-op → suite exit 1 naming the contract gate
+- [x] T022 [US3] Extend `extension/runtime/doctor.sh` with the contract section (FR-011): declaration/pin/snapshot-match/effective-match/deviation inventory from local info only, exit 1 on the four gate invariants, `[rec]` nudge when `extends` is declared but never synced
+- [x] T023 [P] [US3] Add doctor contract cases to `tests/test-doctor.sh`: healthy report, each invariant violation fails, unsynced nudge
+- [x] T024 [US3] Add the two extension commands: `extension/commands/speckit.gates.sync.md`, `extension/commands/speckit.gates.propose.md`, and register both in `extension/extension.yml` (7 commands; FR-013)
 
 **Checkpoint**: all three stories functional and provable.
 

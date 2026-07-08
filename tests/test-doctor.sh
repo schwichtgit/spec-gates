@@ -168,6 +168,53 @@ fi
 TOTAL=$((TOTAL + 1))
 
 echo ""
+echo "=== policy contract section (feature 003) ==="
+
+CB="$WORKDIR/contract-base"
+git init -q "$CB"
+printf '%s' '{"hooks":{"verify-quality":{"orchestrator":"none","severity":"error"}},"spec":{"enabled":true}}' | jq -S . >"$CB/policy.json"
+git -C "$CB" add -A
+git -C "$CB" -c user.email=b@t -c user.name=b commit -qm base
+git -C "$CB" tag v1.0.0
+
+D="$WORKDIR/contract-ok"
+project "$D" "$(jq -cn --arg src "$CB" '{hooks: {"verify-quality": {orchestrator: "none", severity: "error"}}, spec: {enabled: false}, extends: {source: $src, version: "v1.0.0"}}')" no
+cp "$REPO_ROOT/extension/runtime/contract.sh" "$D/.specify/gates/"
+CLAUDE_PROJECT_DIR="$D" bash "$D/.specify/gates/contract.sh" sync >/dev/null 2>&1
+expect "healthy contract -> exit 0" "$(run_doctor "$D")" 0
+if grep -q "snapshot matches the pin" "$D/out.txt" && grep -q "deviations: 1 weakened" "$D/out.txt"; then
+    echo "PASS: contract state and deviation inventory reported"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL: contract report (got: $(grep -E 'pinned|deviations' "$D/out.txt" | head -2))"
+    FAIL=$((FAIL + 1))
+fi
+TOTAL=$((TOTAL + 1))
+
+printf ' ' >>"$D/.specify/gates/policy.effective.json"
+expect "drifted effective -> exit 1" "$(run_doctor "$D")" 1
+if grep -q "effective policy drifted" "$D/out.txt"; then
+    echo "PASS: drift named"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL: drift naming (got: $(grep 'MISSING' "$D/out.txt" | head -1))"
+    FAIL=$((FAIL + 1))
+fi
+TOTAL=$((TOTAL + 1))
+
+DU="$WORKDIR/contract-unsynced"
+project "$DU" "$(jq -cn --arg src "$CB" '{hooks: {"verify-quality": {orchestrator: "none", severity: "error"}}, extends: {source: $src, version: "v1.0.0"}}')" no
+expect "declared-but-unsynced -> exit 1" "$(run_doctor "$DU")" 1
+if grep -q "declared but never synced" "$DU/out.txt" && grep -q "speckit.gates.sync" "$DU/out.txt"; then
+    echo "PASS: unsynced failure carries the sync nudge"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL: unsynced nudge (got: $(grep -E 'synced' "$DU/out.txt" | head -1))"
+    FAIL=$((FAIL + 1))
+fi
+TOTAL=$((TOTAL + 1))
+
+echo ""
 echo "$PASS of $TOTAL tests passed."
 [[ "$FAIL" -gt 0 ]] && exit 1
 exit 0

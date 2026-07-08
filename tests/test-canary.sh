@@ -51,7 +51,8 @@ project_fixture() { # <dir>
         "$dir/.claude/hooks/gates"
     cp "$REPO_ROOT/extension/runtime/verify.sh" \
         "$REPO_ROOT/extension/runtime/doctor.sh" \
-        "$REPO_ROOT/extension/runtime/canary.sh" "$dir/.specify/gates/"
+        "$REPO_ROOT/extension/runtime/canary.sh" \
+        "$REPO_ROOT/extension/runtime/contract.sh" "$dir/.specify/gates/"
     cp "$REPO_ROOT/extension/runtime/lib/"*.sh "$dir/.specify/gates/lib/"
     cp "$REPO_ROOT/extension/runtime/hooks/claude/"*.sh "$dir/.claude/hooks/gates/"
     cp "$REPO_ROOT/extension/runtime/hooks/git/pre-commit" "$dir/.specify/gates/hooks/"
@@ -167,6 +168,41 @@ expect "output names the spec canary as ACCEPTED" \
 cp "$REPO_ROOT/extension/runtime/lib/spec-gate.sh" "$FIX/.specify/gates/lib/"
 expect "restored runner -> spec canary green again (exit 0)" \
     "$(canary "$FIX" --only spec)" 0
+
+# --- SC-002 (003): the contract canary catches a no-op drift check ---
+echo ""
+echo "=== contract canary (feature 003) ==="
+expect "healthy fixture: contract canary blocked (exit 0)" \
+    "$(canary "$FIX" --only contract)" 0
+CONJSON="$(CLAUDE_PROJECT_DIR="$FIX" bash "$FIX/.specify/gates/canary.sh" --json --only contract)"
+expect "contract canary reports status=blocked" \
+    "$(printf '%s' "$CONJSON" | jq -r '.canaries[0].status')" blocked
+
+# Stub the invariant check to an unconditional pass: the tampered sandbox
+# is accepted, so the suite must fail naming the contract gate.
+cat >>"$FIX/.specify/gates/lib/contract.sh" <<'EOF'
+
+gates_contract_check() {
+    CONTRACT_STATUS="pass"
+    CONTRACT_DETAIL=""
+    CONTRACT_DEVIATIONS=""
+    CONTRACT_WEAKENED=0
+    CONTRACT_CHANGED=0
+    CONTRACT_EFFECTIVE_SHA256=""
+    CONTRACT_PIN_DIGEST=""
+    CONTRACT_SOURCE="stub"
+    CONTRACT_VERSION="v0"
+    return 0
+}
+EOF
+RC_CON=0
+OUT_CON="$(CLAUDE_PROJECT_DIR="$FIX" bash "$FIX/.specify/gates/canary.sh" --only contract 2>&1)" || RC_CON=$?
+expect "no-op drift check -> suite fails (exit 1)" "$RC_CON" 1
+expect "output names the contract canary as ACCEPTED" \
+    "$(printf '%s' "$OUT_CON" | grep -c 'contract.*ACCEPTED\|ACCEPTED.*contract' || true)" 1
+cp "$REPO_ROOT/extension/runtime/lib/contract.sh" "$FIX/.specify/gates/lib/"
+expect "restored check -> contract canary green again (exit 0)" \
+    "$(canary "$FIX" --only contract)" 0
 
 # --- skipped semantics: absent tool, and the policy-enabled gap rule ---
 echo ""

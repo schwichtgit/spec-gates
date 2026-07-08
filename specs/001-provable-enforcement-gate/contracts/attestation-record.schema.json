@@ -41,6 +41,37 @@
           "items": { "$ref": "#/$defs/featureConformance" }
         }
       }
+    },
+    "contract": {
+      "type": "object",
+      "description": "Policy-contract evidence (feature 003). Optional and additive: absent when the policy declares no extends baseline; the record stays v: 1 because consumers ignore unknown fields. Digests may be null when the corresponding artifact is missing (a failing, unsynced contract still attests what it can).",
+      "required": [
+        "source",
+        "version",
+        "digest",
+        "effective_sha256",
+        "deviations"
+      ],
+      "properties": {
+        "source": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 },
+        "digest": {
+          "type": ["string", "null"],
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "effective_sha256": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "deviations": {
+          "type": "object",
+          "required": ["weakened", "changed"],
+          "properties": {
+            "weakened": { "type": "integer", "minimum": 0 },
+            "changed": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
     }
   },
   "$defs": {

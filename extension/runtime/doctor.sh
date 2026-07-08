@@ -33,6 +33,10 @@ GATES_LIB_DIR="$PROJECT_ROOT/.specify/gates/lib"
 [[ -f "$GATES_LIB_DIR/formatter-dispatch.sh" ]] && source "$GATES_LIB_DIR/formatter-dispatch.sh"
 # shellcheck source=/dev/null disable=SC1091
 [[ -f "$GATES_LIB_DIR/spec-gate.sh" ]] && source "$GATES_LIB_DIR/spec-gate.sh"
+# shellcheck source=/dev/null disable=SC1091
+[[ -f "$GATES_LIB_DIR/attest.sh" ]] && source "$GATES_LIB_DIR/attest.sh"
+# shellcheck source=/dev/null disable=SC1091
+[[ -f "$GATES_LIB_DIR/contract.sh" ]] && source "$GATES_LIB_DIR/contract.sh"
 
 MISSING=0
 OK="  [ok]  "
@@ -159,6 +163,44 @@ if declare -f gates_spec_features >/dev/null 2>&1 \
     done <<<"$(gates_spec_features "$PROJECT_ROOT")"
     rm -rf "$SPEC_TMP"
     echo "  $SPEC_FEATURES feature(s), $SPEC_BLOCKS accept block(s) parsed, $SPEC_COMPLETE complete"
+fi
+
+# Policy contract (feature 003): what the contract gate sees, from local
+# information only. Doctor fails on exactly the drift conditions the gate
+# blocks on; a declared-but-never-synced contract gets the actionable
+# nudge alongside the failure (the gate is already blocking runs).
+if declare -f gates_contract_check >/dev/null 2>&1 \
+    && declare -f gates_sha256 >/dev/null 2>&1; then
+    gates_contract_paths "$PROJECT_ROOT"
+    if gates_contract_declared "$CONTRACT_OVERLAY"; then
+        echo ""
+        echo "Policy contract (extends baseline):"
+        echo "  source: $CONTRACT_SOURCE @ $CONTRACT_VERSION ($CONTRACT_BASEFILE)"
+        if [[ ! -f "$CONTRACT_LOCK" && ! -f "$CONTRACT_SNAPSHOT" && ! -f "$CONTRACT_EFFECTIVE" ]]; then
+            echo "${BAD}declared but never synced -- gate runs fail closed until the contract is materialized"
+            echo "${REC}run /speckit.gates.sync (or: bash .specify/gates/contract.sh sync) to pin and materialize"
+            MISSING=$((MISSING + 1))
+        else
+            gates_contract_check "$PROJECT_ROOT"
+            if [[ "$CONTRACT_STATUS" == "pass" ]]; then
+                echo "${OK}pinned $CONTRACT_PIN_DIGEST"
+                echo "${OK}snapshot matches the pin; effective policy matches recomputation"
+                if [[ -n "$CONTRACT_DEVIATIONS" ]]; then
+                    echo "  deviations: $CONTRACT_WEAKENED weakened, $CONTRACT_CHANGED changed"
+                    # shellcheck disable=SC2034  # dev_rest swallows the JSON-path field
+                    while IFS=$'\t' read -r dev_class dev_path dev_from dev_to dev_rest; do
+                        [[ -z "$dev_class" ]] && continue
+                        echo "  [dev]  ($dev_class) $dev_path: baseline $dev_from -> overlay $dev_to"
+                    done <<<"$CONTRACT_DEVIATIONS"
+                else
+                    echo "${OK}no deviations -- the overlay only adds or strengthens"
+                fi
+            else
+                echo "${BAD}$CONTRACT_DETAIL"
+                MISSING=$((MISSING + 1))
+            fi
+        fi
+    fi
 fi
 
 echo ""
