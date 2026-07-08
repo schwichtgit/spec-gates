@@ -1,0 +1,23 @@
+name: Feature request
+description: Propose a new gate, policy knob, or capability
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What goes unenforced or unproven today? Concrete failure stories beat abstract wishes.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: What should happen instead, and at which boundary (agent / git / CI)? If it is a new gate class, how would a canary prove it still blocks?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered (optional)
+      description: Including "configure an existing gate differently" and "do nothing".

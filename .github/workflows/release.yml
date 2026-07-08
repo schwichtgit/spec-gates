@@ -1,0 +1,89 @@
+# Builds the installable extension package on every version tag. The spec-kit
+# installer resolves extension.yml at the archive root (descending at most one
+# directory), and this repo keeps the manifest in extension/ — so the source
+# archive does not install and the release must carry a flat asset:
+#   gates-X.Y.Z.zip
+#   └── gates/
+#       ├── extension.yml
+#       ├── commands/  runtime/  ci/
+#       ├── README.md  LICENSE
+# Fail-closed like everything else here: a tag whose version does not match
+# extension.yml is refused, not papered over.
+name: Release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+  id-token: write # sigstore keyless signing (cosign)
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: sigstore/cosign-installer@v3
+
+      - name: Verify tag matches extension.yml version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          MANIFEST_VERSION="$(sed -n 's/^  version: "\(.*\)"$/\1/p' extension/extension.yml | head -n 1)"
+          echo "tag: $TAG_VERSION / manifest: $MANIFEST_VERSION"
+          if [ -z "$MANIFEST_VERSION" ] || [ "$TAG_VERSION" != "$MANIFEST_VERSION" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match extension.yml version \"$MANIFEST_VERSION\" — bump the manifest before tagging"
+            exit 1
+          fi
+
+      - name: Build the flat extension package
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p dist/gates
+          cp -R extension/extension.yml extension/commands extension/runtime extension/ci dist/gates/
+          cp README.md LICENSE dist/gates/
+          (cd dist && zip -qr "gates-$VERSION.zip" gates)
+          unzip -l "dist/gates-$VERSION.zip" | grep -q "gates/extension.yml" \
+            || { echo "::error::package sanity check failed: gates/extension.yml missing from zip"; exit 1; }
+
+      - name: Checksum and sign the package (sigstore keyless)
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          cd dist
+          sha256sum "gates-$VERSION.zip" > "gates-$VERSION.zip.sha256"
+          cosign sign-blob --yes \
+            --bundle "gates-$VERSION.zip.sigstore.json" \
+            "gates-$VERSION.zip"
+          cosign verify-blob \
+            --bundle "gates-$VERSION.zip.sigstore.json" \
+            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/\.github/workflows/release\.yml@" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "gates-$VERSION.zip"
+
+      - name: Create the release with asset, checksum, and signature
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/gates-$VERSION.zip" \
+            "dist/gates-$VERSION.zip.sha256" \
+            "dist/gates-$VERSION.zip.sigstore.json" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            --notes "Install:
+
+          \`\`\`bash
+          specify extension add gates --from https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/gates-${VERSION}.zip
+          \`\`\`
+
+          The zip is the installable package (flat, \`extension.yml\` at its root); the source archives are not installable.
+
+          Verify the artifact (checksum, then sigstore keyless signature):
+
+          \`\`\`bash
+          sha256sum -c gates-${VERSION}.zip.sha256
+          cosign verify-blob \\
+            --bundle gates-${VERSION}.zip.sigstore.json \\
+            --certificate-identity-regexp '^https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@' \\
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \\
+            gates-${VERSION}.zip
+          \`\`\`"
