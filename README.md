@@ -47,6 +47,38 @@ identical results at every boundary, and no boundary re-implements the gate.
 A fourth, server-side boundary (branch protection requiring the CI check) is
 available via `/speckit.gates.ci github --protect`.
 
+## Provable enforcement
+
+Enforcement that can silently stop enforcing is worse than none — you
+still believe you are covered. Three mechanisms make the gate
+self-evidencing:
+
+- **Attestations** — every `verify.sh` run appends one record to
+  `.specify/gates/attestations.jsonl` (capped, gitignored) and embeds it
+  in `--json`: the policy's SHA-256, and per gate the resolved binary,
+  detected version, lockfile pin, candidate vs checked file counts,
+  result, and duration. Evidence, never file contents.
+- **Canaries** — `canary.sh` plants known violations in disposable
+  sandboxes (a prettier-dirty file, an SC2086 script, an `rm -rf /` tool
+  call, a `.env` edit, a staged AWS-key-shaped string) and requires the
+  real gate or hook to reject each one. An accepted probe fails the suite
+  naming the broken gate. CI runs it on every build — a red canary step
+  means a broken gate, not a dirty tree. On demand:
+  `bash .specify/gates/canary.sh` (or `doctor.sh --canary`).
+- **Verified parity** — a synthetic `parity` gate compares each tool's
+  resolved version against its lockfile pin on every run, at every
+  boundary. Drift fails the boundary with
+  `parity -- prettier: resolved 3.5.3, pinned 3.9.4 (run npm ci)`;
+  tune it with `attestation.parity` (`error | warning | off`). `doctor`
+  additionally fails on the no-op signature: a gate that passed while
+  checking zero of its candidate files.
+
+The optional policy section, with its defaults:
+
+```json
+"attestation": { "enabled": true, "max_records": 200, "parity": "error" }
+```
+
 ## Requirements
 
 - **jq** and **git** — the hooks and `verify.sh` require them.
@@ -118,16 +150,20 @@ as they grow hook APIs.
 - Runtime is **projected** (copied) into the repo — enforcement survives
   extension removal and works for every collaborator who clones.
 - Fail closed: a gate that cannot demonstrably block is reported broken.
+- Evidence over trust: every run leaves an attestation record, canaries
+  re-prove that every gate still blocks, and parity is verified per run
+  rather than assumed.
 
 ## Development
 
 ```bash
 npm ci              # pinned prettier + markdownlint-cli2
-bash tests/run.sh   # the full suite (parity, gate, hooks, policy)
+bash tests/run.sh   # 7 suites: parity, gate, hooks, policy, doctor, canary, attest
 ```
 
 The repo gates itself: `.github/workflows/ci.yml` projects the runtime and
-runs `verify.sh --boundary ci` on every PR, alongside the tests. See the pull
+runs `verify.sh --boundary ci` (attestations and the parity gate included)
+plus the canary suite on every PR, alongside the tests. See the pull
 request template for the contribution checklist.
 
 ## License
