@@ -14,19 +14,25 @@ set -euo pipefail
 # THIS policy. tests/test-ci-parity.sh asserts it.
 #
 # Usage:
-#   verify.sh --boundary agent|git|ci [--json] [--dry-run]
+#   verify.sh --boundary agent|git|ci [--json] [--dry-run] [--accept <feature|all>]
+#
+# --accept additionally executes the named incomplete feature(s)' accept
+# blocks as informational output (feature 002); complete features are
+# enforced on every run regardless.
 #
 # Exit codes: 0 = all gates green, 1 = internal error, 2 = gate failure.
 
 BOUNDARY="unspecified"
 JSON=0
 DRY_RUN=0
+ACCEPT_ARG=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --boundary) BOUNDARY="${2:?}"; shift 2 ;;
         --json)     JSON=1; shift ;;
         --dry-run)  DRY_RUN=1; shift ;;
+        --accept)   ACCEPT_ARG="${2:?}"; shift 2 ;;
         *) echo "gates: unknown argument: $1" >&2; exit 1 ;;
     esac
 done
@@ -50,6 +56,8 @@ fi
 source "$GATES_DIR/lib/policy.sh"
 # shellcheck source=lib/attest.sh disable=SC1091
 source "$GATES_DIR/lib/attest.sh"
+# shellcheck source=lib/spec-gate.sh disable=SC1091
+source "$GATES_DIR/lib/spec-gate.sh"
 
 FAILED=0
 WARNINGS=0
@@ -171,6 +179,55 @@ case "$ORCH" in
         ;;
 esac
 
+# ---------------------------------------------------------------------------
+# Spec-conformance gate (feature 002): fenced accept blocks in specs/*/tasks.md
+# run as executable acceptance criteria. Complete features (spec.md Status:
+# Complete) are enforced at spec.severity; the rest is informational. Skipped
+# entirely when GATES_SPEC_EXEC is set — accept blocks export it, so a block
+# that invokes verify.sh cannot re-enter accept-block execution.
+# ---------------------------------------------------------------------------
+SPEC_ENABLED="$(gates_policy_section_get spec enabled)"
+SPEC_ATT_JSON=""
+if [[ "$SPEC_ENABLED" != "false" && -z "${GATES_SPEC_EXEC:-}" ]]; then
+    if [[ "$DRY_RUN" == "1" ]]; then
+        record "spec" "planned" "spec conformance (accept blocks)"
+    else
+        if [[ -n "$ACCEPT_ARG" && "$ACCEPT_ARG" != "all" ]]; then
+            if ! gates_spec_features "$PROJECT_ROOT" | grep -qx "$ACCEPT_ARG"; then
+                AVAILABLE="$(gates_spec_features "$PROJECT_ROOT" | tr '\n' ' ')"
+                echo "gates: --accept: unknown feature: $ACCEPT_ARG (available: ${AVAILABLE:-none})" >&2
+                exit 1
+            fi
+        fi
+        SPEC_SEV="$(gates_policy_section_get spec severity)"
+        [[ -z "$SPEC_SEV" ]] && SPEC_SEV="error"
+        spec_start="$(date +%s)"
+        gates_spec_gate "$PROJECT_ROOT" "$ACCEPT_ARG" "$JSON"
+        spec_end="$(date +%s)"
+        if [[ "$SPEC_RESULT" == "pass" ]]; then
+            record "spec" "pass" ""
+            att_gate "spec" "" "" "" "$SPEC_FEATURES" "$SPEC_EXECUTED" \
+                "pass" "" "$((spec_end - spec_start))"
+        elif [[ "$SPEC_SEV" == "error" ]]; then
+            record "spec" "fail" "$SPEC_DETAIL"
+            FAILED=$((FAILED + 1))
+            att_gate "spec" "" "" "" "$SPEC_FEATURES" "$SPEC_EXECUTED" \
+                "fail" "$SPEC_DETAIL" "$((spec_end - spec_start))"
+        else
+            record "spec" "warn" "$SPEC_DETAIL"
+            WARNINGS=$((WARNINGS + 1))
+            att_gate "spec" "" "" "" "$SPEC_FEATURES" "$SPEC_EXECUTED" \
+                "warn" "$SPEC_DETAIL" "$((spec_end - spec_start))"
+        fi
+        SPEC_ATT_JSON="$(jq -cn --argjson features "$SPEC_FEATURES" \
+            --argjson parsed "$SPEC_PARSED" --argjson executed "$SPEC_EXECUTED" \
+            --argjson passed "$SPEC_PASSED" --argjson failed "$SPEC_FAILED" \
+            --argjson results "$SPEC_RESULTS_JSON" '
+            { features: $features, parsed: $parsed, executed: $executed,
+              passed: $passed, failed: $failed, results: $results }')"
+    fi
+fi
+
 ATT_ENABLED="$(gates_policy_section_get attestation enabled)"
 
 # ---------------------------------------------------------------------------
@@ -222,16 +279,20 @@ if [[ "$DRY_RUN" != "1" && "$ATT_ENABLED" != "false" ]]; then
         if [[ ${#ATT_GATES[@]} -gt 0 ]]; then
             att_joined="$(IFS=,; printf '%s' "${ATT_GATES[*]}")"
         fi
+        # The optional spec object (feature 002) is additive; v stays 1 and
+        # consumers ignore unknown fields (001 forward-compatibility rule).
         ATTESTATION="$(jq -cn --arg ts "$ATT_TS" --arg boundary "$BOUNDARY" \
             --arg sha "$POLICY_SHA" --arg rv "$RUNTIME_VERSION" \
-            --argjson exit "$EXIT_CODE" --argjson gates "[$att_joined]" '
+            --argjson exit "$EXIT_CODE" --argjson gates "[$att_joined]" \
+            --argjson spec "${SPEC_ATT_JSON:-null}" '
             { v: 1,
               ts: $ts,
               boundary: (if ["agent","git","ci"] | index($boundary) then $boundary else "unspecified" end),
               policy_sha256: $sha,
               runtime_version: (if $rv == "" then null else $rv end),
               exit: $exit,
-              gates: $gates }')"
+              gates: $gates }
+            + (if $spec != null then { spec: $spec } else {} end)')"
         MAX_RECORDS="$(gates_policy_section_get attestation max_records)"
         [[ -z "$MAX_RECORDS" ]] && MAX_RECORDS=200
         if ! gates_attest_append "$ATTESTATION" "$GATES_DIR/attestations.jsonl" "$MAX_RECORDS"; then
