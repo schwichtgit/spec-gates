@@ -65,5 +65,12 @@
     "enabled": true,
     "max_records": 200,
     "parity": "error"
+  },
+  "spec": {
+    "enabled": true,
+    "severity": "error",
+    "include": ["*"],
+    "exclude": [],
+    "timeout_s": 30
   }
 }

@@ -186,6 +186,8 @@ gates_validate_policy() {
         def git_keys: ["block_main_commits", "conventional_commits", "forbid_ai_isms"];
         def att_keys: ["enabled", "max_records", "parity"];
         def parity_values: ["error", "warning", "off"];
+        def spec_keys: ["enabled", "severity", "include", "exclude", "timeout_s"];
+        def spec_sev_values: ["error", "warning"];
         def pf_errors:
             if has("protected_files") then
                 (.protected_files) as $p
@@ -227,7 +229,39 @@ gates_validate_policy() {
                         else [] end )
                   end
             else [] end;
-        (pf_errors + git_errors + att_errors) | .[]
+        def spec_errors:
+            if has("spec") then
+                (.spec) as $s
+                | if ($s | type) != "object" then ["spec: must be an object"]
+                  else
+                    [ $s | keys[] | . as $k | select((spec_keys | index($k)) == null) | "spec: unknown field \"\($k)\"" ]
+                    + ( if ($s | has("enabled")) and (($s.enabled | type) != "boolean")
+                          then ["spec: enabled must be a boolean"]
+                        else [] end )
+                    + ( if ($s | has("severity")) and ((spec_sev_values | index($s.severity)) == null)
+                          then ["spec: invalid severity \"\($s.severity)\" (allowed: \(spec_sev_values | join(", ")))"]
+                        else [] end )
+                    + ( if ($s | has("include")) then
+                          if (($s.include | type) != "array")
+                            then ["spec: include must be an array of strings"]
+                          else [ $s.include[] | select(type != "string") | "spec: include entries must be strings" ]
+                          end
+                        else [] end )
+                    + ( if ($s | has("exclude")) then
+                          if (($s.exclude | type) != "array")
+                            then ["spec: exclude must be an array of strings"]
+                          else [ $s.exclude[] | select(type != "string") | "spec: exclude entries must be strings" ]
+                          end
+                        else [] end )
+                    + ( if ($s | has("timeout_s"))
+                          and ( (($s.timeout_s | type) != "number")
+                                or (($s.timeout_s | floor) != $s.timeout_s)
+                                or ($s.timeout_s < 1) )
+                          then ["spec: timeout_s must be an integer >= 1"]
+                        else [] end )
+                  end
+            else [] end;
+        (pf_errors + git_errors + att_errors + spec_errors) | .[]
     ' "$file" 2>/dev/null)"
     if [[ -n "$section_errors" ]]; then
         errors="${errors:+$errors$'\n'}$section_errors"

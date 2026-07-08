@@ -79,6 +79,42 @@
           "description": "Severity of the synthetic parity gate when a resolved tool version drifts from its lockfile pin: error fails the run, warning reports without failing, off omits the gate."
         }
       }
+    },
+    "spec": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Spec-conformance gate settings: fenced accept blocks in specs/*/tasks.md run as executable acceptance criteria; features whose spec.md Status is Complete are enforced. Optional; absence means all defaults apply (enabled, error, all features, 30s timeout).",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run the spec gate on every verify.sh run. false removes the spec gate entry and the attestation spec object."
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["error", "warning"],
+          "default": "error",
+          "description": "How enforcement failures (unchecked tasks, failing accept blocks, parse errors) map to the run result: error fails the run, warning reports without failing."
+        },
+        "include": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["*"],
+          "description": "Feature-directory-name globs eligible for enforcement when marked Complete. Non-matching complete features stay informational."
+        },
+        "exclude": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Feature-directory-name globs skipped entirely (not discovered)."
+        },
+        "timeout_s": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 30,
+          "description": "Per-accept-block watchdog seconds; an exceeded budget fails that criterion."
+        }
+      }
     }
   },
   "$defs": {

@@ -97,6 +97,77 @@ fi
 TOTAL=$((TOTAL + 1))
 
 echo ""
+echo "=== spec conformance section (feature 002) ==="
+MINIMAL='{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } } }'
+
+D="$WORKDIR/spec-counts"
+project "$D" "$MINIMAL" no
+mkdir -p "$D/specs/100-done" "$D/specs/200-wip"
+printf '# Done\n\n**Status**: Complete\n' >"$D/specs/100-done/spec.md"
+cat >"$D/specs/100-done/tasks.md" <<'EOF'
+- [x] T001 Task
+
+  ```accept
+  true
+  ```
+EOF
+printf '# WIP\n\n**Status**: Draft\n' >"$D/specs/200-wip/spec.md"
+cat >"$D/specs/200-wip/tasks.md" <<'EOF'
+- [ ] T001 Open task
+
+  ```accept
+  false
+  ```
+EOF
+expect "healthy discovery -> exit 0" "$(run_doctor "$D")" 0
+if grep -q "2 feature(s), 2 accept block(s) parsed, 1 complete" "$D/out.txt"; then
+    echo "PASS: discovery counts reported"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL: discovery counts (got: $(grep 'feature(s)' "$D/out.txt" || echo none))"
+    FAIL=$((FAIL + 1))
+fi
+TOTAL=$((TOTAL + 1))
+
+D="$WORKDIR/spec-parse-error"
+project "$D" "$MINIMAL" no
+mkdir -p "$D/specs/100-broken"
+printf '# Broken\n\n**Status**: Draft\n' >"$D/specs/100-broken/spec.md"
+cat >"$D/specs/100-broken/tasks.md" <<'EOF'
+- [x] T001 Task
+
+  ```accept
+  true
+EOF
+expect "parse error -> exit 1" "$(run_doctor "$D")" 1
+if grep -q "specs/100-broken/tasks.md:3: unterminated accept fence" "$D/out.txt"; then
+    echo "PASS: parse error names file:line"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL: parse-error naming (got: $(grep 'tasks.md' "$D/out.txt" || echo none))"
+    FAIL=$((FAIL + 1))
+fi
+TOTAL=$((TOTAL + 1))
+
+D="$WORKDIR/spec-nudge"
+project "$D" "$MINIMAL" no
+mkdir -p "$D/specs/100-ready"
+printf '# Ready\n\n**Status**: Draft\n' >"$D/specs/100-ready/spec.md"
+cat >"$D/specs/100-ready/tasks.md" <<'EOF'
+- [x] T001 Task one
+- [x] T002 Task two
+EOF
+expect "all-checked-not-Complete -> still exit 0" "$(run_doctor "$D")" 0
+if grep -q "\[rec\] 100-ready — every task checked but Status is not Complete" "$D/out.txt"; then
+    echo "PASS: completion nudge shown"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL: completion nudge (got: $(grep '100-ready' "$D/out.txt" || echo none))"
+    FAIL=$((FAIL + 1))
+fi
+TOTAL=$((TOTAL + 1))
+
+echo ""
 echo "$PASS of $TOTAL tests passed."
 [[ "$FAIL" -gt 0 ]] && exit 1
 exit 0

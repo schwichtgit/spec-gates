@@ -548,6 +548,85 @@ else
     fail "non-object attestation section not rejected: $ERR_OUT"
 fi
 
+# --- 5d: spec section (002) ---
+echo ""
+echo "=== spec section ==="
+
+GOOD_SPEC="$(write_policy good-spec '{
+  "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } },
+  "spec": { "enabled": true, "severity": "error", "include": ["*"], "exclude": [], "timeout_s": 30 }
+}')"
+if gates_validate_policy "$GOOD_SPEC" >/dev/null 2>&1; then
+    pass "valid spec section accepted"
+else
+    fail "valid spec section rejected"
+    gates_validate_policy "$GOOD_SPEC" || true
+fi
+
+NO_SPEC="$(write_policy no-spec '{
+  "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } }
+}')"
+if gates_validate_policy "$NO_SPEC" >/dev/null 2>&1; then
+    pass "absent spec section accepted (defaults apply)"
+else
+    fail "absent spec section rejected"
+fi
+
+BAD_SPEC_SEV="$(write_policy bad-spec-sev '{
+  "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } },
+  "spec": { "severity": "info" }
+}')"
+ERR_OUT="$(gates_validate_policy "$BAD_SPEC_SEV" 2>&1 || true)"
+if echo "$ERR_OUT" | grep -q 'spec: invalid severity "info"'; then
+    pass "bogus spec.severity rejected with value"
+else
+    fail "bogus spec.severity not rejected: $ERR_OUT"
+fi
+
+BAD_SPEC_TIMEOUT="$(write_policy bad-spec-timeout '{
+  "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } },
+  "spec": { "timeout_s": "30" }
+}')"
+ERR_OUT="$(gates_validate_policy "$BAD_SPEC_TIMEOUT" 2>&1 || true)"
+if echo "$ERR_OUT" | grep -q 'spec: timeout_s must be an integer >= 1'; then
+    pass "string spec.timeout_s rejected"
+else
+    fail "string spec.timeout_s not rejected: $ERR_OUT"
+fi
+
+BAD_SPEC_INCLUDE="$(write_policy bad-spec-include '{
+  "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } },
+  "spec": { "include": "002-*" }
+}')"
+ERR_OUT="$(gates_validate_policy "$BAD_SPEC_INCLUDE" 2>&1 || true)"
+if echo "$ERR_OUT" | grep -q 'spec: include must be an array of strings'; then
+    pass "non-array spec.include rejected"
+else
+    fail "non-array spec.include not rejected: $ERR_OUT"
+fi
+
+BAD_SPEC_KEY="$(write_policy bad-spec-key '{
+  "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } },
+  "spec": { "boundaries": ["ci"] }
+}')"
+ERR_OUT="$(gates_validate_policy "$BAD_SPEC_KEY" 2>&1 || true)"
+if echo "$ERR_OUT" | grep -q 'spec: unknown field "boundaries"'; then
+    pass "unknown spec field rejected"
+else
+    fail "unknown spec field not rejected: $ERR_OUT"
+fi
+
+BAD_SPEC_SHAPE="$(write_policy bad-spec-shape '{
+  "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } },
+  "spec": "on"
+}')"
+ERR_OUT="$(gates_validate_policy "$BAD_SPEC_SHAPE" 2>&1 || true)"
+if echo "$ERR_OUT" | grep -q 'spec: must be an object'; then
+    pass "non-object spec section rejected"
+else
+    fail "non-object spec section not rejected: $ERR_OUT"
+fi
+
 # --- 6: malformed JSON ---
 echo ""
 echo "=== malformed JSON rejected ==="

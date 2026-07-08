@@ -4,7 +4,7 @@
 
 **Created**: 2026-07-07
 
-**Status**: Draft
+**Status**: Complete
 
 **Input**: User description: "spec-conformance gate: acceptance criteria in
 tasks.md become executable accept blocks; verify.sh gains a spec gate class;

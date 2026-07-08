@@ -28,6 +28,12 @@ the association):
    file. A block with no preceding task line is a parse error.
 2. **Info string**: `accept` (exact, lowercase). Fences with any other info
    string are ordinary code samples and are ignored by the gate.
+   The fence is a CommonMark-style run of **3 or more** backticks, closed
+   only by a backtick-only line at least as long as the opening run — a
+   block whose body itself contains ` ``` ` must use a longer outer fence
+   (` ````accept `), which is exactly what prettier rewrites such blocks
+   to. Exact-three matching would let a formatter pass silently drop a
+   criterion.
 3. **`# verifies:` reference** (optional): if the first non-blank interior
    line matches `# verifies: <ID>`, `<ID>` (e.g. `SC-001`) is recorded as
    the explicit criterion reference. Additional `#` comment lines are

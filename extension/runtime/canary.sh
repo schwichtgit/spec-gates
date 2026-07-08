@@ -17,6 +17,8 @@ set -uo pipefail
 #   bash    -- `rm -rf /` tool call   -> validate-bash.sh hook     (exit 2)
 #   protect -- `.env` edit tool call  -> protect-files.sh hook     (exit 2)
 #   secret  -- staged AWS-key string  -> pre-commit secret scan    (blocked)
+#   spec    -- Complete feature with a failing accept block
+#                                     -> verify.sh spec gate       (exit 2)
 #
 # Usage:
 #   canary.sh [--json] [--only <id>[,<id>...]]
@@ -45,7 +47,7 @@ done
 CANARY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 
-CANARY_SET="format shell bash protect secret"
+CANARY_SET="format shell bash protect secret spec"
 
 if [[ -n "$ONLY" ]]; then
     IFS=',' read -r -a _only_ids <<<"$ONLY"
@@ -288,6 +290,36 @@ run_secret_canary() {
 }
 
 # ---------------------------------------------------------------------------
+# Spec canary (feature 002, R8): a sandbox feature marked Complete with a
+# `false` accept block must be rejected by the sandboxed spec gate. The run
+# clears GATES_SPEC_EXEC so the canary still probes the spec gate when the
+# suite is itself invoked from inside an accept block (the sentinel would
+# otherwise make the sandboxed verify.sh skip exactly the gate under test).
+# ---------------------------------------------------------------------------
+run_spec_canary() {
+    local d="$WORKDIR/spec"
+    project_sandbox "$d" '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } } }'
+    mkdir -p "$d/specs/900-canary-fixture" || setup_fail "spec fixture dir"
+    printf '# Canary Fixture\n\n**Status**: Complete\n' \
+        >"$d/specs/900-canary-fixture/spec.md" || setup_fail "spec fixture spec.md"
+    {
+        echo '- [x] T001 A criterion that must fail'
+        echo ''
+        echo '  ```accept'
+        echo '  false'
+        echo '  ```'
+    } >"$d/specs/900-canary-fixture/tasks.md" || setup_fail "spec fixture tasks.md"
+    local rc=0
+    CLAUDE_PROJECT_DIR="$d" env -u GATES_SPEC_EXEC \
+        bash "$d/.specify/gates/verify.sh" --boundary ci >/dev/null 2>&1 || rc=$?
+    if [[ "$rc" -eq 2 ]]; then
+        record spec blocked "spec gate rejected a Complete feature with a failing accept block" 0
+    else
+        record spec accepted "verify.sh exit $rc on a Complete feature with a failing accept block — the spec gate did not block" 1
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # Run + report
 # ---------------------------------------------------------------------------
 for id in $CANARY_SET; do
@@ -298,6 +330,7 @@ for id in $CANARY_SET; do
         bash) run_bash_canary ;;
         protect) run_protect_canary ;;
         secret) run_secret_canary ;;
+        spec) run_spec_canary ;;
     esac
 done
 

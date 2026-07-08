@@ -23,7 +23,7 @@ Status is flipped to `Complete`.
 
 **Purpose**: confirm the projection plumbing needs no changes
 
-- [ ] T001 Verify projection coverage for the new lib file: `.gitignore` already ignores `.specify/gates/lib/`, `.github/workflows/ci.yml` projects `extension/runtime/lib/*.sh` by glob, and `extension/commands/speckit.gates.init.md` maps `lib/*.sh` — confirm all three cover `lib/spec-gate.sh` with no edits, and note it in the PR description
+- [x] T001 Verify projection coverage for the new lib file: `.gitignore` already ignores `.specify/gates/lib/`, `.github/workflows/ci.yml` projects `extension/runtime/lib/*.sh` by glob, and `extension/commands/speckit.gates.init.md` maps `lib/*.sh` — confirm all three cover `lib/spec-gate.sh` with no edits, and note it in the PR description
 
 ---
 
@@ -32,11 +32,11 @@ Status is flipped to `Complete`.
 **Purpose**: the optional `spec` policy section and the feature-discovery
 core that every story consumes.
 
-- [ ] T002 Add `spec` section (enabled boolean, severity enum error|warning, include/exclude string arrays, timeout_s integer ≥ 1; additionalProperties false) to `extension/runtime/policy.schema.json`
-- [ ] T003 Extend `gates_validate_policy` in `extension/runtime/lib/policy.sh` to validate the `spec` section (types, enums, unknown-field rejection — same pattern as the `attestation` section)
-- [ ] T004 Seed explicit defaults (`"spec": { "enabled": true, "severity": "error", "include": ["*"], "exclude": [], "timeout_s": 30 }`) into `extension/runtime/policy-template.json` (depends on T002, T003)
-- [ ] T005 [P] Add `spec`-section validation cases (valid, absent-section-ok, bad severity, bad timeout type, unknown field) to `tests/test-policy.sh`
-- [ ] T006 Create `extension/runtime/lib/spec-gate.sh` with feature discovery (research R7): direct children of `specs/` containing `spec.md`, lexicographic order, `spec.exclude` glob filtering, zero features on missing `specs/` (FR-011)
+- [x] T002 Add `spec` section (enabled boolean, severity enum error|warning, include/exclude string arrays, timeout_s integer ≥ 1; additionalProperties false) to `extension/runtime/policy.schema.json`
+- [x] T003 Extend `gates_validate_policy` in `extension/runtime/lib/policy.sh` to validate the `spec` section (types, enums, unknown-field rejection — same pattern as the `attestation` section)
+- [x] T004 Seed explicit defaults (`"spec": { "enabled": true, "severity": "error", "include": ["*"], "exclude": [], "timeout_s": 30 }`) into `extension/runtime/policy-template.json` (depends on T002, T003)
+- [x] T005 [P] Add `spec`-section validation cases (valid, absent-section-ok, bad severity, bad timeout type, unknown field) to `tests/test-policy.sh`
+- [x] T006 Create `extension/runtime/lib/spec-gate.sh` with feature discovery (research R7): direct children of `specs/` containing `spec.md`, lexicographic order, `spec.exclude` glob filtering, zero features on missing `specs/` (FR-011)
 
 **Checkpoint**: policy substrate validated; discovery returns deterministic
 feature lists; user stories can start.
@@ -56,12 +56,12 @@ naming `tasks.md:<line>`.
 
 ### Implementation for User Story 1
 
-- [ ] T007 [US1] Implement the accept-block parser in `extension/runtime/lib/spec-gate.sh` (research R1): awk fence state machine emitting one JSON object per block (feature, file, line, task, task_checked, verifies, commands); parse errors for unterminated fence, command-less block, and block with no preceding task line, each naming `file:line` (FR-005)
-- [ ] T008 [US1] Implement the block executor in `extension/runtime/lib/spec-gate.sh`: serial execution from repo root, output captured and shown only on failure, watchdog timeout at `spec.timeout_s` (research R4, exit 143 → `timeout after <N>s`), mutation detection via `git status --porcelain` snapshots (research R5, never auto-revert), and the recursion sentinel (`GATES_SPEC_EXEC=1` exported around block execution)
-- [ ] T009 [US1] Wire the synthetic `spec` gate into `extension/runtime/verify.sh` after the tool gates and before `parity`: discovery + parse every run, parse errors fail at `spec.severity`, one informational line per incomplete feature (`spec: <feature> — N criteria parsed, not enforced (Status: <value>)`), honored `spec.enabled`, and the gate skipped entirely when `GATES_SPEC_EXEC=1` is set (recursion guard)
-- [ ] T010 [US1] Add `--accept <feature|all>` to `extension/runtime/verify.sh`: execute the named incomplete feature(s)' blocks with per-criterion informational results, never changing the exit code for incomplete features; unknown feature → exit 1 naming available features
-- [ ] T011 [P] [US1] Create `tests/test-spec-gate.sh` (project-into-fixture pattern from `tests/test-gate.sh`): parse cases (multi-line block, `# verifies:` extraction, non-accept fences ignored, checkbox inside a fence not counted, unterminated fence, empty block, orphan block), executor cases (pass, exit-code propagation, timeout, mutation named + not reverted), `--accept` behavior, missing-`specs/` trivial pass, recursion guard
-- [ ] T012 [US1] Register `test-spec-gate` in `tests/run.sh`
+- [x] T007 [US1] Implement the accept-block parser in `extension/runtime/lib/spec-gate.sh` (research R1): awk fence state machine emitting one JSON object per block (feature, file, line, task, task_checked, verifies, commands); parse errors for unterminated fence, command-less block, and block with no preceding task line, each naming `file:line` (FR-005)
+- [x] T008 [US1] Implement the block executor in `extension/runtime/lib/spec-gate.sh`: serial execution from repo root, output captured and shown only on failure, watchdog timeout at `spec.timeout_s` (research R4, exit 143 → `timeout after <N>s`), mutation detection via `git status --porcelain` snapshots (research R5, never auto-revert), and the recursion sentinel (`GATES_SPEC_EXEC=1` exported around block execution)
+- [x] T009 [US1] Wire the synthetic `spec` gate into `extension/runtime/verify.sh` after the tool gates and before `parity`: discovery + parse every run, parse errors fail at `spec.severity`, one informational line per incomplete feature (`spec: <feature> — N criteria parsed, not enforced (Status: <value>)`), honored `spec.enabled`, and the gate skipped entirely when `GATES_SPEC_EXEC=1` is set (recursion guard)
+- [x] T010 [US1] Add `--accept <feature|all>` to `extension/runtime/verify.sh`: execute the named incomplete feature(s)' blocks with per-criterion informational results, never changing the exit code for incomplete features; unknown feature → exit 1 naming available features
+- [x] T011 [P] [US1] Create `tests/test-spec-gate.sh` (project-into-fixture pattern from `tests/test-gate.sh`): parse cases (multi-line block, `# verifies:` extraction, non-accept fences ignored, checkbox inside a fence not counted, unterminated fence, empty block, orphan block), executor cases (pass, exit-code propagation, timeout, mutation named + not reverted), `--accept` behavior, missing-`specs/` trivial pass, recursion guard
+- [x] T012 [US1] Register `test-spec-gate` in `tests/run.sh`
 
 **Checkpoint**: US1 fully functional — criteria are executable and visible
 on demand, parse errors block, nothing is enforced yet.
@@ -79,15 +79,29 @@ timeout, a broken fence.
 
 ### Implementation for User Story 2
 
-- [ ] T013 [US2] Implement completion detection in `extension/runtime/lib/spec-gate.sh` (research R2): `**Status**:` extraction from `spec.md`, exact `Complete` match, missing field/file → not complete
-- [ ] T014 [US2] Implement fence-aware task checkbox accounting in `extension/runtime/lib/spec-gate.sh` (research R3): `- [ ]`/`- [x]`/`- [X]` counts from `tasks.md`, code-fence interiors excluded, first unchecked task's text captured for the failure message
-- [ ] T015 [US2] Implement outcome classification and enforcement (data-model.md outcome rules) in `extension/runtime/lib/spec-gate.sh` + `verify.sh`: complete features execute blocks and fail the `spec` gate at `spec.severity` on `tasks_unchecked > 0` or `blocks_failed > 0` (naming feature + task/criterion + cause), `no-criteria` and incomplete features stay informational, `spec.include` globs bound enforcement
-- [ ] T016 [P] [US2] Add enforcement regression cases to `tests/test-spec-gate.sh`: Complete fixture + failing block blocks naming the criterion (SC-001), Complete fixture + unchecked task blocks naming the task (SC-002), `severity: warning` reports without blocking, include/exclude filtering, Complete-with-zero-blocks stays informational
+- [x] T013 [US2] Implement completion detection in `extension/runtime/lib/spec-gate.sh` (research R2): `**Status**:` extraction from `spec.md`, exact `Complete` match, missing field/file → not complete
+- [x] T014 [US2] Implement fence-aware task checkbox accounting in `extension/runtime/lib/spec-gate.sh` (research R3): `- [ ]`/`- [x]`/`- [X]` counts from `tasks.md`, code-fence interiors excluded, first unchecked task's text captured for the failure message
+- [x] T015 [US2] Implement outcome classification and enforcement (data-model.md outcome rules) in `extension/runtime/lib/spec-gate.sh` + `verify.sh`: complete features execute blocks and fail the `spec` gate at `spec.severity` on `tasks_unchecked > 0` or `blocks_failed > 0` (naming feature + task/criterion + cause), `no-criteria` and incomplete features stay informational, `spec.include` globs bound enforcement
+- [x] T016 [P] [US2] Add enforcement regression cases to `tests/test-spec-gate.sh`: Complete fixture + failing block blocks naming the criterion (SC-001), Complete fixture + unchecked task blocks naming the task (SC-002), `severity: warning` reports without blocking, include/exclude filtering, Complete-with-zero-blocks stays informational
 
-  ```accept
+  ````accept
   # verifies: SC-001
-  bash tests/test-spec-gate.sh
-  ```
+  set -eu
+  d="$(mktemp -d)"
+  trap 'rm -rf "$d"' EXIT
+  mkdir -p "$d/.specify/gates" "$d/specs/900-sc001"
+  cp -R .specify/gates/lib "$d/.specify/gates/lib"
+  cp .specify/gates/verify.sh "$d/.specify/gates/"
+  printf '%s' '{"hooks":{"verify-quality":{"orchestrator":"none","severity":"error"}}}' >"$d/.specify/gates/policy.json"
+  printf '%s\n' '**Status**: Complete' >"$d/specs/900-sc001/spec.md"
+  printf '%s\n' '- [x] T1 criterion-under-test' '' '  ```accept' '  exit 9' '  ```' >"$d/specs/900-sc001/tasks.md"
+  rc=0
+  out="$(CLAUDE_PROJECT_DIR="$d" env -u GATES_SPEC_EXEC bash "$d/.specify/gates/verify.sh" --boundary ci 2>&1)" || rc=$?
+  [ "$rc" -eq 2 ]
+  printf '%s' "$out" | grep -q '900-sc001'
+  printf '%s' "$out" | grep -q 'criterion-under-test'
+  printf '%s' "$out" | grep -q 'exit 9'
+  ````
 
 **Checkpoint**: US1 and US2 — the spec is now a boundary for any feature
 that declares itself done.
@@ -105,19 +119,19 @@ and the suite fails naming the spec gate when the runner is stubbed.
 
 ### Implementation for User Story 3
 
-- [ ] T017 [US3] Emit the attestation extension in `extension/runtime/verify.sh`: `spec` GateEntry in `gates[]` (candidates = features, checked = blocks executed) and the top-level `spec` object (features/parsed/executed/passed/failed/results[]), absent when `spec.enabled` is false (FR-008)
-- [ ] T018 [P] [US3] Add the optional `spec` property to `specs/001-provable-enforcement-gate/contracts/attestation-record.schema.json` (additive, record stays `v: 1` per the forward-compatibility rule)
-- [ ] T019 [P] [US3] Add attestation-shape cases to `tests/test-attest.sh`: `spec` object counts present and correct, absent when policy-disabled, `results[]` outcomes match fixtures
-- [ ] T020 [US3] Add the `spec` canary to `extension/runtime/canary.sh` (research R8): sandbox feature `900-canary-fixture` with Status `Complete`, one checked task, one `false` accept block; sandboxed `verify.sh` must reject it or the suite fails naming the spec gate; wire into `--only`; unset `GATES_SPEC_EXEC` for the sandboxed run so the canary still probes the spec gate when invoked from inside an accept block (cli-contracts.md sentinel clearing)
+- [x] T017 [US3] Emit the attestation extension in `extension/runtime/verify.sh`: `spec` GateEntry in `gates[]` (candidates = features, checked = blocks executed) and the top-level `spec` object (features/parsed/executed/passed/failed/results[]), absent when `spec.enabled` is false (FR-008)
+- [x] T018 [P] [US3] Add the optional `spec` property to `specs/001-provable-enforcement-gate/contracts/attestation-record.schema.json` (additive, record stays `v: 1` per the forward-compatibility rule)
+- [x] T019 [P] [US3] Add attestation-shape cases to `tests/test-attest.sh`: `spec` object counts present and correct, absent when policy-disabled, `results[]` outcomes match fixtures
+- [x] T020 [US3] Add the `spec` canary to `extension/runtime/canary.sh` (research R8): sandbox feature `900-canary-fixture` with Status `Complete`, one checked task, one `false` accept block; sandboxed `verify.sh` must reject it or the suite fails naming the spec gate; wire into `--only`; unset `GATES_SPEC_EXEC` for the sandboxed run so the canary still probes the spec gate when invoked from inside an accept block (cli-contracts.md sentinel clearing)
 
   ```accept
   # verifies: SC-003
   bash .specify/gates/doctor.sh --canary --only spec
   ```
 
-- [ ] T021 [P] [US3] Add spec-canary cases to `tests/test-canary.sh`: healthy fixture `blocked`; accept-block runner stubbed to a no-op → suite exit 1 naming the spec gate (SC-003)
-- [ ] T022 [US3] Extend `extension/runtime/doctor.sh`: spec-gate discovery section (features found, blocks parsed, complete count), parse errors fail doctor (exit 1) naming `file:line`, `[rec]` nudge for all-tasks-checked-but-not-Complete features
-- [ ] T023 [P] [US3] Add doctor cases to `tests/test-doctor.sh`: discovery counts, parse-error failure, completion nudge
+- [x] T021 [P] [US3] Add spec-canary cases to `tests/test-canary.sh`: healthy fixture `blocked`; accept-block runner stubbed to a no-op → suite exit 1 naming the spec gate (SC-003)
+- [x] T022 [US3] Extend `extension/runtime/doctor.sh`: spec-gate discovery section (features found, blocks parsed, complete count), parse errors fail doctor (exit 1) naming `file:line`, `[rec]` nudge for all-tasks-checked-but-not-Complete features
+- [x] T023 [P] [US3] Add doctor cases to `tests/test-doctor.sh`: discovery counts, parse-error failure, completion nudge
 
 **Checkpoint**: all three stories functional and provable.
 
@@ -125,11 +139,48 @@ and the suite fails naming the spec gate when the runner is stubbed.
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T024 Finalize this file's accept blocks (SC-005): reconcile the block commands above with what got implemented, add targeted blocks so SC-001–SC-004 each have a `# verifies:` reference, keep total enforced execution ≤ 30s (SC-004 budget)
-- [ ] T025 [P] Document the spec gate in `README.md`: authoring accept blocks (link `contracts/accept-block.md` grammar), completion marker, policy `spec` section, `--accept` flag
-- [ ] T026 [P] Document the flow in `docs/how-it-works.md`: discovery → parse → execute → enforce pipeline, recursion guard, attestation `spec` object, the new canary
-- [ ] T027 Run quickstart.md Scenarios 1–5 and 7 end-to-end on macOS bash 3.2, record the parse-only overhead delta and full-run timing against SC-004 in the PR description
-- [ ] T028 Final check: `bash tests/run.sh` all green and the repo's own gate green with the `spec` gate active (SC-006); the Status flip to `Complete` (quickstart Scenario 6, SC-005 closure) happens as the last commit of `/speckit-implement` once every box above is checked
+- [x] T024 Finalize this file's accept blocks (SC-005): reconcile the block commands above with what got implemented, add targeted blocks so SC-001–SC-004 each have a `# verifies:` reference, keep total enforced execution ≤ 30s (SC-004 budget) — `bash tests/test-spec-gate.sh` (4m15s wall) far exceeds the block watchdog, so SC-001/SC-002 verify via mini-fixtures instead
+
+  ```accept
+  # verifies: SC-002
+  set -eu
+  d="$(mktemp -d)"
+  trap 'rm -rf "$d"' EXIT
+  mkdir -p "$d/.specify/gates" "$d/specs/900-sc002"
+  cp -R .specify/gates/lib "$d/.specify/gates/lib"
+  cp .specify/gates/verify.sh "$d/.specify/gates/"
+  printf '%s' '{"hooks":{"verify-quality":{"orchestrator":"none","severity":"error"}}}' >"$d/.specify/gates/policy.json"
+  printf '%s\n' '**Status**: Complete' >"$d/specs/900-sc002/spec.md"
+  printf '%s\n' '- [x] T1 done-task' '- [ ] T2 forgotten-task' >"$d/specs/900-sc002/tasks.md"
+  rc=0
+  out="$(CLAUDE_PROJECT_DIR="$d" env -u GATES_SPEC_EXEC bash "$d/.specify/gates/verify.sh" --boundary ci 2>&1)" || rc=$?
+  [ "$rc" -eq 2 ]
+  printf '%s' "$out" | grep -q 'unchecked task'
+  printf '%s' "$out" | grep -q 'forgotten-task'
+  ```
+
+  ```accept
+  # verifies: SC-004
+  set -eu
+  CLAUDE_PROJECT_DIR="$PWD"
+  export CLAUDE_PROJECT_DIR
+  . .specify/gates/lib/policy.sh
+  . .specify/gates/lib/spec-gate.sh
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+  start="$(date +%s)"
+  for f in $(gates_spec_features "$PWD"); do
+    mkdir -p "$tmp/$f"
+    gates_spec_parse "specs/$f/tasks.md" "$tmp/$f" >/dev/null
+  done
+  end="$(date +%s)"
+  [ $((end - start)) -le 1 ]
+  ```
+
+- [x] T025 [P] Document the spec gate in `README.md`: authoring accept blocks (link `contracts/accept-block.md` grammar), completion marker, policy `spec` section, `--accept` flag
+- [x] T026 [P] Document the flow in `docs/how-it-works.md`: discovery → parse → execute → enforce pipeline, recursion guard, attestation `spec` object, the new canary
+- [x] T027 Run quickstart.md Scenarios 1–5 and 7 end-to-end on macOS bash 3.2, record the parse-only overhead delta and full-run timing against SC-004 in the PR description
+- [x] T028 Final check: `bash tests/run.sh` all green and the repo's own gate green with the `spec` gate active (SC-006); the Status flip to `Complete` (quickstart Scenario 6, SC-005 closure) happens as the last commit of `/speckit-implement` once every box above is checked
 
 ---
 
