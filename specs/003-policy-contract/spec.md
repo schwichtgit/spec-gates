@@ -4,7 +4,7 @@
 
 **Created**: 2026-07-08
 
-**Status**: Draft
+**Status**: Complete
 
 **Input**: User description: "policy as versioned contract: policy.json gains
 an optional extends field referencing a baseline policy at a versioned source
