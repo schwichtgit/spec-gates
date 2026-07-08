@@ -165,6 +165,39 @@ if declare -f gates_spec_features >/dev/null 2>&1 \
     echo "  $SPEC_FEATURES feature(s), $SPEC_BLOCKS accept block(s) parsed, $SPEC_COMPLETE complete"
 fi
 
+# Git boundary wiring (issues #20/#23): an INSTALLED hook that git will
+# not run is silent enforcement loss — the worst class. Non-executable or
+# non-delegating installed hooks are enforcement GAPS (exit 1); hooks that
+# were never installed get a [rec] nudge only (agent+CI-only repos are a
+# legitimate setup). Zip installs drop execute bits (Python extraction),
+# which is exactly how downstream repos end up in the gap state.
+if git -C "$PROJECT_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+    echo ""
+    echo "Git boundary (hooks git actually runs):"
+    GIT_DIR="$(git -C "$PROJECT_ROOT" rev-parse --git-dir)"
+    [[ "$GIT_DIR" != /* ]] && GIT_DIR="$PROJECT_ROOT/$GIT_DIR"
+    HOOKS_PATH="$(git -C "$PROJECT_ROOT" config core.hooksPath 2>/dev/null || true)"
+    HOOK_DIR="$GIT_DIR/hooks"
+    if [[ -n "$HOOKS_PATH" ]]; then
+        [[ "$HOOKS_PATH" != /* ]] && HOOKS_PATH="$PROJECT_ROOT/$HOOKS_PATH"
+        HOOK_DIR="$HOOKS_PATH"
+        echo "${REC}core.hooksPath is set ($HOOKS_PATH) — a hook manager may own this boundary; the checks below inspect that path"
+    fi
+    for h in pre-commit commit-msg; do
+        hf="$HOOK_DIR/$h"
+        if [[ ! -f "$hf" ]]; then
+            echo "${REC}$h not installed — the git boundary is not enforced here (run /speckit.gates.init to wire it)"
+        elif [[ ! -x "$hf" ]]; then
+            echo "${BAD}$h installed but NOT executable — git silently skips it (fix: chmod +x ${hf#"$PROJECT_ROOT"/})"
+            MISSING=$((MISSING + 1))
+        elif ! grep -q 'gates\|verify.sh' "$hf" 2>/dev/null; then
+            echo "${REC}$h is executable but does not reference the gates runtime — another tool owns it; gates checks may not run on commit"
+        else
+            echo "${OK}$h installed, executable, delegates to the gates runtime"
+        fi
+    done
+fi
+
 # Policy contract (feature 003): what the contract gate sees, from local
 # information only. Doctor fails on exactly the drift conditions the gate
 # blocks on; a declared-but-never-synced contract gets the actionable

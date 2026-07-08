@@ -75,9 +75,57 @@ Copy from `RUNTIME_SRC` into the project:
 | `hooks/git/pre-commit` | `.specify/gates/hooks/pre-commit`                  |
 | `hooks/git/commit-msg` | `.specify/gates/hooks/commit-msg`                  |
 
-Preserve execute bits. Record the projected runtime version in
+Then EXPLICITLY set execute bits — do not rely on the source having them
+(zip-based installs extract without file modes, so the installed
+extension's scripts are usually mode 644):
+
+```sh
+chmod +x .specify/gates/*.sh .specify/gates/lib/*.sh \
+         .specify/gates/hooks/pre-commit .specify/gates/hooks/commit-msg
+[ -d .claude/hooks/gates ] && chmod +x .claude/hooks/gates/*.sh
+```
+
+Record the projected runtime version in
 `.specify/gates/.runtime-version` (read it from the extension's
 `extension.yml`).
+
+### 3b. Seed the pinned linter toolchain
+
+If the approved policy enables node-resolved linters (prettier and/or
+markdownlint) and the repo does not already pin them (`package.json`
+devDependencies + a lockfile):
+
+- Offer to add the missing devDependencies (`prettier`,
+  `markdownlint-cli2`) — creating a minimal `package.json` if the repo
+  has none — and run `npm install` to produce the lockfile. The lockfile
+  pin is what the parity gate verifies and what makes local == CI.
+- If the user declines, say plainly that those gates will SKIP until the
+  tools are installed and that `doctor` will report the enforcement gap.
+  Never leave this state silent.
+
+Also seed a sensible markdownlint config when the policy enables
+markdownlint and the repo has none (`.markdownlint-cli2.jsonc`,
+`.markdownlint.*`): without one, markdownlint's MD013 line-length rule
+fights prettier (which deliberately does not wrap prose), producing
+permanent noise. Seed this and show it to the user:
+
+```jsonc
+{
+  // One tool owns each concern: prettier owns wrapping (proseWrap:
+  // preserve) and formats tables/code in ways MD013 cannot satisfy, so
+  // line-length is ceded to prettier and the rest of the ruleset stays on.
+  "config": {
+    "default": true,
+    "MD013": false,
+  },
+  "globs": ["**/*.md"],
+  "ignores": ["**/node_modules", "**/.venv", ".specify", ".claude"],
+}
+```
+
+Adjust `ignores` to the repo's layout (mirror the policy's exclude
+globs). Do not seed a prettier config — prettier's defaults are the
+convention and needing none is the point.
 
 ### 4. Wire the agent boundary (Claude Code)
 
@@ -95,9 +143,18 @@ Unless `--no-agent-hooks`:
 Unless `--no-git-hooks` and if `.git/` exists:
 
 - Install `.specify/gates/hooks/pre-commit` and `commit-msg` into
-  `.git/hooks/`. If a hook already exists there, do NOT clobber it:
-  append a call-through line invoking the gates hook, and tell the user
-  what was done.
+  `.git/hooks/`, then `chmod +x` both installed copies — a hook without
+  the execute bit is SILENTLY skipped by git, which is enforcement loss
+  with no error.
+- If a hook already exists there, do NOT clobber it: append a
+  call-through line invoking the gates hook, and tell the user what was
+  done.
+- If `git config core.hooksPath` is set (husky, lefthook, …), `.git/hooks`
+  is not consulted: tell the user, and wire the call-through into the
+  configured path instead (never unset their hooksPath).
+- If the repo has no `.git/` yet (greenfield), say explicitly that the
+  git boundary is NOT wired and must be re-wired after `git init` — a
+  later `git init` does not pick these hooks up by itself.
 
 ### 6. Self-test (mandatory — the user must SEE enforcement work)
 
@@ -109,6 +166,18 @@ Run these and show the results:
    `echo '{"tool_input":{"file_path":".env"}}' | bash .claude/hooks/gates/protect-files.sh`
    — expect a non-zero exit and a block message.
 3. Simulate a blocked bash call through `validate-bash.sh` the same way.
+4. Prove the git boundary is live (this is the check that catches lost
+   execute bits and hook-manager overrides):
+
+   ```sh
+   test -x .git/hooks/pre-commit && test -x .git/hooks/commit-msg
+   printf 'bad subject with no conventional prefix\n' >/tmp/gates-msg-probe \
+     && ! bash .git/hooks/commit-msg /tmp/gates-msg-probe
+   ```
+
+   The first line must succeed; the second must show the hook REFUSING
+   the message. A hook that exists but is not executable, or that accepts
+   that subject, is a broken boundary.
 
 If any self-test does not behave as expected, report it as a failure and
 point the user at `/speckit.gates.doctor`. Do not declare success.

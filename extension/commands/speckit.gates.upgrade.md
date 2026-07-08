@@ -18,5 +18,9 @@ version into the project.
   conflict and let them choose (keep local / take upstream / show diff).
   Record kept-local files in `.specify/gates/.upgrade-holds` so doctor
   can report them.
+- After projecting, EXPLICITLY `chmod +x` every projected script and git
+  hook (same rule as init: zip-based installs drop execute bits, and git
+  silently skips a non-executable hook).
 - Update `.specify/gates/.runtime-version` and re-run the init self-test
-  (step 6 of /speckit.gates.init) to prove enforcement still works.
+  (step 6 of /speckit.gates.init, including the git-boundary probe) to
+  prove enforcement still works.

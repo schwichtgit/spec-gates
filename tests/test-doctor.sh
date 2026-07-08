@@ -168,6 +168,48 @@ fi
 TOTAL=$((TOTAL + 1))
 
 echo ""
+echo "=== git boundary wiring (issues #20/#23) ==="
+
+GB="$WORKDIR/git-boundary"
+project "$GB" '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } } }' no
+git init -q "$GB"
+cp "$REPO_ROOT/extension/runtime/hooks/git/pre-commit" \
+    "$REPO_ROOT/extension/runtime/hooks/git/commit-msg" "$GB/.git/hooks/"
+chmod +x "$GB/.git/hooks/pre-commit" "$GB/.git/hooks/commit-msg"
+expect "wired executable hooks -> exit 0" "$(run_doctor "$GB")" 0
+if grep -q "pre-commit installed, executable, delegates" "$GB/out.txt"; then
+    echo "PASS: healthy hook reported ok"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL: healthy hook report (got: $(grep 'pre-commit' "$GB/out.txt" | head -1))"
+    FAIL=$((FAIL + 1))
+fi
+TOTAL=$((TOTAL + 1))
+
+chmod -x "$GB/.git/hooks/commit-msg"
+expect "non-executable installed hook -> exit 1 (silent enforcement loss)" "$(run_doctor "$GB")" 1
+if grep -q "commit-msg installed but NOT executable" "$GB/out.txt"; then
+    echo "PASS: exec-bit gap named with the fix"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL: exec-bit gap naming (got: $(grep 'commit-msg' "$GB/out.txt" | head -1))"
+    FAIL=$((FAIL + 1))
+fi
+TOTAL=$((TOTAL + 1))
+chmod +x "$GB/.git/hooks/commit-msg"
+
+rm "$GB/.git/hooks/pre-commit" "$GB/.git/hooks/commit-msg"
+expect "hooks never installed -> nudge only, exit 0" "$(run_doctor "$GB")" 0
+if grep -q "pre-commit not installed" "$GB/out.txt"; then
+    echo "PASS: uninstalled hooks get the [rec] nudge"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL: uninstalled-hook nudge (got: $(grep 'pre-commit' "$GB/out.txt" | head -1))"
+    FAIL=$((FAIL + 1))
+fi
+TOTAL=$((TOTAL + 1))
+
+echo ""
 echo "=== policy contract section (feature 003) ==="
 
 CB="$WORKDIR/contract-base"
