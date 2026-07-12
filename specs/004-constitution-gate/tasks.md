@@ -122,6 +122,56 @@ placeholder detection.
 
 - [ ] T018 Dogfood this repository (SC-007): augment-session its constitution — annotate the five principles with their real surfaces (I → fail-closed policy defaults, II → ci `gates` check + canary presence, III → `attestation.parity`, IV → projected runtime files, V → `spec` policy section), apply the alignment, and leave `constitution.sh check` + doctor reporting every principle enforced
 - [ ] T019 Finalize this file's accept blocks: SC-001/SC-002/SC-003 via offline mini-fixtures (fixture corpus + selections → draft → tamper a surface → check catches it; decline path tree-hash), keep total enforced execution within the block budget alongside 002/003's blocks
+
+  ```accept
+  # verifies: SC-001
+  set -eu
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+  cat >"$tmp/sel.json" <<'JSON'
+  { "project_name": "P", "selections": [
+    { "id": "workflow/branch-first", "surface": "git-hook", "ref": "pre-commit" },
+    { "id": "security/no-secrets", "surface": "scanner", "ref": "gitleaks:default" },
+    { "name": "Custom", "surface": "prose", "body": "b" }
+  ] }
+  JSON
+  bash .specify/gates/constitution.sh draft --corpus extension/constitution --selections "$tmp/sel.json" --out "$tmp/d1.md"
+  bash .specify/gates/constitution.sh draft --corpus extension/constitution --selections "$tmp/sel.json" --out "$tmp/d2.md"
+  cmp -s "$tmp/d1.md" "$tmp/d2.md"
+  [ "$(grep -c '^### ' "$tmp/d1.md")" = "$(grep -c 'gates:enforce' "$tmp/d1.md")" ]
+  ! grep -Eq '\[[A-Z_][A-Z_][A-Z_]' "$tmp/d1.md"
+  ```
+
+  ```accept
+  # verifies: SC-002
+  set -eu
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+  mkdir -p "$tmp/.specify/memory" "$tmp/.specify/gates"
+  printf '{ "attestation": { "parity": "off" } }\n' >"$tmp/.specify/gates/policy.json"
+  cat >"$tmp/.specify/memory/constitution.md" <<'MD'
+  # C
+
+  ## Core Principles
+
+  ### I. Gap
+  <!-- gates:enforce surface=policy ref=attestation.parity expect=error -->
+  x
+  MD
+  if CLAUDE_PROJECT_DIR="$tmp" bash .specify/gates/constitution.sh check --constitution "$tmp/.specify/memory/constitution.md" >/dev/null 2>&1; then
+    exit 1
+  fi
+  ```
+
+  ```accept
+  # verifies: SC-003
+  set -eu
+  before="$(git status --porcelain=v1)"
+  bash .specify/gates/constitution.sh align >/dev/null 2>&1 || true
+  after="$(git status --porcelain=v1)"
+  [ "$before" = "$after" ]
+  ```
+
 - [ ] T020 [P] Document in `README.md`: the guided constitution section (interview, corpus, annotations, alignment, doctor proof), the new command row (8 commands)
 - [ ] T021 [P] Document the flow in `docs/how-it-works.md`: elicit → annotate → align → prove pipeline, the annotation grammar, charter interop, the fixed-severity gap doctrine
 - [ ] T022 Run quickstart.md Scenarios 1–8 end-to-end on macOS bash 3.2, record the check budget against SC-004 in the PR description

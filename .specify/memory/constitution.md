@@ -24,6 +24,8 @@ Sync Impact Report
 
 ### I. Fail Closed
 
+<!-- gates:enforce surface=ci ref=canary -->
+
 Anything the enforcement layer cannot read, parse, or demonstrably run MUST produce a
 red result — never a silent skip. Malformed policy sections, unreadable acceptance
 criteria, and unterminated fences block the run naming `file:line`. A tool that the
@@ -35,6 +37,8 @@ bugs and one glob-union bypass. Every one of them "passed". A gate that can quie
 stop gating is worse than no gate, because it leaves the belief of coverage behind.
 
 ### II. Provable Enforcement
+
+<!-- gates:enforce surface=ci ref=gates -->
 
 Enforcement MUST leave evidence and MUST re-prove itself. Every `verify.sh` run
 appends an attestation record (policy SHA-256, per-gate binary, version, pin,
@@ -49,6 +53,8 @@ records of it; a broken gate is caught by a red canary step, not by an incident.
 
 ### III. One Policy, Three Boundaries
 
+<!-- gates:enforce surface=policy ref=attestation.parity expect=error -->
+
 `policy.json` is the single source of enforcement truth, and the same `verify.sh`
 entrypoint runs at all three boundaries — agent (Claude Code hooks), git
 (pre-commit), and CI. Boundary-specific behavior beyond `--boundary` labeling is
@@ -62,6 +68,8 @@ provably run the same checks under the same policy.
 
 ### IV. Projection, Not Dependency
 
+<!-- gates:enforce surface=ci ref=extension/runtime -->
+
 The runtime is copied into the repository (`.specify/gates/`, `.claude/hooks/gates/`),
 never symlinked or resolved from an installed extension. Enforcement MUST survive
 extension removal, work for every collaborator on clone, and run offline in CI.
@@ -73,6 +81,8 @@ Rationale: an enforcement layer that disappears with its installer, or that need
 network access to run, fails exactly when it is needed most.
 
 ### V. The Spec Is a Boundary
+
+<!-- gates:enforce surface=policy ref=spec.severity expect=error -->
 
 Enhancements to this repository run as numbered spec-kit features (`specs/NNN-*/`)
 through specify → clarify → plan → tasks → implement, gated by the repo's own gates.
