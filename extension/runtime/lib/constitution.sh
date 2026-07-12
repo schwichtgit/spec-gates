@@ -216,3 +216,305 @@ gates_const_detect() { # <constitution> [<template>]
     fi
     echo filled
 }
+
+# --- Draft assembly helpers (US1) --------------------------------------------
+
+# Roman numeral for 1..39 (constitutions never have more principles).
+gates_const_roman() { # <n>
+    local n="${1:-0}" out="" i
+    local rvals="10 9 5 4 1" rsyms="X IX V IV I"
+    # shellcheck disable=SC2206  # deliberate word-split of fixed literals
+    local -a rv=($rvals) rs=($rsyms)
+    for i in 0 1 2 3 4; do
+        while [[ "$n" -ge "${rv[$i]}" ]]; do
+            out="$out${rs[$i]}"
+            n=$((n - ${rv[$i]}))
+        done
+    done
+    printf '%s' "$out"
+}
+
+# Title-case a hyphenated id segment: "no-secrets" -> "No Secrets".
+gates_const_titlecase() { # <hyphenated>
+    printf '%s' "${1:-}" | tr '-' ' ' \
+        | awk '{ for (i = 1; i <= NF; i++) $i = toupper(substr($i, 1, 1)) substr($i, 2); print }'
+}
+
+# Build one enforcement marker from a surface decision.
+gates_const_marker() { # <surface> <ref> <expect>
+    local s="${1:-}" r="${2:-}" e="${3:-}"
+    if [[ "$s" == "prose" ]]; then
+        printf '<!-- gates:enforce surface=prose -->'
+        return 0
+    fi
+    local m="<!-- gates:enforce surface=$s ref=$r"
+    [[ -n "$e" ]] && m="$m expect=$e"
+    printf '%s -->' "$m"
+}
+
+# --- fragments (candidate menu, US1) -----------------------------------------
+
+# Filtered/ranked candidate menu for the interview profile. Emits TSV per
+# contracts/cli-contracts.md: tier<TAB>id<TAB>statement<TAB>surface<TAB>ref<TAB>rationale.
+# Mandatory tier first; within a tier, ranked by profile relevance (exact
+# project-type match, then matched postures), ties in manifest order. A
+# fragment carrying project-type tags that do not include the profile's type,
+# and not tagged all-projects, is filtered out (a docs project never sees
+# infra fragments); mandatory fragments are never filtered. Missing profile or
+# corpus is a usage error (exit 1); a malformed manifest/fragment is exit 2.
+gates_const_fragments() { # <corpus> <profile-json>
+    local corpus="${1:-}" profile="${2:-}"
+    [[ -d "$corpus" ]] || {
+        echo "constitution: corpus directory not found: $corpus" >&2
+        return 1
+    }
+    [[ -f "$profile" ]] || {
+        echo "constitution: an interview profile is required (--profile); the menu is never unfiltered" >&2
+        return 1
+    }
+    local manifest="$corpus/manifest.yml"
+    [[ -f "$manifest" ]] || {
+        echo "constitution: corpus has no manifest.yml: $corpus" >&2
+        return 2
+    }
+    local ptype postures
+    ptype="$(jq -r '.project_type // ""' "$profile" 2>/dev/null)" || {
+        echo "constitution: profile is not valid JSON: $profile" >&2
+        return 2
+    }
+    postures="$(jq -r '(.postures // [])[]' "$profile" 2>/dev/null)"
+    local tab
+    tab="$(printf '\t')"
+    local tier
+    for tier in mandatory recommended optional; do
+        local tmp
+        tmp="$(mktemp 2>/dev/null || mktemp -t gates-frag)" || return 1
+        local id
+        while IFS= read -r id; do
+            [[ -z "$id" ]] && continue
+            local frag="$corpus/fragments/$id.md"
+            [[ -f "$frag" ]] || {
+                echo "constitution: manifest lists $id but $frag is missing" >&2
+                rm -f "$tmp"
+                return 2
+            }
+            local tags score=0 has_ptype=0 all_projects=0 matched=0 t bare
+            tags="$(gates_const_fm_tags "$frag")"
+            while IFS= read -r t; do
+                [[ -z "$t" ]] && continue
+                case "$t" in
+                    all-projects) all_projects=1 ;;
+                    project-type/*)
+                        has_ptype=1
+                        bare="${t#project-type/}"
+                        if [[ "$bare" == "$ptype" ]]; then
+                            matched=1
+                            score=$((score + 2))
+                        fi
+                        ;;
+                    posture/*)
+                        bare="${t#posture/}"
+                        if printf '%s\n' "$postures" | grep -qx "$bare"; then
+                            score=$((score + 1))
+                        fi
+                        ;;
+                esac
+            done <<<"$tags"
+            if [[ "$tier" != "mandatory" && "$has_ptype" == "1" \
+                && "$all_projects" == "0" && "$matched" == "0" ]]; then
+                continue
+            fi
+            local statement rationale surface ref
+            statement="$(gates_const_fm_field "$frag" statement)"
+            rationale="$(gates_const_fm_field "$frag" rationale)"
+            surface="$(gates_const_fm_field "$frag" surface)"
+            ref="$(gates_const_fm_field "$frag" ref)"
+            printf '%d\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+                "$score" "$tier" "$id" "$statement" "$surface" "$ref" "$rationale" >>"$tmp"
+        done < <(gates_const_manifest_tier "$manifest" "$tier")
+        # Stable sort by score descending; drop the score column.
+        sort -t"$tab" -k1,1nr -s "$tmp" | cut -f2-
+        rm -f "$tmp"
+    done
+    return 0
+}
+
+# --- draft (assemble the annotated constitution, US1) ------------------------
+
+# Resolve one selection (index $2 of the selections in $1) into NAME / BODY /
+# MARKER / PRINCIPLE globals, validating the surface decision (FR-004). Returns
+# 2 with a named cause on any contract failure.
+_gates_const_resolve_sel() { # <selections-json> <index> <corpus>
+    local sel="$1" i="$2" corpus="$3"
+    local id surface ref expect
+    id="$(jq -r ".selections[$i].id // \"\"" "$sel")"
+    SEL_NAME="$(jq -r ".selections[$i].name // \"\"" "$sel")"
+    surface="$(jq -r ".selections[$i].surface // \"\"" "$sel")"
+    ref="$(jq -r ".selections[$i].ref // \"\"" "$sel")"
+    expect="$(jq -r ".selections[$i].expect // \"\"" "$sel")"
+    SEL_PRINCIPLE="$(jq -r ".selections[$i].principle // \"\"" "$sel")"
+    SEL_BODY="$(jq -r ".selections[$i].body // \"\"" "$sel")"
+    if [[ -z "$surface" ]]; then
+        echo "constitution: selection $i carries no surface decision -- every principle must declare one (prose is an explicit choice)" >&2
+        return 2
+    fi
+    if ! gates_const_is_surface "$surface"; then
+        echo "constitution: selection $i has unknown surface '$surface'" >&2
+        return 2
+    fi
+    if [[ "$surface" != "prose" && -z "$ref" ]]; then
+        echo "constitution: selection $i (surface=$surface) needs a ref" >&2
+        return 2
+    fi
+    if [[ -n "$id" ]]; then
+        local frag="$corpus/fragments/$id.md"
+        [[ -f "$frag" ]] || {
+            echo "constitution: selection $i references unknown fragment '$id'" >&2
+            return 2
+        }
+        [[ -z "$SEL_BODY" ]] && SEL_BODY="$(gates_const_fm_body "$frag")"
+        [[ -z "$SEL_NAME" ]] && SEL_NAME="$(gates_const_titlecase "${id##*/}")"
+    fi
+    # An in-place annotation (augment) needs no body/name of its own.
+    if [[ -z "$SEL_PRINCIPLE" ]]; then
+        [[ -z "$SEL_NAME" ]] && {
+            echo "constitution: selection $i (custom) needs a name" >&2
+            return 2
+        }
+        [[ -z "$SEL_BODY" ]] && {
+            echo "constitution: selection $i (custom) needs a body" >&2
+            return 2
+        }
+    fi
+    SEL_MARKER="$(gates_const_marker "$surface" "$ref" "$expect")"
+    return 0
+}
+
+# Assemble the annotated constitution draft (contracts/cli-contracts.md).
+# Deterministic: identical inputs produce byte-identical output. Writes only to
+# <out>. In --augment mode existing content is preserved verbatim: selections
+# with a `principle` field annotate the named existing heading in place (only
+# if it is not already annotated), and selections without one are appended as
+# new principles in Core Principles order.
+gates_const_draft() { # <corpus> <selections-json> <out> [<augment-file>]
+    local corpus="${1:-}" sel="${2:-}" out="${3:-}" augment="${4:-}"
+    [[ -f "$sel" ]] || {
+        echo "constitution: selections file not found: $sel" >&2
+        return 1
+    }
+    [[ -n "$out" ]] || {
+        echo "constitution: draft needs an --out path" >&2
+        return 1
+    }
+    local n
+    n="$(jq '.selections | length' "$sel" 2>/dev/null)" || {
+        echo "constitution: selections is not valid JSON: $sel" >&2
+        return 2
+    }
+    [[ "$n" -ge 1 ]] || {
+        echo "constitution: no selections to draft" >&2
+        return 2
+    }
+    local project
+    project="$(jq -r '.project_name // "Project"' "$sel")"
+
+    # Resolve every selection up front (fail closed before writing anything).
+    local -a names=() bodies=() markers=() principles=()
+    local i SEL_NAME SEL_BODY SEL_MARKER SEL_PRINCIPLE
+    for ((i = 0; i < n; i++)); do
+        _gates_const_resolve_sel "$sel" "$i" "$corpus" || return 2
+        names+=("$SEL_NAME")
+        bodies+=("$SEL_BODY")
+        markers+=("$SEL_MARKER")
+        principles+=("$SEL_PRINCIPLE")
+    done
+
+    local gov="This constitution supersedes other practice documents where they conflict.
+Amendments are made by pull request that edits this file, records the change,
+and is approved by the project's maintainers. Every review verifies compliance
+with the principles above; the enforcement annotations bind each principle to
+the boundary that proves it."
+
+    if [[ -z "$augment" ]]; then
+        # Fresh draft in the core template's section shape.
+        {
+            printf '# %s Constitution\n\n' "$project"
+            printf '## Core Principles\n'
+            local idx=0 roman
+            for ((i = 0; i < n; i++)); do
+                idx=$((idx + 1))
+                roman="$(gates_const_roman "$idx")"
+                printf '\n### %s. %s\n\n%s\n\n%s\n' \
+                    "$roman" "${names[$i]}" "${markers[$i]}" "${bodies[$i]}"
+            done
+            printf '\n## Governance\n\n%s\n\n' "$gov"
+            printf '**Version**: 0.0.0 | **Ratified**: pending | **Last Amended**: pending\n'
+        } >"$out"
+        return 0
+    fi
+
+    # Augment mode: annotate/append onto an existing constitution.
+    [[ -f "$augment" ]] || {
+        echo "constitution: --augment file not found: $augment" >&2
+        return 1
+    }
+    # Which existing principles already carry a marker? (Do not double-annotate.)
+    local annotated_tmp
+    annotated_tmp="$(mktemp 2>/dev/null || mktemp -t gates-annot)" || return 1
+    gates_const_parse "$augment" \
+        | awk -F'\t' '$1 == "PRINCIPLE" && $4 != "" { print $3 }' >"$annotated_tmp"
+    local existing_count
+    existing_count="$(grep -c '^### ' "$augment" || true)"
+
+    local markers_file newblock_file
+    markers_file="$(mktemp 2>/dev/null || mktemp -t gates-mk)" || return 1
+    newblock_file="$(mktemp 2>/dev/null || mktemp -t gates-nb)" || return 1
+    : >"$markers_file"
+    : >"$newblock_file"
+
+    local k=0 roman
+    for ((i = 0; i < n; i++)); do
+        if [[ -n "${principles[$i]}" ]]; then
+            # Annotate an existing heading in place, unless already annotated.
+            if grep -qxF "${principles[$i]}" "$annotated_tmp"; then
+                continue
+            fi
+            printf '%s\t%s\n' "${principles[$i]}" "${markers[$i]}" >>"$markers_file"
+        else
+            k=$((k + 1))
+            roman="$(gates_const_roman $((existing_count + k)))"
+            {
+                printf '### %s. %s\n\n%s\n\n%s\n\n' \
+                    "$roman" "${names[$i]}" "${markers[$i]}" "${bodies[$i]}"
+            } >>"$newblock_file"
+        fi
+    done
+
+    awk -v markersfile="$markers_file" -v newblockfile="$newblock_file" '
+    BEGIN {
+        while ((getline l < markersfile) > 0) {
+            p = index(l, "\t")
+            if (p > 0) mk[substr(l, 1, p - 1)] = substr(l, p + 1)
+        }
+        nb = ""
+        while ((getline l < newblockfile) > 0) nb = nb l "\n"
+        incore = 0; flushed = 0
+    }
+    /^## / {
+        if (incore && !flushed) { printf "%s", nb; flushed = 1 }
+        incore = ($0 ~ /^## Core Principles/) ? 1 : 0
+        print; next
+    }
+    /^### / {
+        print
+        h = $0; sub(/^### +/, "", h); sub(/ +$/, "", h)
+        if (h in mk) print mk[h]
+        next
+    }
+    { print }
+    END { if (incore && !flushed) printf "%s", nb }
+    ' "$augment" >"$out"
+
+    rm -f "$annotated_tmp" "$markers_file" "$newblock_file"
+    return 0
+}
