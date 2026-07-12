@@ -25,6 +25,7 @@ node_modules/
 .specify/gates/doctor.sh
 .specify/gates/canary.sh
 .specify/gates/contract.sh
+.specify/gates/constitution.sh
 .specify/gates/lib/
 .specify/gates/policy.schema.json
 

@@ -4,7 +4,7 @@
 
 **Created**: 2026-07-11
 
-**Status**: Draft
+**Status**: Complete
 
 **Input**: User description: "constitution as enforceable contract: a guided
 constitution-elicitation command (wired as a before_constitution hook so it

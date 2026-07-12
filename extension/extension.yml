@@ -48,6 +48,9 @@ provides:
     - name: speckit.gates.propose
       file: commands/speckit.gates.propose.md
       description: "Propose this repo's policy deviations upstream as a change request against the baseline"
+    - name: speckit.gates.constitution
+      file: commands/speckit.gates.constitution.md
+      description: "Guided constitution session: interview to a profile, pick corpus principles, and produce an enforcement-annotated, ratifiable draft"
 
   config:
     - name: "policy.json"
@@ -64,6 +67,11 @@ hooks:
     optional: true
     prompt: "Run quality gates on the implemented changes?"
     description: "Run the gate suite after implementation"
+  before_constitution:
+    command: speckit.gates.constitution
+    optional: true
+    prompt: "Run the guided constitution session first (interview, corpus principles, enforcement annotations)?"
+    description: "Offer the guided, enforcement-aware session before the core constitution command runs"
 
 tags:
   - "quality"

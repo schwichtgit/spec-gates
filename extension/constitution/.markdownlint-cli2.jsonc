@@ -1,0 +1,13 @@
+{
+  // Corpus fragments are charter-format documents: YAML frontmatter followed
+  // by a body paragraph that becomes a constitution principle. They are not
+  // standalone pages, so MD041 (first line must be a top-level heading) does
+  // not apply. Everything else in the ruleset stays on; MD013 is ceded to
+  // prettier exactly as at the repo root.
+  "config": {
+    "default": true,
+    "MD013": false,
+    "MD041": false,
+  },
+  "globs": ["**/*.md"],
+}
