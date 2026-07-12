@@ -230,6 +230,183 @@ expect "detect: placeholder when byte-equal to template" "$(run_const detect)" "
 cp "$WORKDIR/d1.md" "$WORKDIR/.specify/memory/constitution.md"
 expect "detect: filled on a real constitution" "$(run_const detect)" "filled"
 
+# --- align: per-surface activity (US2) ---------------------------------------
+
+# Assert an align row for <principle> reports <state>.
+expect_state() { # <name> <align-output> <principle> <state>
+    TOTAL=$((TOTAL + 1))
+    if printf '%s' "$2" | awk -F'\t' -v p="$3" -v s="$4" \
+        '$1 == p && $4 == s { f = 1 } END { exit !f }'; then
+        echo "PASS: $1"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL: $1 (principle '$3' not in state '$4')"
+        printf '%s\n' "$2" | awk '{ print "    " $0 }'
+        FAIL=$((FAIL + 1))
+    fi
+}
+
+PROJ="$WORKDIR/proj"
+mkdir -p "$PROJ/.claude/hooks/gates" "$PROJ/.github/workflows" \
+    "$PROJ/specs/feat-x" "$PROJ/.specify/memory"
+git init -q "$PROJ"
+git -C "$PROJ" checkout -q -b main 2>/dev/null || true
+
+# policy: a top-level section key and a hooks key, both present.
+mkdir -p "$PROJ/.specify/gates"
+cat >"$PROJ/.specify/gates/policy.json" <<'EOF'
+{
+  "git": { "block_main_commits": true },
+  "hooks": { "prettier": { "severity": "error" } }
+}
+EOF
+
+# agent-hook: present, executable, wired.
+printf '#!/bin/sh\n' >"$PROJ/.claude/hooks/gates/validate-bash.sh"
+chmod +x "$PROJ/.claude/hooks/gates/validate-bash.sh"
+printf '{ "hooks": { "PreToolUse": "validate-bash.sh" } }\n' >"$PROJ/.claude/settings.json"
+
+# git-hook: installed, executable, delegates to gates.
+printf '#!/bin/sh\nexec bash .specify/gates/verify.sh\n' >"$PROJ/.git/hooks/pre-commit"
+chmod +x "$PROJ/.git/hooks/pre-commit"
+
+# ci: a workflow naming the check.
+printf 'jobs:\n  mygate:\n    steps: []\n' >"$PROJ/.github/workflows/ci.yml"
+
+# accept: a tasks.md with an accept block verifying SC-9.
+cat >"$PROJ/specs/feat-x/tasks.md" <<'EOF'
+# Tasks
+
+- [x] T001 do the thing
+
+```accept
+# verifies: SC-9
+true
+```
+EOF
+
+# scanner: a checkov config mentioning the rule.
+printf 'skip-check:\n  - CKV_TEST\n' >"$PROJ/.checkov.yml"
+
+# A constitution annotated with one active principle per surface.
+cat >"$PROJ/.specify/memory/constitution.md" <<'EOF'
+# Proj Constitution
+
+## Core Principles
+
+### I. Policy Section
+<!-- gates:enforce surface=policy ref=git.block_main_commits -->
+x
+
+### II. Policy Hook Expect
+<!-- gates:enforce surface=policy ref=prettier.severity expect=error -->
+x
+
+### III. Agent Hook
+<!-- gates:enforce surface=agent-hook ref=validate-bash.sh -->
+x
+
+### IV. Git Hook
+<!-- gates:enforce surface=git-hook ref=pre-commit -->
+x
+
+### V. Ci
+<!-- gates:enforce surface=ci ref=mygate -->
+x
+
+### VI. Accept
+<!-- gates:enforce surface=accept ref=feat-x/SC-9 -->
+x
+
+### VII. Scanner
+<!-- gates:enforce surface=scanner ref=checkov:CKV_TEST -->
+x
+
+### VIII. Prose
+<!-- gates:enforce surface=prose -->
+x
+EOF
+
+al="$(CLAUDE_PROJECT_DIR="$PROJ" bash "$CONST" align --constitution "$PROJ/.specify/memory/constitution.md")"
+expect_state "align: policy (top-level section) active" "$al" "I. Policy Section" "active"
+expect_state "align: policy hook with matching expect active" "$al" "II. Policy Hook Expect" "active"
+expect_state "align: agent-hook active" "$al" "III. Agent Hook" "active"
+expect_state "align: git-hook active" "$al" "IV. Git Hook" "active"
+expect_state "align: ci active" "$al" "V. Ci" "active"
+expect_state "align: accept active" "$al" "VI. Accept" "active"
+expect_state "align: scanner active" "$al" "VII. Scanner" "active"
+expect_state "align: prose reported prose-only" "$al" "VIII. Prose" "prose-only"
+
+# Now break each surface and confirm it flips to missing.
+chmod -x "$PROJ/.claude/hooks/gates/validate-bash.sh" # agent-hook not executable
+rm "$PROJ/.git/hooks/pre-commit"                      # git-hook removed
+printf 'jobs:\n  other:\n    steps: []\n' >"$PROJ/.github/workflows/ci.yml" # ci name gone
+rm "$PROJ/.checkov.yml"                               # scanner config gone
+al2="$(CLAUDE_PROJECT_DIR="$PROJ" bash "$CONST" align --constitution "$PROJ/.specify/memory/constitution.md")"
+expect_state "align: non-executable agent-hook missing" "$al2" "III. Agent Hook" "missing"
+expect_state "align: removed git-hook missing" "$al2" "IV. Git Hook" "missing"
+expect_state "align: ci check absent missing" "$al2" "V. Ci" "missing"
+expect_state "align: scanner config absent missing" "$al2" "VII. Scanner" "missing"
+
+# expect mismatch: policy value present but not equal to expect -> missing.
+cat >"$PROJ/.specify/memory/const-mismatch.md" <<'EOF'
+# C
+
+## Core Principles
+
+### I. Mismatch
+<!-- gates:enforce surface=policy ref=prettier.severity expect=warning -->
+x
+EOF
+alm="$(CLAUDE_PROJECT_DIR="$PROJ" bash "$CONST" align --constitution "$PROJ/.specify/memory/const-mismatch.md")"
+expect_state "align: policy expect mismatch is missing" "$alm" "I. Mismatch" "missing"
+
+# pending-boundary: a ci surface in a project with no CI configuration at all.
+NOCI="$WORKDIR/noci"
+mkdir -p "$NOCI/.specify/memory"
+cat >"$NOCI/.specify/memory/constitution.md" <<'EOF'
+# C
+
+## Core Principles
+
+### I. Ci Pending
+<!-- gates:enforce surface=ci ref=whatever -->
+x
+EOF
+alp="$(CLAUDE_PROJECT_DIR="$NOCI" bash "$CONST" align --constitution "$NOCI/.specify/memory/constitution.md")"
+expect_state "align: ci with no CI boundary is pending-boundary" "$alp" "I. Ci Pending" "pending-boundary"
+
+# Overlay targeting: a missing policy surface proposes an overlay edit.
+expect_contains "align: missing policy proposes an OVERLAY edit" "$alm" "policy.json (overlay)"
+
+# 003 interplay: with a live contract, policy surfaces evaluate against the
+# EFFECTIVE policy (the loader resolves it because the overlay declares extends).
+C3="$WORKDIR/contract"
+mkdir -p "$C3/.specify/gates" "$C3/.specify/memory"
+cat >"$C3/.specify/gates/policy.json" <<'EOF'
+{ "extends": { "source": "x", "version": "v1" }, "spec": { "severity": "error" } }
+EOF
+cat >"$C3/.specify/gates/policy.effective.json" <<'EOF'
+{ "extends": { "source": "x", "version": "v1" }, "spec": { "severity": "error" } }
+EOF
+cat >"$C3/.specify/memory/constitution.md" <<'EOF'
+# C
+
+## Core Principles
+
+### I. Effective
+<!-- gates:enforce surface=policy ref=spec.severity expect=error -->
+x
+EOF
+al3="$(CLAUDE_PROJECT_DIR="$C3" bash "$CONST" align --constitution "$C3/.specify/memory/constitution.md")"
+expect_state "align: policy resolves against the 003 effective policy" "$al3" "I. Effective" "active"
+
+# SC-003 decline guarantee: align is pure computation -- the tree is untouched.
+tree_before="$(cd "$PROJ" && find . -type f -not -path './.git/*' | sort | xargs shasum 2>/dev/null | shasum)"
+CLAUDE_PROJECT_DIR="$PROJ" bash "$CONST" align --constitution "$PROJ/.specify/memory/constitution.md" >/dev/null
+tree_after="$(cd "$PROJ" && find . -type f -not -path './.git/*' | sort | xargs shasum 2>/dev/null | shasum)"
+expect "align leaves the repo byte-identical (SC-003, pure compute)" "$tree_before" "$tree_after"
+
 # --- summary -----------------------------------------------------------------
 
 echo ""

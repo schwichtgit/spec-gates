@@ -121,6 +121,27 @@ cmd_detect() {
     gates_const_detect "$constitution" "$DEFAULT_TEMPLATE"
 }
 
+cmd_align() {
+    local constitution="$DEFAULT_CONSTITUTION" policy=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --constitution)
+                constitution="${2:-}"
+                shift 2 || return 1
+                ;;
+            --policy)
+                policy="${2:-}"
+                shift 2 || return 1
+                ;;
+            *)
+                echo "constitution: align: unknown argument: $1" >&2
+                return 1
+                ;;
+        esac
+    done
+    gates_const_align "$PROJECT_ROOT" "$constitution" "$policy"
+}
+
 case "${1:-}" in
     fragments)
         shift
@@ -134,10 +155,15 @@ case "${1:-}" in
         shift
         cmd_detect "$@"
         ;;
+    align)
+        shift
+        cmd_align "$@"
+        ;;
     *)
         echo "usage: constitution.sh fragments --corpus DIR --profile ANSWERS.json" >&2
         echo "       constitution.sh draft --corpus DIR --selections SEL.json --out FILE [--augment EXISTING.md]" >&2
         echo "       constitution.sh detect [--constitution FILE]" >&2
+        echo "       constitution.sh align [--constitution FILE] [--policy FILE]" >&2
         exit 1
         ;;
 esac

@@ -141,13 +141,50 @@ the core `/speckit-constitution` command next: it now finds real content and
 performs its normal versioning, ratification, and Sync-Impact pass, leaving
 the enforcement markers intact. This session does not fork that behavior.
 
-### 8. Align (continues in the alignment flow)
+### 8. Alignment flow (bring every principle to zero-gap)
 
-Offer to run the alignment flow (`/speckit.gates.constitution` continues into
-`align`) so each annotated principle's surface is brought to zero-gap with
-explicit, change-by-change approval. If the user defers, remind them that
-`doctor` and `constitution.sh check` will report every annotated-but-unwired
-principle as a gap until then.
+Offer to align enforcement now. Run:
+
+```sh
+bash .specify/gates/constitution.sh align
+```
+
+Each TSV row is `principle · surface · ref · state · proposed-change` with
+`state ∈ active | missing | pending-boundary` (`prose-only` for prose
+principles). `align` computes only — it never writes.
+
+Present the proposal grouped by state:
+
+- **active** — already wired; nothing to do.
+- **prose-only** — intentional; nothing to wire.
+- **pending-boundary** — the whole boundary is not projected yet (e.g. a `ci`
+  principle with no CI configured). Point at the boundary's setup command
+  (`/speckit.gates.ci <platform>`) rather than proposing a per-principle edit.
+- **missing** — an annotated principle whose surface is not live. These are
+  the gaps; walk them one at a time.
+
+For each **missing** surface, apply the proposed change ONLY with explicit
+approval, change by change, using the existing wiring:
+
+- `policy` → edit `.specify/gates/policy.json` (the OVERLAY) to set the key.
+  If a 003 contract is live, re-run `/speckit.gates.sync` so the change flows
+  into the effective policy exactly like any overlay deviation — never edit
+  `policy.effective.json` directly.
+- `agent-hook` / `git-hook` → wire it via the relevant steps of
+  `/speckit.gates.init` (project the hook, set the execute bit, reference it).
+- `ci` → project the named check with `/speckit.gates.ci <platform>`.
+- `accept` → add the `# verifies:` accept block stub to the named feature's
+  `tasks.md`.
+- `scanner` → add the rule to the tool's config.
+
+After each applied change, you may re-run `align` to confirm the row flipped
+to `active`. If the user declines a change, skip it and move on — declining
+leaves the repository byte-identical (nothing is written for a declined gap).
+
+Close with a **sync-impact summary**: one line per principle touched, naming
+`principle → surface → change applied` (and the principles still in a gap, so
+the remaining work is explicit). Remind the user that `doctor` and
+`constitution.sh check` report every remaining gap on every run until closed.
 
 ## Rules
 

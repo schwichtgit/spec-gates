@@ -518,3 +518,231 @@ the boundary that proves it."
     rm -f "$annotated_tmp" "$markers_file" "$newblock_file"
     return 0
 }
+
+# --- Surface-activity evaluation (R4, US2/US3) -------------------------------
+#
+# Each evaluator is local-only and side-effect free: it answers "is the claim
+# this annotation makes actually wired here?" from committed files, never by
+# invoking the surface. Echoes one of active | missing | pending-boundary.
+# pending-boundary means the enclosing boundary is not projected at all yet
+# (e.g. a ci ref with no CI configuration anywhere) — a gap that is not the
+# principle's fault. All read $2 (project root) explicitly.
+
+# policy: <section>.<key> present in the ENFORCED policy (effective when a 003
+# contract is live — the policy loader resolves that) and, if expect is given,
+# equal to it; an enabled-style key must not be false.
+_gates_const_eval_policy() { # <ref> <expect>
+    local ref="${1:-}" expect="${2:-}"
+    local section="${ref%%.*}" key="${ref#*.}"
+    local val
+    val="$(gates_policy_section_get "$section" "$key" 2>/dev/null)"
+    [[ -z "$val" ]] && val="$(gates_policy_get "$section" "$key" 2>/dev/null)"
+    if [[ -z "$val" ]]; then
+        echo missing
+        return 0
+    fi
+    if [[ -n "$expect" ]]; then
+        [[ "$val" == "$expect" ]] && echo active || echo missing
+        return 0
+    fi
+    [[ "$val" == "false" ]] && echo missing || echo active
+}
+
+# agent-hook: <script.sh> exists under .claude/hooks/gates/, is executable, and
+# is referenced from .claude/settings.json.
+_gates_const_eval_agent_hook() { # <ref> <root>
+    local ref="${1:-}" root="${2:-}"
+    [[ -d "$root/.claude" ]] || {
+        echo pending-boundary
+        return 0
+    }
+    local f="$root/.claude/hooks/gates/$ref"
+    if [[ ! -f "$f" || ! -x "$f" ]]; then
+        echo missing
+        return 0
+    fi
+    if [[ -f "$root/.claude/settings.json" ]] && grep -qF "$ref" "$root/.claude/settings.json" 2>/dev/null; then
+        echo active
+    else
+        echo missing
+    fi
+}
+
+# git-hook: installed pre-commit|commit-msg exists, is executable, and delegates
+# to the gates runtime (the same test doctor's git-boundary section uses).
+_gates_const_eval_git_hook() { # <ref> <root>
+    local ref="${1:-}" root="${2:-}"
+    git -C "$root" rev-parse --git-dir >/dev/null 2>&1 || {
+        echo pending-boundary
+        return 0
+    }
+    local gitdir hookdir hooks_path
+    gitdir="$(git -C "$root" rev-parse --git-dir)"
+    [[ "$gitdir" != /* ]] && gitdir="$root/$gitdir"
+    hooks_path="$(git -C "$root" config core.hooksPath 2>/dev/null || true)"
+    hookdir="$gitdir/hooks"
+    if [[ -n "$hooks_path" ]]; then
+        [[ "$hooks_path" != /* ]] && hooks_path="$root/$hooks_path"
+        hookdir="$hooks_path"
+    fi
+    local hf="$hookdir/$ref"
+    if [[ ! -f "$hf" || ! -x "$hf" ]]; then
+        echo missing
+        return 0
+    fi
+    grep -q 'gates\|verify.sh' "$hf" 2>/dev/null && echo active || echo missing
+}
+
+# ci: some CI configuration exists and names the check/job. No CI config at all
+# is pending-boundary (the CI boundary is simply not projected yet).
+_gates_const_eval_ci() { # <ref> <root>
+    local ref="${1:-}" root="${2:-}"
+    local anyci=0
+    if [[ -d "$root/.github/workflows" ]]; then
+        anyci=1
+        grep -rqF "$ref" "$root/.github/workflows" 2>/dev/null && {
+            echo active
+            return 0
+        }
+    fi
+    local f
+    for f in "$root/.gitlab-ci.yml" "$root/Jenkinsfile"; do
+        if [[ -f "$f" ]]; then
+            anyci=1
+            grep -qF "$ref" "$f" 2>/dev/null && {
+                echo active
+                return 0
+            }
+        fi
+    done
+    [[ "$anyci" == "0" ]] && echo pending-boundary || echo missing
+}
+
+# accept: specs/<feature>/tasks.md carries an accept block whose "# verifies:"
+# matches <SC-id> and parses (spec-gate lib). No specs/ dir is pending-boundary.
+_gates_const_eval_accept() { # <ref> <root>
+    local ref="${1:-}" root="${2:-}"
+    local feature="${ref%%/*}" sc="${ref#*/}"
+    [[ -d "$root/specs" ]] || {
+        echo pending-boundary
+        return 0
+    }
+    local tasks="$root/specs/$feature/tasks.md"
+    [[ -f "$tasks" ]] || {
+        echo missing
+        return 0
+    }
+    declare -f gates_spec_parse >/dev/null 2>&1 || {
+        echo missing
+        return 0
+    }
+    local tmp parse
+    tmp="$(mktemp -d 2>/dev/null || mktemp -d -t gates-const-accept)" || {
+        echo missing
+        return 0
+    }
+    parse="$(gates_spec_parse "$tasks" "$tmp")"
+    rm -rf "$tmp"
+    if printf '%s\n' "$parse" \
+        | awk -F'\t' -v sc="$sc" '$1 == "BLOCK" && $3 == sc { f = 1 } END { exit !f }'; then
+        echo active
+    else
+        echo missing
+    fi
+}
+
+# scanner: <tool>:<rule> — the tool's config file exists and mentions the rule.
+_gates_const_eval_scanner() { # <ref> <root>
+    local ref="${1:-}" root="${2:-}"
+    local tool="${ref%%:*}" rule="${ref#*:}"
+    local cfgs
+    case "$tool" in
+        checkov) cfgs=".checkov.yml .checkov.yaml" ;;
+        gitleaks) cfgs=".gitleaks.toml gitleaks.toml" ;;
+        hadolint) cfgs=".hadolint.yaml .hadolint.yml" ;;
+        *) cfgs=".$tool.yml .$tool.yaml .$tool.toml .$tool.json" ;;
+    esac
+    local c
+    for c in $cfgs; do
+        if [[ -f "$root/$c" ]] && grep -qF "$rule" "$root/$c" 2>/dev/null; then
+            echo active
+            return 0
+        fi
+    done
+    echo missing
+}
+
+# The concrete change proposed for a missing surface (R5). Policy changes name
+# the OVERLAY on purpose — with a 003 contract live, that edit flows through
+# sync into the effective policy exactly like any overlay deviation.
+_gates_const_proposed() { # <surface> <ref> <expect>
+    local surface="${1:-}" ref="${2:-}" expect="${3:-}"
+    case "$surface" in
+        policy)
+            local want="${expect:-non-false}"
+            printf 'edit policy.json (overlay): set %s = %s, then re-sync if a contract is live' "$ref" "$want"
+            ;;
+        agent-hook)
+            printf 'wire .claude/hooks/gates/%s and reference it in settings.json (/speckit.gates.init)' "$ref"
+            ;;
+        git-hook)
+            printf 'install the %s git hook, executable, delegating to the gates runtime (/speckit.gates.init)' "$ref"
+            ;;
+        ci)
+            printf 'add a "%s" check to CI (/speckit.gates.ci <platform>)' "$ref"
+            ;;
+        accept)
+            printf 'add an accept block "# verifies: %s" in specs/%s/tasks.md' "${ref#*/}" "${ref%%/*}"
+            ;;
+        scanner)
+            printf 'enable %s in the %s scanner config' "${ref#*:}" "${ref%%:*}"
+            ;;
+        *)
+            printf '%s' '-'
+            ;;
+    esac
+}
+
+# Evaluate one annotated principle's surface. Echoes "state<TAB>proposed".
+_gates_const_eval_surface() { # <surface> <ref> <expect> <root>
+    local surface="${1:-}" ref="${2:-}" expect="${3:-}" root="${4:-}"
+    local state
+    case "$surface" in
+        prose) printf 'prose-only\t-'; return 0 ;;
+        policy) state="$(_gates_const_eval_policy "$ref" "$expect")" ;;
+        agent-hook) state="$(_gates_const_eval_agent_hook "$ref" "$root")" ;;
+        git-hook) state="$(_gates_const_eval_git_hook "$ref" "$root")" ;;
+        ci) state="$(_gates_const_eval_ci "$ref" "$root")" ;;
+        accept) state="$(_gates_const_eval_accept "$ref" "$root")" ;;
+        scanner) state="$(_gates_const_eval_scanner "$ref" "$root")" ;;
+        *) state="missing" ;;
+    esac
+    local proposed="-"
+    [[ "$state" == "missing" ]] && proposed="$(_gates_const_proposed "$surface" "$ref" "$expect")"
+    [[ "$state" == "pending-boundary" ]] && proposed="$(_gates_const_proposed "$surface" "$ref" "$expect")"
+    printf '%s\t%s' "$state" "$proposed"
+}
+
+# align (contracts/cli-contracts.md): one TSV row per annotated principle,
+#   principle<TAB>surface<TAB>ref<TAB>state<TAB>proposed-change
+# state in active | missing | pending-boundary (prose-only reported as its own
+# state, never a gap). Pure computation — no writes, no network. A policy
+# override file (--policy) sets the enforced policy explicitly; otherwise the
+# loader resolves it (effective when a 003 contract is live).
+gates_const_align() { # <root> <constitution> [<policy-override>]
+    local root="${1:-}" constitution="${2:-}" policy="${3:-}"
+    [[ -f "$constitution" ]] || {
+        echo "constitution: not found: $constitution" >&2
+        return 1
+    }
+    [[ -n "$policy" ]] && export GATES_POLICY_FILE="$policy"
+    local tag line name surface ref expect
+    while IFS=$'\t' read -r tag line name surface ref expect; do
+        [[ "$tag" == "PRINCIPLE" ]] || continue
+        [[ -z "$surface" ]] && continue
+        local sp
+        sp="$(_gates_const_eval_surface "$surface" "$ref" "$expect" "$root")"
+        printf '%s\t%s\t%s\t%s\n' "$name" "$surface" "$ref" "$sp"
+    done <<<"$(gates_const_parse "$constitution")"
+    return 0
+}
