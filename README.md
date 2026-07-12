@@ -164,6 +164,39 @@ The three artifacts (`baseline.json`, `baseline.lock.json`,
 `policy.json` stays the only file you edit. Repos without an `extends`
 declaration are completely unaffected.
 
+## Constitution as an enforceable contract
+
+A constitution states the principles a project holds itself to — but a
+principle that says "we never commit to main" and a git boundary that lets
+you are a lie the document tells. `/speckit.gates.constitution` runs a guided
+session that closes that gap:
+
+1. **Interview → profile.** A short interview (project type, postures) filters
+   a bundled corpus of ~30 provenance-carrying principles so a docs project is
+   never shown infra rules.
+2. **Pick and annotate.** You accept, adapt, or decline candidates and add
+   your own. Every principle you keep carries an explicit **surface** — the
+   boundary that enforces it (`policy`, `agent-hook`, `git-hook`, `ci`,
+   `accept`, `scanner`, or `prose` for the ones no gate can check). The
+   session writes a byte-deterministic draft with one invisible
+   `<!-- gates:enforce … -->` marker per principle, then hands off to the core
+   `/speckit-constitution` command for versioning.
+3. **Align.** `constitution.sh align` computes, per annotated principle,
+   whether its surface is actually wired here (`active` / `missing` /
+   `pending-boundary`) and proposes a concrete change for each gap — policy
+   changes targeting the overlay so a live 003 contract picks them up. You
+   apply them one at a time, with approval; declining leaves the repo
+   byte-identical.
+4. **Prove, permanently.** `doctor` and `constitution.sh check` report every
+   principle's status on every run. An annotated-but-unwired principle, or a
+   malformed marker, is a **gap** that fails at fixed severity — the same
+   fail-closed doctrine the rest of the gate uses. This repo dogfoods it: all
+   five of its own principles report enforced.
+
+The corpus uses the [spec-kit-charter](https://github.com/Fyloss/spec-kit-charter)
+registry layout, so charter reads each fragment's body while spec-gates reads
+its enforcement frontmatter — one registry, two consumers.
+
 ## Requirements
 
 - **jq** and **git** — the hooks and `verify.sh` require them.
@@ -206,15 +239,16 @@ hook offers a gate run before you move to commit/PR.
 
 ## Commands
 
-| Command                  | Purpose                                                                                                                 |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
-| `/speckit.gates.init`    | Infer policy, project runtime, wire agent + git hooks, self-test                                                        |
-| `/speckit.gates.verify`  | Run the full suite on demand (also runs after `implement`)                                                              |
-| `/speckit.gates.doctor`  | Health check: hooks wired, policy valid, versions in sync                                                               |
-| `/speckit.gates.ci`      | Project CI enforcement (`github` \| `gitlab` \| `jenkins`); `--protect` requires the check + a PR on the default branch |
-| `/speckit.gates.upgrade` | Re-project runtime after update; never touches policy.json                                                              |
-| `/speckit.gates.sync`    | Pin + materialize the `extends` baseline; `--update` moves the pin as a reviewable branch                               |
-| `/speckit.gates.propose` | Package this repo's policy deviations as an upstream change request against the baseline                                |
+| Command                       | Purpose                                                                                                                                                 |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/speckit.gates.init`         | Infer policy, project runtime, wire agent + git hooks, self-test                                                                                        |
+| `/speckit.gates.verify`       | Run the full suite on demand (also runs after `implement`)                                                                                              |
+| `/speckit.gates.doctor`       | Health check: hooks wired, policy valid, versions in sync                                                                                               |
+| `/speckit.gates.ci`           | Project CI enforcement (`github` \| `gitlab` \| `jenkins`); `--protect` requires the check + a PR on the default branch                                 |
+| `/speckit.gates.upgrade`      | Re-project runtime after update; never touches policy.json                                                                                              |
+| `/speckit.gates.sync`         | Pin + materialize the `extends` baseline; `--update` moves the pin as a reviewable branch                                                               |
+| `/speckit.gates.propose`      | Package this repo's policy deviations as an upstream change request against the baseline                                                                |
+| `/speckit.gates.constitution` | Guided session: interview to a profile, pick corpus principles, produce an enforcement-annotated constitution, and align each principle to its boundary |
 
 ## Workflow-engine integration
 
@@ -252,7 +286,7 @@ as they grow hook APIs.
 
 ```bash
 npm ci              # pinned prettier + markdownlint-cli2
-bash tests/run.sh   # 8 suites: parity, gate, hooks, policy, doctor, canary, attest, spec-gate
+bash tests/run.sh   # 10 suites: parity, gate, hooks, policy, doctor, canary, attest, spec-gate, contract, constitution
 ```
 
 The repo gates itself: `.github/workflows/ci.yml` projects the runtime and

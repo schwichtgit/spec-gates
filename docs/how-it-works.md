@@ -187,6 +187,55 @@ sandboxed gate to reject it. `doctor` reports the full contract state
 from local information and fails on exactly the invariants the gate
 blocks on. Repos without `extends` see none of this machinery.
 
+## Constitution as an enforceable contract
+
+A constitution is a set of claims about how a project behaves. Left as prose,
+those claims drift from the enforcement that is supposed to back them — the
+document says commits to `main` are refused while the git boundary quietly
+allows them. Feature 004 binds each principle to the boundary that proves it.
+
+**Elicit → annotate.** `/speckit.gates.constitution` interviews the project
+into a profile (type + postures), then filters a bundled corpus of
+provenance-carrying fragments into a candidate menu (`constitution.sh
+fragments`, mandatory tier first, project-type-filtered). Each principle the
+user keeps is materialized by `constitution.sh draft` into a byte-deterministic
+document carrying one enforcement marker per principle:
+
+```text
+<!-- gates:enforce surface=git-hook ref=pre-commit -->
+```
+
+The marker is an HTML comment (invisible when rendered, surviving prettier and
+the core command's fill/version pass) bound by position to the principle
+directly above it. The grammar is fixed: a `surface` from
+`policy | agent-hook | git-hook | ci | accept | scanner | prose`, a `ref`
+required for all but `prose`, and an optional `expect` for policy surfaces. A
+malformed marker is fail-closed — `check` and `doctor` fail naming
+`constitution.md:<line>`, because an unreadable claim is worse than no claim.
+
+**Align.** `constitution.sh align` evaluates, per annotated principle, whether
+its surface is actually wired — all from local files, no network: a `policy`
+key present in the effective policy (and equal to `expect`); an `agent-hook`
+present, executable, and referenced in `settings.json`; a `git-hook` installed,
+executable, and delegating to the runtime; a `ci` check named in a workflow;
+an `accept` block that parses and verifies the named criterion; a `scanner`
+rule in the tool's config. Each principle is `active`, `missing` (with a
+concrete proposed change), or `pending-boundary` (the whole boundary is not
+projected yet). Proposed policy changes target the **overlay**, so with a live
+003 contract they flow through `sync` into the effective policy like any other
+deviation. `align` never writes; applying is the session's job, change by
+change, with approval.
+
+**Prove.** `constitution.sh check` and the `doctor` constitution section report
+one line per principle (`enforced | gap | prose-only`) on every run and exit
+non-zero on any gap or malformed marker at fixed severity. A constitution with
+no markers gets one informational nudge and never fails (FR-013); `prose`
+principles are listed and never checked. The corpus adopts the
+[spec-kit-charter](https://github.com/Fyloss/spec-kit-charter) registry layout
+(`manifest.yml` + `fragments/<category>/<name>.md`), so charter consumes each
+fragment's body while spec-gates consumes its frontmatter — one registry,
+two consumers, no converter.
+
 ## Why projection, not symlinks or plugin-resident hooks
 
 The runtime is copied into `.specify/gates/` and `.claude/hooks/gates/`.
