@@ -256,6 +256,78 @@ else
 fi
 TOTAL=$((TOTAL + 1))
 
+# --- constitution enforcement section (feature 004) --------------------------
+
+# A constitution with an unwired annotated principle is a doctor gap (exit 1).
+DC="$WORKDIR/const-gap"
+project "$DC" "$ALL" no
+mkdir -p "$DC/.specify/memory"
+cat >"$DC/.specify/memory/constitution.md" <<'EOF'
+# C
+
+## Core Principles
+
+### I. Gap
+<!-- gates:enforce surface=policy ref=attestation.parity expect=error -->
+x
+EOF
+expect "constitution gap -> doctor exit 1" "$(run_doctor "$DC")" 1
+if grep -q "Constitution enforcement" "$DC/out.txt" && grep -q "I. Gap" "$DC/out.txt"; then
+    echo "PASS: doctor names the gapped principle"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL: doctor did not name the gapped principle"
+    FAIL=$((FAIL + 1))
+fi
+TOTAL=$((TOTAL + 1))
+
+# A constitution with NO markers gets the informational nudge, not a failure.
+DN="$WORKDIR/const-nomark"
+project "$DN" "$ALL" yes
+mkdir -p "$DN/.specify/memory"
+printf '# C\n\n## Core Principles\n\n### I. X\n\nprose, no marker\n' >"$DN/.specify/memory/constitution.md"
+if [[ -x "$REPO_ROOT/node_modules/.bin/prettier" ]]; then
+    expect "constitution without markers -> not a doctor failure" "$(run_doctor "$DN")" 0
+fi
+if grep -q "no enforcement annotations" "$DN/out.txt"; then
+    echo "PASS: doctor nudges an un-annotated constitution"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL: doctor missing the un-annotated nudge"
+    FAIL=$((FAIL + 1))
+fi
+TOTAL=$((TOTAL + 1))
+
+# A constitution whose markers are all satisfied adds no failure.
+DE="$WORKDIR/const-ok"
+project "$DE" "$ALL" yes
+mkdir -p "$DE/.specify/memory" "$DE/.github/workflows"
+printf 'jobs:\n  gates:\n    steps: []\n' >"$DE/.github/workflows/ci.yml"
+cat >"$DE/.specify/memory/constitution.md" <<'EOF'
+# C
+
+## Core Principles
+
+### I. Enforced
+<!-- gates:enforce surface=ci ref=gates -->
+x
+
+### II. Prose
+<!-- gates:enforce surface=prose -->
+x
+EOF
+if [[ -x "$REPO_ROOT/node_modules/.bin/prettier" ]]; then
+    expect "all-enforced constitution -> doctor exit 0" "$(run_doctor "$DE")" 0
+fi
+if grep -q "I. Enforced" "$DE/out.txt" && grep -q "II. Prose" "$DE/out.txt"; then
+    echo "PASS: doctor lists enforced and prose-only principles"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL: doctor did not list the principles"
+    FAIL=$((FAIL + 1))
+fi
+TOTAL=$((TOTAL + 1))
+
 echo ""
 echo "$PASS of $TOTAL tests passed."
 [[ "$FAIL" -gt 0 ]] && exit 1

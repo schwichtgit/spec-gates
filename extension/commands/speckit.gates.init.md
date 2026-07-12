@@ -183,12 +183,27 @@ Run these and show the results:
 If any self-test does not behave as expected, report it as a failure and
 point the user at `/speckit.gates.doctor`. Do not declare success.
 
+### 6b. Constitution enforcement (FR-014, offer only)
+
+Run `bash .specify/gates/constitution.sh detect`. It prints one word:
+
+- `filled` — a real constitution already exists; say so and do nothing.
+- `absent` or `placeholder` — the project has no real constitution yet. Ask
+  ONE question, defaulting to skip: "Run the guided constitution session
+  (`/speckit.gates.constitution`) to write one whose principles are bound to
+  the boundaries that enforce them?" If the user declines, continue — record
+  nothing, change nothing. The session is never forced.
+
+Whatever the answer, init proceeds. This step reads only; it never writes the
+constitution itself (that is the session's job, on explicit approval).
+
 ### 7. Report
 
-Summarize: policy path, boundaries wired, self-test results, and the two
-follow-ups — `/speckit.gates.ci <platform>` to project CI enforcement,
-and the note that `/speckit.implement` will now offer to run gates on
-completion (via the extension's `after_implement` hook).
+Summarize: policy path, boundaries wired, self-test results, the constitution
+state from step 6b (`filled` / `absent` / `placeholder`, and whether the
+session was offered), and the two follow-ups — `/speckit.gates.ci <platform>`
+to project CI enforcement, and the note that `/speckit.implement` will now
+offer to run gates on completion (via the extension's `after_implement` hook).
 
 ## Important Rules
 

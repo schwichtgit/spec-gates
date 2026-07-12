@@ -407,6 +407,79 @@ CLAUDE_PROJECT_DIR="$PROJ" bash "$CONST" align --constitution "$PROJ/.specify/me
 tree_after="$(cd "$PROJ" && find . -type f -not -path './.git/*' | sort | xargs shasum 2>/dev/null | shasum)"
 expect "align leaves the repo byte-identical (SC-003, pure compute)" "$tree_before" "$tree_after"
 
+# --- check: verdict + fixed-severity exit (US3) ------------------------------
+
+CHK="$WORKDIR/chk"
+mkdir -p "$CHK/.specify/gates" "$CHK/.specify/memory" "$CHK/.github/workflows"
+printf 'jobs:\n  gates:\n    steps: []\n' >"$CHK/.github/workflows/ci.yml"
+printf '{ "hooks": { "prettier": { "severity": "error" } } }\n' >"$CHK/.specify/gates/policy.json"
+
+# All enforced/prose/unannotated -> exit 0.
+cat >"$CHK/.specify/memory/constitution.md" <<'EOF'
+# C
+
+## Core Principles
+
+### I. Enforced
+<!-- gates:enforce surface=ci ref=gates -->
+x
+
+### II. Prose
+<!-- gates:enforce surface=prose -->
+x
+
+### III. Unannotated
+no marker here
+EOF
+rc=0
+chk_out="$(CLAUDE_PROJECT_DIR="$CHK" bash "$CONST" check)" || rc=$?
+expect "check: all-enforced exits 0" "$rc" "0"
+expect_contains "check: enforced principle labelled" "$chk_out" "enforced: I. Enforced"
+expect_contains "check: prose-only labelled" "$chk_out" "prose-only: II. Prose"
+expect_contains "check: unannotated counted informationally" "$chk_out" "unannotated (informational)"
+
+# A gap -> exit 1 naming the principle + surface.
+cat >>"$CHK/.specify/memory/constitution.md" <<'EOF'
+
+### IV. Gap
+<!-- gates:enforce surface=policy ref=attestation.parity expect=error -->
+x
+EOF
+rc=0
+chk_gap="$(CLAUDE_PROJECT_DIR="$CHK" bash "$CONST" check)" || rc=$?
+expect "check: any gap exits 1" "$rc" "1"
+expect_contains "check: gap names principle and surface" "$chk_gap" "gap: IV. Gap"
+
+# prose-only never turns a gap into a pass, and never itself fails: an
+# all-prose constitution exits 0.
+cat >"$CHK/.specify/memory/all-prose.md" <<'EOF'
+# C
+
+## Core Principles
+
+### I. A
+<!-- gates:enforce surface=prose -->
+x
+EOF
+rc=0
+CLAUDE_PROJECT_DIR="$CHK" bash "$CONST" check --constitution "$CHK/.specify/memory/all-prose.md" >/dev/null || rc=$?
+expect "check: all-prose exits 0 (prose never fails)" "$rc" "0"
+
+# A malformed marker -> exit 1 naming constitution.md:<line>.
+cat >"$CHK/.specify/memory/bad.md" <<'EOF'
+# C
+
+## Core Principles
+
+### I. Bad
+<!-- gates:enforce surface=teleport ref=x -->
+x
+EOF
+rc=0
+chk_bad="$(CLAUDE_PROJECT_DIR="$CHK" bash "$CONST" check --constitution "$CHK/.specify/memory/bad.md")" || rc=$?
+expect "check: malformed marker exits 1" "$rc" "1"
+expect_contains "check: malformed names the file and line" "$chk_bad" "bad.md:6: malformed marker"
+
 # --- summary -----------------------------------------------------------------
 
 echo ""

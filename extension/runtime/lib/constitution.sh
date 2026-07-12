@@ -746,3 +746,77 @@ gates_const_align() { # <root> <constitution> [<policy-override>]
     done <<<"$(gates_const_parse "$constitution")"
     return 0
 }
+
+# --- check (health verdict, US3) ---------------------------------------------
+
+# Emit a machine protocol for one constitution's enforcement health and return
+# 0 (every principle enforced/prose-only/unannotated) or 1 (>=1 gap or
+# malformed marker — FR-009 fixed severity). Reuses align's surface evaluators.
+# Protocol lines (TAB-separated), for both the CLI and doctor:
+#   ENFORCED<TAB><principle><TAB><surface><TAB><ref>
+#   GAP<TAB><principle><TAB><surface><TAB><ref><TAB><state>
+#   PROSE<TAB><principle>
+#   MALFORMED<TAB><line><TAB><message>
+#   UNANNOTATED<TAB><count>
+gates_const_check_raw() { # <root> <constitution> [<policy>]
+    local root="${1:-}" constitution="${2:-}" policy="${3:-}"
+    [[ -f "$constitution" ]] || {
+        printf 'NOFILE\t%s\n' "$constitution"
+        return 1
+    }
+    [[ -n "$policy" ]] && export GATES_POLICY_FILE="$policy"
+    local rc=0 unann=0
+    local tag line name surface ref expect
+    while IFS=$'\t' read -r tag line name surface ref expect; do
+        case "$tag" in
+            MALFORMED)
+                # parse cols: MALFORMED<TAB>line<TAB>name<TAB>message
+                printf 'MALFORMED\t%s\t%s\n' "$line" "$surface"
+                rc=1
+                ;;
+            PRINCIPLE)
+                if [[ -z "$surface" ]]; then
+                    unann=$((unann + 1))
+                    continue
+                fi
+                if [[ "$surface" == "prose" ]]; then
+                    printf 'PROSE\t%s\n' "$name"
+                    continue
+                fi
+                local sp state
+                sp="$(_gates_const_eval_surface "$surface" "$ref" "$expect" "$root")"
+                state="${sp%%$'\t'*}"
+                if [[ "$state" == "active" ]]; then
+                    printf 'ENFORCED\t%s\t%s\t%s\n' "$name" "$surface" "$ref"
+                else
+                    printf 'GAP\t%s\t%s\t%s\t%s\n' "$name" "$surface" "$ref" "$state"
+                    rc=1
+                fi
+                ;;
+        esac
+    done <<<"$(gates_const_parse "$constitution")"
+    printf 'UNANNOTATED\t%d\n' "$unann"
+    return "$rc"
+}
+
+# CLI formatter for `check`: one human line per principle, exit 0/1. <label> is
+# the display name for malformed markers (e.g. constitution.md).
+gates_const_check() { # <root> <constitution> [<policy>] [<label>]
+    local root="${1:-}" constitution="${2:-}" policy="${3:-}" label="${4:-constitution.md}"
+    local raw rc=0
+    raw="$(gates_const_check_raw "$root" "$constitution" "$policy")" || rc=1
+    local tag a b c d
+    while IFS=$'\t' read -r tag a b c d; do
+        case "$tag" in
+            NOFILE) echo "constitution: no constitution at $a" >&2 ;;
+            ENFORCED) echo "  enforced: $a ($b:$c)" ;;
+            PROSE) echo "  prose-only: $a" ;;
+            GAP) echo "  gap: $a — $b ref=$c not wired ($d)" ;;
+            MALFORMED) echo "  $label:$a: malformed marker: $b" ;;
+            UNANNOTATED)
+                [[ "$a" -gt 0 ]] && echo "  $a principle(s) unannotated (informational)"
+                ;;
+        esac
+    done <<<"$raw"
+    return "$rc"
+}

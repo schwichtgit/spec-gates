@@ -37,6 +37,8 @@ GATES_LIB_DIR="$PROJECT_ROOT/.specify/gates/lib"
 [[ -f "$GATES_LIB_DIR/attest.sh" ]] && source "$GATES_LIB_DIR/attest.sh"
 # shellcheck source=/dev/null disable=SC1091
 [[ -f "$GATES_LIB_DIR/contract.sh" ]] && source "$GATES_LIB_DIR/contract.sh"
+# shellcheck source=/dev/null disable=SC1091
+[[ -f "$GATES_LIB_DIR/constitution.sh" ]] && source "$GATES_LIB_DIR/constitution.sh"
 
 MISSING=0
 OK="  [ok]  "
@@ -232,6 +234,43 @@ if declare -f gates_contract_check >/dev/null 2>&1 \
                 echo "${BAD}$CONTRACT_DETAIL"
                 MISSING=$((MISSING + 1))
             fi
+        fi
+    fi
+fi
+
+# Constitution enforcement (feature 004): a constitution whose principles carry
+# gates:enforce markers is proven here from local files only. A gap or a
+# malformed marker is a doctor FAILURE at fixed severity (FR-009) naming the
+# principle + surface (+ line). A constitution with no markers gets one
+# informational nudge; no constitution at all is silent (init offers the
+# session). prose-only is listed, never failed (FR-013).
+if declare -f gates_const_check_raw >/dev/null 2>&1; then
+    CONST_MD="$PROJECT_ROOT/.specify/memory/constitution.md"
+    if [[ -f "$CONST_MD" ]]; then
+        if grep -q 'gates:enforce' "$CONST_MD" 2>/dev/null; then
+            echo ""
+            echo "Constitution enforcement (gates:enforce annotations):"
+            CONST_RAW="$(gates_const_check_raw "$PROJECT_ROOT" "$CONST_MD" || true)"
+            while IFS=$'\t' read -r ctag c1 c2 c3 c4; do
+                case "$ctag" in
+                    ENFORCED) echo "${OK}$c1 ($c2:$c3)" ;;
+                    PROSE) echo "${SKIP}$c1 (prose-only)" ;;
+                    GAP)
+                        echo "${BAD}$c1 — $c2 ref=$c3 not enforced ($c4)"
+                        MISSING=$((MISSING + 1))
+                        ;;
+                    MALFORMED)
+                        echo "${BAD}constitution.md:$c1: malformed marker: $c2"
+                        MISSING=$((MISSING + 1))
+                        ;;
+                    UNANNOTATED)
+                        [[ "$c1" -gt 0 ]] && echo "  $c1 principle(s) unannotated (informational)"
+                        ;;
+                esac
+            done <<<"$CONST_RAW"
+        else
+            echo ""
+            echo "${REC}constitution has no enforcement annotations — /speckit.gates.constitution can add them"
         fi
     fi
 fi
