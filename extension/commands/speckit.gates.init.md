@@ -69,6 +69,7 @@ Copy from `RUNTIME_SRC` into the project:
 | `doctor.sh`            | `.specify/gates/doctor.sh`                         |
 | `canary.sh`            | `.specify/gates/canary.sh`                         |
 | `contract.sh`          | `.specify/gates/contract.sh`                       |
+| `constitution.sh`      | `.specify/gates/constitution.sh`                   |
 | `lib/*.sh`             | `.specify/gates/lib/`                              |
 | `policy.schema.json`   | `.specify/gates/policy.schema.json`                |
 | `hooks/claude/*.sh`    | `.claude/hooks/gates/` (unless `--no-agent-hooks`) |

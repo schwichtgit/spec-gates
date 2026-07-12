@@ -1,0 +1,38 @@
+name: "spec-gates starter corpus"
+description: >-
+  Constitution fragments mined from CPF-era cross-project baselines (accelno,
+  Kahi) and the spec-gates constitution v1.0.0. Charter-compatible: charter
+  reads each fragment body, spec-gates reads its frontmatter.
+mandatory_fragments:
+  - "security/no-secrets"
+  - "workflow/branch-first"
+  - "workflow/conventional-commits"
+recommended_fragments:
+  - "security/secret-rotation"
+  - "workflow/constitution-immutable"
+  - "workflow/policy-change-approval"
+  - "workflow/worktree-safety"
+  - "workflow/rebase-before-pr"
+  - "quality/changed-files-scoped"
+  - "quality/pre-pr-verification"
+  - "quality/fail-loudly"
+  - "quality/lockfile-committed"
+  - "quality/tracking-file-immutability"
+  - "quality/fix-regressions-first"
+  - "quality/test-coverage-per-behavior"
+  - "architecture/single-chokepoint"
+  - "architecture/out-of-scope-boundary"
+  - "architecture/projection-not-dependency"
+  - "architecture/one-policy-many-boundaries"
+  - "governance/codeowners-governance"
+  - "governance/stop-hook-discipline"
+  - "governance/provable-enforcement"
+  - "governance/fail-closed"
+  - "governance/spec-is-boundary"
+  - "governance/no-coding-before-spec"
+optional_fragments:
+  - "security/least-privilege"
+  - "security/auth-token-storage"
+  - "security/hardened-runtime-image"
+  - "quality/readiness-gate"
+  - "architecture/platform-agnostic-gates"
