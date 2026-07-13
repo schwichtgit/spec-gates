@@ -37,3 +37,10 @@ Diagnose the enforcement setup without changing anything.
 A table: check | status (OK / WARN / FAIL) | remediation, plus doctor.sh's
 raw output. State whether enforcement is fully active at each boundary. Doctor
 changes nothing.
+
+## Exit codes
+
+`0` = healthy, `1` = at least one required item missing. When doctor's output
+is piped through an early-closing consumer (`head`, `grep -q`), the shell may
+report exit `141` (SIGPIPE) — standard pipe behavior, not a doctor verdict;
+run it unpiped for the meaningful exit code.

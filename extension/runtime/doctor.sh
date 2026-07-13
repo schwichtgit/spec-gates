@@ -127,6 +127,32 @@ if [[ -f "$EXT_MANIFEST" ]]; then
     fi
 fi
 
+# Execute bits on projected scripts (issue #34): zip installs extract without
+# file modes, so projected scripts arrive 644 until init/upgrade chmod them.
+# Agent hooks are invoked DIRECTLY by path from .claude/settings.json — a
+# non-executable one is silently skipped, the same enforcement-loss class as
+# a non-executable git hook (issue #20), so it FAILS. The .specify/gates/
+# entry scripts are invoked via `bash path` everywhere the runtime calls
+# them, so a missing bit there is a [rec] nudge, not a gap.
+if [[ -d "$PROJECT_ROOT/.claude/hooks/gates" ]]; then
+    for hf in "$PROJECT_ROOT/.claude/hooks/gates"/*.sh; do
+        [[ -f "$hf" ]] || continue
+        if [[ ! -x "$hf" ]]; then
+            echo ""
+            echo "${BAD}agent hook not executable: ${hf#"$PROJECT_ROOT"/} — settings.json invokes it by path, so the agent boundary silently skips it (fix: chmod +x)"
+            MISSING=$((MISSING + 1))
+        fi
+    done
+fi
+NONEXEC_GATES=""
+for gs in "$PROJECT_ROOT/.specify/gates"/*.sh; do
+    [[ -f "$gs" && ! -x "$gs" ]] && NONEXEC_GATES="$NONEXEC_GATES ${gs##*/}"
+done
+if [[ -n "$NONEXEC_GATES" ]]; then
+    echo ""
+    echo "${REC}projected script(s) not executable:${NONEXEC_GATES} — harmless (they run via bash), but chmod +x keeps direct invocation working"
+fi
+
 # No-op heuristic (FR-004): a gate that PASSED while checking none of its
 # candidate files is the historical silent-no-op signature. No legitimate
 # instance exists, so it is a doctor FAILURE, not a warning.

@@ -351,6 +351,10 @@ gates_spec_gate() { # <root> <accept-arg> <json 0|1>
             if [[ "$json" == "0" && "$accept" != "all" && "$accept" != "$f" ]]; then
                 local status
                 status="$(gates_spec_status "$fdir/spec.md")"
+                # Display-clip the raw Status value (issue #34): enforcement
+                # keys on the exact token "Complete", but a long free-form
+                # status would render lossily in narrow output.
+                [[ "${#status}" -gt 40 ]] && status="${status:0:37}..."
                 echo "spec: $f -- $nblocks criteria parsed, not enforced (Status: ${status:-none})"
             fi
         fi
