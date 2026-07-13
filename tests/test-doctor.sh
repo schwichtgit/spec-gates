@@ -256,6 +256,93 @@ else
 fi
 TOTAL=$((TOTAL + 1))
 
+# --- no-op heuristic vs zero-accept-block features (issue #32) ---------------
+
+# A Complete feature with zero accept blocks is a legitimate "nothing to
+# check" (IaC/docs repos) — verify.sh must attest candidates=0 for the spec
+# gate so doctor's no-op heuristic stays quiet and the repo can reach exit 0.
+NZ="$WORKDIR/noop-zeroblocks"
+project "$NZ" '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } } }' no
+mkdir -p "$NZ/specs/010-infra"
+cat >"$NZ/specs/010-infra/spec.md" <<'EOF'
+# Infra Feature
+
+**Status**: Complete
+EOF
+cat >"$NZ/specs/010-infra/tasks.md" <<'EOF'
+# Tasks
+
+- [x] T001 provision the thing
+EOF
+CLAUDE_PROJECT_DIR="$NZ" bash "$NZ/.specify/gates/verify.sh" --boundary agent >/dev/null 2>&1 || true
+if [[ -f "$NZ/.specify/gates/attestations.jsonl" ]]; then
+    SPEC_CAND="$(tail -n 1 "$NZ/.specify/gates/attestations.jsonl" \
+        | jq -r '(.gates // [])[] | select(.name == "spec") | .candidates')"
+    expect "zero-block Complete feature attests spec candidates=0" "$SPEC_CAND" "0"
+else
+    echo "FAIL: no attestation written for the zero-block fixture"
+    FAIL=$((FAIL + 1))
+    TOTAL=$((TOTAL + 1))
+fi
+expect "zero-block Complete feature -> doctor exit 0 (no no-op flag)" "$(run_doctor "$NZ")" 0
+if grep -q "suspected NO-OP gate: spec" "$NZ/out.txt"; then
+    echo "FAIL: doctor still flags spec as a no-op for a zero-block feature"
+    FAIL=$((FAIL + 1))
+else
+    echo "PASS: no spec no-op false positive"
+    PASS=$((PASS + 1))
+fi
+TOTAL=$((TOTAL + 1))
+
+# --- runtime projection version check (issue #33) -----------------------------
+
+RV="$WORKDIR/runtime-version"
+project "$RV" '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } } }' no
+mkdir -p "$RV/.specify/extensions/gates"
+printf 'extension:\n  id: gates\n  version: "9.9.9"\n' >"$RV/.specify/extensions/gates/extension.yml"
+printf '0.0.1\n' >"$RV/.specify/gates/.runtime-version"
+expect "runtime-version mismatch -> doctor exit 1" "$(run_doctor "$RV")" 1
+if grep -q "projected runtime is 0.0.1 but the installed extension is 9.9.9" "$RV/out.txt"; then
+    echo "PASS: mismatch names both versions and the upgrade command"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL: mismatch message missing"
+    FAIL=$((FAIL + 1))
+fi
+TOTAL=$((TOTAL + 1))
+
+printf '9.9.9\n' >"$RV/.specify/gates/.runtime-version"
+expect "runtime-version match -> doctor exit 0" "$(run_doctor "$RV")" 0
+if grep -q "matches the installed extension" "$RV/out.txt"; then
+    echo "PASS: match reported ok"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL: match line missing"
+    FAIL=$((FAIL + 1))
+fi
+TOTAL=$((TOTAL + 1))
+if grep -q "constitution corpus not found" "$RV/out.txt"; then
+    echo "PASS: missing corpus surfaced as a nudge"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL: corpus-presence line missing"
+    FAIL=$((FAIL + 1))
+fi
+TOTAL=$((TOTAL + 1))
+
+# No installed extension (source-run repos like this one): section absent.
+NX="$WORKDIR/no-ext"
+project "$NX" '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } } }' no
+run_doctor "$NX" >/dev/null
+if grep -q "Runtime projection" "$NX/out.txt"; then
+    echo "FAIL: projection section shown without an installed extension"
+    FAIL=$((FAIL + 1))
+else
+    echo "PASS: no projection section when no extension is installed"
+    PASS=$((PASS + 1))
+fi
+TOTAL=$((TOTAL + 1))
+
 # --- constitution enforcement section (feature 004) --------------------------
 
 # A constitution with an unwired annotated principle is a doctor gap (exit 1).

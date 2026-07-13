@@ -5,7 +5,7 @@
 #   gates-X.Y.Z.zip
 #   └── gates/
 #       ├── extension.yml
-#       ├── commands/  runtime/  ci/
+#       ├── commands/  runtime/  ci/  constitution/
 #       ├── README.md  LICENSE
 # Fail-closed like everything else here: a tag whose version does not match
 # extension.yml is refused, not papered over.
@@ -39,11 +39,17 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           mkdir -p dist/gates
-          cp -R extension/extension.yml extension/commands extension/runtime extension/ci dist/gates/
+          cp -R extension/extension.yml extension/commands extension/runtime extension/ci extension/constitution dist/gates/
           cp README.md LICENSE dist/gates/
           (cd dist && zip -qr "gates-$VERSION.zip" gates)
-          unzip -l "dist/gates-$VERSION.zip" | grep -q "gates/extension.yml" \
-            || { echo "::error::package sanity check failed: gates/extension.yml missing from zip"; exit 1; }
+          # Sanity: the manifest AND every consumable the commands depend on
+          # must be present — the constitution corpus was silently missing
+          # from the 0.3.0 asset (issue #31), leaving the guided session
+          # unrunnable on stock installs.
+          for probe in gates/extension.yml gates/constitution/manifest.yml gates/runtime/constitution.sh; do
+            unzip -l "dist/gates-$VERSION.zip" | grep -q "$probe" \
+              || { echo "::error::package sanity check failed: $probe missing from zip"; exit 1; }
+          done
 
       - name: Checksum and sign the package (sigstore keyless)
         run: |

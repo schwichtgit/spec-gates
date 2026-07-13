@@ -249,19 +249,32 @@ if [[ "$SPEC_ENABLED" != "false" && -z "${GATES_SPEC_EXEC:-}" ]]; then
         spec_start="$(date +%s)"
         gates_spec_gate "$PROJECT_ROOT" "$ACCEPT_ARG" "$JSON"
         spec_end="$(date +%s)"
+        # Attestation candidates/checked count accept blocks of ENFORCED
+        # features, not features discovered: a Complete feature with zero
+        # blocks is a legitimate "nothing to check", and counting features
+        # made it indistinguishable from a silently broken gate — doctor's
+        # no-op heuristic then false-positived on healthy IaC/docs repos
+        # (issue #32). Enforced blocks that exist but never execute keep
+        # producing the real no-op signature.
+        SPEC_ENF_BLOCKS="$(jq -r \
+            '[.[] | select(.outcome | startswith("enforced")) | .blocks_parsed] | add // 0' \
+            <<<"$SPEC_RESULTS_JSON")"
+        SPEC_ENF_EXECUTED="$(jq -r \
+            '[.[] | select(.outcome | startswith("enforced")) | .blocks_executed] | add // 0' \
+            <<<"$SPEC_RESULTS_JSON")"
         if [[ "$SPEC_RESULT" == "pass" ]]; then
             record "spec" "pass" ""
-            att_gate "spec" "" "" "" "$SPEC_FEATURES" "$SPEC_EXECUTED" \
+            att_gate "spec" "" "" "" "$SPEC_ENF_BLOCKS" "$SPEC_ENF_EXECUTED" \
                 "pass" "" "$((spec_end - spec_start))"
         elif [[ "$SPEC_SEV" == "error" ]]; then
             record "spec" "fail" "$SPEC_DETAIL"
             FAILED=$((FAILED + 1))
-            att_gate "spec" "" "" "" "$SPEC_FEATURES" "$SPEC_EXECUTED" \
+            att_gate "spec" "" "" "" "$SPEC_ENF_BLOCKS" "$SPEC_ENF_EXECUTED" \
                 "fail" "$SPEC_DETAIL" "$((spec_end - spec_start))"
         else
             record "spec" "warn" "$SPEC_DETAIL"
             WARNINGS=$((WARNINGS + 1))
-            att_gate "spec" "" "" "" "$SPEC_FEATURES" "$SPEC_EXECUTED" \
+            att_gate "spec" "" "" "" "$SPEC_ENF_BLOCKS" "$SPEC_ENF_EXECUTED" \
                 "warn" "$SPEC_DETAIL" "$((spec_end - spec_start))"
         fi
         SPEC_ATT_JSON="$(jq -cn --argjson features "$SPEC_FEATURES" \

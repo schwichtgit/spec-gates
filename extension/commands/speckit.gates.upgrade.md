@@ -8,6 +8,17 @@ Re-project `verify.sh`, `doctor.sh`, `canary.sh`, `contract.sh`,
 `constitution.sh`, `lib/`, hook scripts, and the schema from the currently
 installed extension version into the project.
 
+## When to run this
+
+ALWAYS after the installed extension changes version — whether via
+`specify extension update` or via `extension remove` + `extension add`
+(note: `extension update` may not move a `source: local` install; the
+remove+add pair is the reliable path there). Nothing re-projects the
+runtime automatically: until this command runs, the installed extension
+and `.specify/gates/` silently diverge, and `doctor` reports the
+version mismatch as a failure. Re-running `/speckit.gates.init` is NOT
+needed when a policy already exists — this command is the whole bump.
+
 ## Rules
 
 - NEVER overwrite `.specify/gates/policy.json`. If the new schema adds
