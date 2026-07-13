@@ -301,9 +301,13 @@ expect "results[] outcome for the Complete feature is enforced-pass" \
 expect "results[] outcome for the Draft feature is informational" \
     "$(printf '%s' "$SPEC_OUT" | jq -r '.attestation.spec.results[] | select(.feature == "200-wip") | .outcome')" \
     "informational"
-expect "spec gate entry: candidates=features, checked=executed" \
+# Issue #32: candidates/checked count ENFORCED-feature accept blocks, not
+# features — the Draft feature's parsed-but-unexecuted block contributes to
+# neither, and a zero-block Complete feature yields candidates=0 instead of
+# the false no-op signature.
+expect "spec gate entry: candidates=enforced blocks, checked=executed" \
     "$(printf '%s' "$SPEC_OUT" | jq -r '.attestation.gates[] | select(.name == "spec") | "\(.candidates):\(.checked):\(.result)"')" \
-    "2:1:pass"
+    "1:1:pass"
 expect "log record embeds the same spec object" \
     "$(diff <(printf '%s' "$SPEC_OUT" | jq -S '.attestation.spec') \
         <(tail -1 "$DS/.specify/gates/attestations.jsonl" | jq -S '.spec') >/dev/null \

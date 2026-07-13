@@ -92,6 +92,41 @@ else
     done
 fi
 
+# Runtime projection vs installed extension (issue #33): after an extension
+# update (or remove+add — `specify extension update` may not move a
+# source:local install), nothing re-projects .specify/gates/ by itself; the
+# installed extension and the projected runtime silently diverge until
+# /speckit.gates.upgrade runs. A version mismatch is an enforcement-relevant
+# failure: the projected gates are not the gates the user thinks they
+# installed. Repos running the runtime from source (no installed extension)
+# skip this section entirely.
+EXT_MANIFEST="$PROJECT_ROOT/.specify/extensions/gates/extension.yml"
+if [[ -f "$EXT_MANIFEST" ]]; then
+    echo ""
+    echo "Runtime projection (installed extension vs .specify/gates/):"
+    EXT_VERSION="$(sed -n 's/^  version: "\(.*\)"$/\1/p' "$EXT_MANIFEST" | head -n 1)"
+    RTV_FILE="$PROJECT_ROOT/.specify/gates/.runtime-version"
+    if [[ ! -f "$RTV_FILE" ]]; then
+        echo "${REC}no .runtime-version marker — run /speckit.gates.upgrade to re-project and record the runtime version"
+    else
+        RTV="$(head -n 1 "$RTV_FILE" 2>/dev/null || true)"
+        if [[ -n "$EXT_VERSION" && "$RTV" != "$EXT_VERSION" ]]; then
+            echo "${BAD}projected runtime is $RTV but the installed extension is $EXT_VERSION — run /speckit.gates.upgrade (the projected gates are NOT the version you installed)"
+            MISSING=$((MISSING + 1))
+        else
+            echo "${OK}projected runtime $RTV matches the installed extension"
+        fi
+    fi
+    # Constitution corpus presence (issue #31): the guided session needs
+    # manifest.yml + fragments/ under the installed extension; 0.3.0 shipped
+    # without them, which was invisible until the session died mid-flow.
+    if [[ -f "$PROJECT_ROOT/.specify/extensions/gates/constitution/manifest.yml" ]]; then
+        echo "${OK}constitution corpus present"
+    else
+        echo "${REC}constitution corpus not found under the installed extension — /speckit.gates.constitution needs it (re-install from a release that ships gates/constitution/)"
+    fi
+fi
+
 # No-op heuristic (FR-004): a gate that PASSED while checking none of its
 # candidate files is the historical silent-no-op signature. No legitimate
 # instance exists, so it is a doctor FAILURE, not a warning.
