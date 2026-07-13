@@ -294,6 +294,39 @@ else
 fi
 TOTAL=$((TOTAL + 1))
 
+# --- execute bits on projected scripts (issue #34) ----------------------------
+
+# An agent hook that exists but is not executable is silently skipped by the
+# agent boundary (settings.json invokes it by path) -> doctor FAILURE.
+XB="$WORKDIR/execbits"
+project "$XB" '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } } }' no
+mkdir -p "$XB/.claude/hooks/gates"
+printf '#!/bin/sh\nexit 0\n' >"$XB/.claude/hooks/gates/protect-files.sh"
+chmod -x "$XB/.claude/hooks/gates/protect-files.sh"
+expect "non-executable agent hook -> doctor exit 1" "$(run_doctor "$XB")" 1
+if grep -q "agent hook not executable" "$XB/out.txt"; then
+    echo "PASS: agent-hook exec gap named with the fix"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL: agent-hook exec gap not reported"
+    FAIL=$((FAIL + 1))
+fi
+TOTAL=$((TOTAL + 1))
+
+# Non-executable projected gates scripts are a [rec] nudge, never a failure.
+chmod +x "$XB/.claude/hooks/gates/protect-files.sh"
+chmod -x "$XB/.specify/gates/verify.sh"
+expect "non-executable gates script -> still exit 0" "$(run_doctor "$XB")" 0
+if grep -q "projected script(s) not executable" "$XB/out.txt"; then
+    echo "PASS: gates-script exec nudge shown"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL: gates-script exec nudge missing"
+    FAIL=$((FAIL + 1))
+fi
+TOTAL=$((TOTAL + 1))
+chmod +x "$XB/.specify/gates/verify.sh"
+
 # --- runtime projection version check (issue #33) -----------------------------
 
 RV="$WORKDIR/runtime-version"
