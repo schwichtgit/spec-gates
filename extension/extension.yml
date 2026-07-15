@@ -3,7 +3,7 @@ schema_version: "1.0"
 extension:
   id: gates
   name: "Quality Gates (Enforcement Layer)"
-  version: "0.3.1"
+  version: "0.3.2"
   description: >-
     Deterministic quality enforcement for Spec Kit projects at three
     boundaries: the agent boundary (Claude Code PreToolUse/PostToolUse/Stop

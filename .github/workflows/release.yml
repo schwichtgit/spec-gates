@@ -109,3 +109,38 @@ jobs:
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \\
             gates-${VERSION}.zip
           \`\`\`"
+
+      # The spec-kit community catalog pins version + download_url, so every
+      # catalog-worthy release needs an update issue upstream (their agentic
+      # intake turns it into the in-place catalog PR). Auto-filing issues into
+      # someone else's repo would be impolite and needs a cross-repo token;
+      # instead the complete, template-matching issue body lands in this run's
+      # job summary — filing it stays one human command.
+      - name: Draft the spec-kit catalog update issue (job summary)
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          bash .github/scripts/catalog-issue-draft.sh "$VERSION" > dist/catalog-issue.md
+          {
+            echo "## Spec Kit catalog update — ready to file"
+            echo ""
+            echo "The community catalog pins \`version\` + \`download_url\`; file this"
+            echo "to update the \`gates\` entry to $VERSION (skip for patch releases"
+            echo "with no user-visible surface change):"
+            echo ""
+            echo '```bash'
+            echo "gh issue create -R github/spec-kit \\"
+            echo "  --title \"[Extension]: Update gates (Quality Gates — Enforcement Layer) to $VERSION\" \\"
+            echo "  --body-file catalog-issue.md"
+            echo '```'
+            echo ""
+            echo "<details><summary>catalog-issue.md (copy from here)</summary>"
+            echo ""
+            echo '``````markdown'
+            cat dist/catalog-issue.md
+            echo '``````'
+            echo ""
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::group::catalog-issue.md"
+          cat dist/catalog-issue.md
+          echo "::endgroup::"
