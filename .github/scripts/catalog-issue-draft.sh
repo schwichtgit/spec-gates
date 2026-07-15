@@ -46,6 +46,19 @@ TAG_DATE="$(date -u +%Y-%m-%dT00:00:00Z)"
 
 TAGS_JSON="$(printf '%s' "$TAGS" | tr -d ' ' | jq -R -c 'split(",")')"
 
+# What version does the catalog currently list? Enables a precise
+# "changes since listing" compare link in the submission. Fail-soft:
+# offline or entry-missing just omits the delta line.
+LISTED="$(curl -sfL --max-time 10 \
+    https://raw.githubusercontent.com/github/spec-kit/main/extensions/catalog.community.json 2>/dev/null \
+    | jq -r '.extensions.gates.version // empty' 2>/dev/null || true)"
+CHANGES_SINCE=""
+if [[ -n "$LISTED" && "$LISTED" != "$VERSION" ]]; then
+    CHANGES_SINCE="**Changes since the listed catalog version ($LISTED):**
+full commit-level delta at $REPO_URL/compare/v$LISTED...v$VERSION —
+release-by-release notes at $REPO_URL/releases."
+fi
+
 cat <<EOF
 ### Extension ID
 
@@ -89,7 +102,7 @@ $REPO_URL/blob/main/docs/how-it-works.md
 
 ### Changelog URL (optional)
 
-$REPO_URL/releases/tag/v$VERSION
+$REPO_URL/releases
 
 ### Required Spec Kit Version
 
@@ -192,7 +205,12 @@ $(jq -n \
 
 Update of the existing \`gates\` catalog entry (first listed at 0.1.0 via
 github/spec-kit PR #3431). The entry's \`provides\` counts changed since
-listing: $CMD_COUNT commands and $HOOK_COUNT hooks. Release assets are
-sha256-checksummed and sigstore keyless-signed; verification instructions are
-in the release notes.
+listing: $CMD_COUNT commands and $HOOK_COUNT hooks.
+
+$CHANGES_SINCE
+
+Release assets are sha256-checksummed and sigstore keyless-signed;
+verification instructions are in the release notes. Release notes are
+generated from Conventional Commits per release (no hand-maintained
+changelog to drift).
 EOF
