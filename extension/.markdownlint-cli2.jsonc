@@ -1,0 +1,23 @@
+{
+  // Ships at the root of the installed extension (.specify/extensions/gates/).
+  //
+  // Everything under here is VENDORED content: the consumer did not write it
+  // and cannot reformat it without losing the next upgrade. But a repo-wide
+  // `markdownlint-cli2 "**/*.md"` sweep still reaches it, so our docs would
+  // show up as errors in someone else's lint run. markdownlint-cli2 resolves
+  // the nearest config per file, so this file keeps that from happening
+  // regardless of what the consumer configures at their own root.
+  //
+  // MD013 (line-length) is off for the same reason it is off in this
+  // project's own root config: prettier owns wrapping (proseWrap: preserve)
+  // and formats tables and code blocks in ways MD013 cannot satisfy. MD041
+  // (first line must be a top-level heading) is off because corpus fragments
+  // are frontmatter + body snippets, not standalone pages. The rest of the
+  // ruleset stays on — this narrows scope, it does not lower the bar.
+  "config": {
+    "default": true,
+    "MD013": false,
+    "MD041": false,
+  },
+  "globs": ["**/*.md"],
+}
