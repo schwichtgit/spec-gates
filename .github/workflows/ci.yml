@@ -21,10 +21,24 @@ jobs:
       - name: Install pinned linters (prettier, markdownlint-cli2)
         run: npm ci
 
-      - name: Install system tooling (jq, shellcheck)
+      # shellcheck comes from the official upstream release at the version
+      # pinned in .tool-versions, NOT from apt: ubuntu ships 0.9.0, which
+      # reports findings 0.11.0 does not (SC2015), so an unpinned CI
+      # disagrees with a green local run for reasons no diff explains. The
+      # parity gate enforces the same pin on every boundary.
+      - name: Install system tooling (jq, pinned shellcheck)
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q jq shellcheck
+          sudo apt-get install -y -q jq
+          SC_VERSION="$(awk '$1 == "shellcheck" { print $2 }' .tool-versions)"
+          [ -n "$SC_VERSION" ] || { echo "::error::.tool-versions declares no shellcheck version"; exit 1; }
+          curl -fsSL "https://github.com/koalaman/shellcheck/releases/download/v${SC_VERSION}/shellcheck-v${SC_VERSION}.linux.x86_64.tar.xz" \
+            | tar -xJ
+          sudo install -m 0755 "shellcheck-v${SC_VERSION}/shellcheck" /usr/local/bin/shellcheck
+          rm -rf "shellcheck-v${SC_VERSION}"
+          INSTALLED="$(shellcheck --version | awk '/^version:/ { print $2 }')"
+          echo "shellcheck: pinned $SC_VERSION, installed $INSTALLED"
+          [ "$INSTALLED" = "$SC_VERSION" ] || { echo "::error::shellcheck install drifted from the pin"; exit 1; }
 
       - name: Project the gate runtime
         run: |

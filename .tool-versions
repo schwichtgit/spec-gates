@@ -1,0 +1,9 @@
+# Toolchain pins for tools that are not npm-resolvable (asdf-compatible
+# format). node-resolved linters are pinned by package-lock.json instead;
+# both are read by the parity gate, so a version drift at ANY boundary fails
+# the run by name rather than showing up as mysteriously different findings.
+#
+# shellcheck: findings differ across releases (0.9.0 reports SC2015 where
+# 0.11.0 does not), so an unpinned CI silently disagrees with a green local
+# run. CI installs exactly this version from the official upstream release.
+shellcheck 0.11.0

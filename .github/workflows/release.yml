@@ -40,13 +40,16 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           mkdir -p dist/gates
           cp -R extension/extension.yml extension/commands extension/runtime extension/ci extension/constitution dist/gates/
+          # Dotfile: keeps our vendored markdown out of a consumer's repo-wide
+          # lint sweep (nearest-config resolution). cp -R above skips it.
+          cp extension/.markdownlint-cli2.jsonc dist/gates/
           cp README.md LICENSE dist/gates/
           (cd dist && zip -qr "gates-$VERSION.zip" gates)
           # Sanity: the manifest AND every consumable the commands depend on
           # must be present — the constitution corpus was silently missing
           # from the 0.3.0 asset (issue #31), leaving the guided session
           # unrunnable on stock installs.
-          for probe in gates/extension.yml gates/constitution/manifest.yml gates/runtime/constitution.sh; do
+          for probe in gates/extension.yml gates/constitution/manifest.yml gates/runtime/constitution.sh gates/.markdownlint-cli2.jsonc; do
             unzip -l "dist/gates-$VERSION.zip" | grep -q "$probe" \
               || { echo "::error::package sanity check failed: $probe missing from zip"; exit 1; }
           done

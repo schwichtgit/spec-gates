@@ -35,3 +35,8 @@ needed when a policy already exists — this command is the whole bump.
 - Update `.specify/gates/.runtime-version` and re-run the init self-test
   (step 6 of /speckit.gates.init, including the git-boundary probe) to
   prove enforcement still works.
+- Re-check the lint-scope ignores (step 3c of /speckit.gates.init): an
+  upgrade can add projected paths, and any local reformatting of
+  projected files is overwritten here by design. If the repo lints
+  `.specify/gates/`, `.specify/extensions/`, or `.claude/hooks/gates/`,
+  offer the ignore entries again.

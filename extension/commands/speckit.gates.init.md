@@ -125,8 +125,45 @@ permanent noise. Seed this and show it to the user:
 ```
 
 Adjust `ignores` to the repo's layout (mirror the policy's exclude
-globs). Do not seed a prettier config — prettier's defaults are the
-convention and needing none is the point.
+globs). Do not seed a prettier **config** — prettier's defaults are the
+convention and needing none is the point. Ignore files are a different
+concern; see 3c.
+
+### 3c. Keep projected artifacts out of the repo's OWN lint scope
+
+Projection puts files the user did not write into their tree:
+`.specify/gates/` (runtime + schema), `.specify/extensions/gates/`
+(the installed extension), and `.claude/hooks/gates/`. The gate's own
+policy already excludes them. The user's own tooling does not know
+that — so a plain `npx prettier --check .` or
+`markdownlint-cli2 "**/*.md"` lints our vendored files against THEIR
+style, and reports failures they cannot fix (reformatting is undone by
+the next `/speckit.gates.upgrade`).
+
+There is no formatting that avoids this: any style we ship fails
+somebody's config. Vendored content belongs out of scope, exactly like
+`node_modules`. So:
+
+- If the repo has a `.prettierignore`, check whether the projected
+  paths are covered. If not, OFFER to append (never rewrite the file,
+  never reorder existing entries):
+
+  ```text
+  # spec-gates: projected/vendored enforcement runtime — upgrade
+  # overwrites these, so formatting them locally is lost work.
+  .specify/gates/
+  .specify/extensions/
+  .claude/hooks/gates/
+  ```
+
+- If the repo has no `.prettierignore` and prettier is enabled, offer to
+  create it with exactly those entries.
+- If the repo already has its own markdownlint config (so the seed in 3b
+  does not apply), offer to add the same three paths to its `ignores`.
+
+Show the diff, apply only on approval, and if the user declines say
+plainly that their repo-wide lint runs will flag our vendored files and
+that the gate itself is unaffected either way.
 
 ### 4. Wire the agent boundary (Claude Code)
 

@@ -246,6 +246,34 @@ network access. The cost — projected copies can drift from the extension
 version — is exactly what `/speckit.gates.doctor` and
 `/speckit.gates.upgrade` exist to manage, via `.runtime-version`.
 
+Parity has an analogous requirement on the toolchain itself: a linter's
+findings depend on its version, so "the same policy at every boundary"
+is only true if the same tool versions run at every boundary. Node
+linters are pinned by `package-lock.json`. Tools npm cannot pin are
+declared in `.tool-versions` (asdf format) — currently shellcheck,
+where the gap is not theoretical: ubuntu's apt ships 0.9.0, which
+reports SC2015 findings that 0.11.0 does not, so an unpinned CI turns a
+green local run red for reasons no diff explains. The parity gate reads
+both sources, so a drift at any boundary fails the run naming the tool,
+the resolved version, and the pin — instead of surfacing as mysteriously
+different lint output.
+
+Projection has a second cost that is easy to miss: our files now live in
+someone else's repository, so their repo-wide tooling reaches them. A
+plain `prettier --check .` or `markdownlint-cli2 "**/*.md"` will lint
+the projected runtime and the installed extension against the
+consumer's style — and any fix they apply is erased by the next
+upgrade. No shipped formatting solves this, because every style choice
+fails somebody's config. Vendored content belongs out of lint scope,
+the same way `node_modules` does. So the extension ships a nested
+markdownlint config at its own root (nearest-config resolution keeps
+our docs quiet under a default sweep), and `init` offers
+`.prettierignore` entries for `.specify/gates/`,
+`.specify/extensions/`, and `.claude/hooks/gates/` — offered and
+diffed, never written silently, since those are the consumer's files.
+A packaging test asserts the shipped tree stays clean under default
+tooling, so this cannot regress unnoticed.
+
 ## Threat model honesty
 
 The agent boundary raises the cost of noncompliance; it does not make
