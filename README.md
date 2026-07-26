@@ -202,7 +202,10 @@ its enforcement frontmatter — one registry, two consumers.
 - **jq** and **git** — the hooks and `verify.sh` require them.
 - **Node** with the linters your policy uses (default: **prettier**,
   **markdownlint-cli2**). Pin them in `package.json` so local and CI agree.
-- **shellcheck** if you lint shell.
+- **shellcheck** if you lint shell. Its findings change between releases
+  (0.9.0 reports SC2015 where 0.11.0 does not), so declare the version in
+  `.tool-versions` (`shellcheck 0.11.0`) and install that one everywhere —
+  the parity gate reads it and fails any boundary that drifts.
 - **Claude Code** for the agent boundary. The git and CI boundaries are
   agent-agnostic.
 

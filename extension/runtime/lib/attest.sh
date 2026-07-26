@@ -60,14 +60,29 @@ gates_tool_version() { # <binname> <root>
     printf '%s\n' "$ver"
 }
 
-# Pin from package-lock.json (lockfileVersion >= 2 carries .packages).
-# Prints nothing when the lockfile or entry is absent -- the tool is then
-# attested with pinned: null and is exempt from parity (spec Assumptions).
+# Pin for a tool, in precedence order:
+#   1. package-lock.json (lockfileVersion >= 2 carries .packages) -- the
+#      shared source of truth for node-resolved linters;
+#   2. .tool-versions (asdf format: "<tool> <version>" per line, # comments
+#      ignored) -- for tools npm cannot pin, e.g. shellcheck, whose findings
+#      differ across releases and so must be identical at every boundary.
+# Prints nothing when neither declares the tool -- it is then attested with
+# pinned: null and exempt from parity (spec Assumptions), which keeps repos
+# that pin nothing working exactly as before.
 gates_pin_version() { # <pkgname> <root>
     local pkg="${1:-}" root="${2:-}"
-    local lock="$root/package-lock.json"
-    [[ -n "$pkg" && -f "$lock" ]] || return 0
-    jq -r --arg p "node_modules/$pkg" '.packages[$p].version // empty' "$lock" 2>/dev/null || true
+    [[ -n "$pkg" ]] || return 0
+    local lock="$root/package-lock.json" ver=""
+    if [[ -f "$lock" ]]; then
+        ver="$(jq -r --arg p "node_modules/$pkg" '.packages[$p].version // empty' "$lock" 2>/dev/null || true)"
+    fi
+    if [[ -z "$ver" && -f "$root/.tool-versions" ]]; then
+        ver="$(awk -v t="$pkg" '
+            { sub(/#.*/, "") }
+            $1 == t && $2 != "" { print $2; exit }
+        ' "$root/.tool-versions" 2>/dev/null || true)"
+    fi
+    printf '%s' "$ver"
 }
 
 # Pin comparison for the synthetic parity gate (R7): given the assembled
@@ -79,7 +94,9 @@ gates_pin_mismatches() { # <gates-json-array>
     printf '%s' "${1:-[]}" | jq -r '
         [ .[]
           | select(.pinned != null and .version != null and .version != .pinned)
-          | "\(.name): resolved \(.version), pinned \(.pinned) (run npm ci)" ]
+          | "\(.name): resolved \(.version), pinned \(.pinned) "
+            + (if .name == "shellcheck" then "(install the pinned version from .tool-versions)"
+               else "(run npm ci)" end) ]
         | join("; ")' 2>/dev/null || true
 }
 

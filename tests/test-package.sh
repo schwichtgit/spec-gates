@@ -33,6 +33,12 @@ expect() { # <name> <actual> <wanted>
     fi
 }
 
+# `if` rather than `A && B || C`: the latter is SC2015 on shellcheck 0.9.0
+# (what unpinned CI used to install) even where it is harmless.
+present() { # <path>
+    if [[ -e "$1" ]]; then echo yes; else echo no; fi
+}
+
 # Stage the package exactly as .github/workflows/release.yml does.
 STAGE="$WORKDIR/consumer/.specify/extensions/gates"
 mkdir -p "$STAGE"
@@ -46,16 +52,16 @@ cp "$REPO_ROOT/README.md" "$REPO_ROOT/LICENSE" "$STAGE/"
 
 echo "=== package contents ==="
 expect "nested markdownlint config ships at the extension root" \
-    "$([[ -f "$STAGE/.markdownlint-cli2.jsonc" ]] && echo yes || echo no)" "yes"
+    "$(present "$STAGE/.markdownlint-cli2.jsonc")" "yes"
 expect "constitution corpus ships (issue #31 regression)" \
-    "$([[ -f "$STAGE/constitution/manifest.yml" ]] && echo yes || echo no)" "yes"
+    "$(present "$STAGE/constitution/manifest.yml")" "yes"
 
 echo ""
 echo "=== a consumer's repo-wide lint sweep over the installed extension ==="
 
 if [[ -x "$BIN/markdownlint-cli2" ]]; then
     # No config at the consumer root: our nested config must carry the file.
-    ML_OUT="$(cd "$WORKDIR/consumer" && "$BIN/markdownlint-cli2" '**/*.md' 2>&1 || true)"
+    ML_OUT="$(cd "$WORKDIR/consumer" && "$BIN/markdownlint-cli2" '**/*.md' 2>&1)" || true
     ML_ERRORS="$(printf '%s\n' "$ML_OUT" | grep -cE ' (error|warning) MD[0-9]+' || true)"
     expect "shipped markdown has zero markdownlint errors under consumer defaults" \
         "$ML_ERRORS" "0"
@@ -77,6 +83,34 @@ if [[ -x "$BIN/prettier" ]]; then
     [[ "$PR_RC" -ne 0 ]] && grep '^\[warn\]' "$WORKDIR/prettier.out" | head -5 | awk '{ print "    " $0 }'
 else
     echo "SKIP: prettier not installed (npm ci to enable this check)"
+fi
+
+echo ""
+echo "=== we do not ship files that violate our own policy ==="
+
+# The package carries executable shell into someone else's repository. It must
+# satisfy the same shellcheck bar this project enforces on its own sources —
+# at the PINNED version, because shellcheck's findings differ across releases
+# (0.9.0 flags SC2015 where 0.11.0 does not, which is how an unpinned CI
+# turned green local runs red).
+PINNED_SC="$(awk '$1 == "shellcheck" { print $2 }' "$REPO_ROOT/.tool-versions" 2>/dev/null || true)"
+expect "shellcheck version is declared in .tool-versions" \
+    "$([[ -n "$PINNED_SC" ]] && echo yes || echo no)" "yes"
+
+if command -v shellcheck >/dev/null 2>&1; then
+    LOCAL_SC="$(shellcheck --version 2>/dev/null | awk '/^version:/ { print $2 }')"
+    if [[ -n "$PINNED_SC" && "$LOCAL_SC" != "$PINNED_SC" ]]; then
+        echo "SKIP: local shellcheck $LOCAL_SC != pinned $PINNED_SC — the parity gate reports this drift; not asserting findings against an unpinned binary"
+    else
+        SHIPPED_SH="$(find "$STAGE" -name '*.sh' -type f | sort)"
+        SC_RC=0
+        # shellcheck disable=SC2086  # deliberate word split of the file list
+        shellcheck $SHIPPED_SH >"$WORKDIR/shellcheck.out" 2>&1 || SC_RC=$?
+        expect "shipped shell passes shellcheck $PINNED_SC" "$SC_RC" "0"
+        [[ "$SC_RC" -ne 0 ]] && head -12 "$WORKDIR/shellcheck.out" | awk '{ print "    " $0 }'
+    fi
+else
+    echo "SKIP: shellcheck not installed"
 fi
 
 echo ""
