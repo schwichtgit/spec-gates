@@ -414,6 +414,44 @@ else
     fail "unknown git field not rejected: $ERR_OUT"
 fi
 
+# 0.3.4 keys: protected_change_trailer + ai_branding (issues #47, #52).
+NEW_GIT="$(write_policy new-git '{
+  "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } },
+  "git": { "protected_change_trailer": false,
+           "ai_branding": { "terms": ["Gemini"], "allow_phrases": ["Acme Copilot"] } }
+}')"
+if gates_validate_policy "$NEW_GIT" >/dev/null 2>&1; then
+    pass "git.protected_change_trailer + git.ai_branding accepted"
+else
+    fail "git.protected_change_trailer + git.ai_branding rejected"
+    gates_validate_policy "$NEW_GIT" || true
+fi
+
+BAD_BRAND="$(write_policy bad-brand '{
+  "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } },
+  "git": { "protected_change_trailer": "yes",
+           "ai_branding": { "terms": "Copilot", "allow_phrases": [""], "extra": [] } }
+}')"
+ERR_OUT="$(gates_validate_policy "$BAD_BRAND" 2>&1 || true)"
+if echo "$ERR_OUT" | grep -q 'git: protected_change_trailer must be a boolean' \
+    && echo "$ERR_OUT" | grep -q 'git: ai_branding.terms must be an array of strings' \
+    && echo "$ERR_OUT" | grep -q 'git: ai_branding.allow_phrases entries must be non-empty strings' \
+    && echo "$ERR_OUT" | grep -q 'git: ai_branding: unknown field "extra"'; then
+    pass "malformed protected_change_trailer / ai_branding rejected"
+else
+    fail "malformed protected_change_trailer / ai_branding not rejected: $ERR_OUT"
+fi
+
+# Nested accessor tells "absent" (defaults) from "present but empty".
+if ! GATES_POLICY_FILE="$GOOD_SECTIONS" gates_policy_path_list git ai_branding terms >/dev/null \
+    && [[ "$(GATES_POLICY_FILE="$NEW_GIT" gates_policy_path_list git ai_branding terms)" == "Gemini" ]] \
+    && EMPTY_OUT="$(GATES_POLICY_FILE="$(write_policy empty-terms '{"hooks":{},"git":{"ai_branding":{"terms":[]}}}')" gates_policy_path_list git ai_branding terms)" \
+    && [[ -z "$EMPTY_OUT" ]]; then
+    pass "gates_policy_path_list: absent -> 1, list -> items, [] -> 0 with no output"
+else
+    fail "gates_policy_path_list absent/empty semantics wrong"
+fi
+
 BAD_PF="$(write_policy bad-pf '{
   "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } },
   "protected_files": { "extra": "not-an-array" }

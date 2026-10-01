@@ -22,8 +22,35 @@ There are exactly three such places in an agentic workflow:
      semi-attended `/speckit.implement` runs.
 
 2. **The git boundary** — when work becomes history. `pre-commit` blocks
-   main commits and runs the same verify entrypoint; `commit-msg`
-   enforces conventional commits and strips AI-isms.
+   main commits, scans staged content for secrets, and runs the same
+   verify entrypoint; `commit-msg` enforces conventional commits and
+   refuses AI-isms. The AI-branding list is policy
+   (`git.ai_branding.terms`), and a legitimate phrase that contains a
+   term (a product or branch name) is allowed exactly via
+   `git.ai_branding.allow_phrases`.
+
+   Protected files get different treatment at the two local boundaries.
+   The agent may never edit them. At the git boundary a human is the
+   committer, so an approved amendment has a path through: every staged
+   protected path (added, modified, deleted, or renamed) must be declared
+   in the message's trailer block, with an approver:
+
+   ```text
+   docs(constitution): ratify principle VI
+
+   Protected-Change: .specify/memory/constitution.md
+   Approved-By: Jane Reviewer
+   ```
+
+   A staged protected path without a declaration, a declaration for a
+   path the commit does not change, or a missing `Approved-By` is
+   refused. The protected list is the union of the worktree policy and
+   the committed one at `HEAD`, so a staged policy.json cannot drop its
+   own protection on the way in. The trailer is an auditable
+   declaration, not a credential: real approval is enforced server-side
+   by CODEOWNERS plus branch protection. Setting
+   `git.protected_change_trailer` to `false` restores the unconditional
+   refusal.
 
 3. **The CI boundary** — when work leaves the machine. The projected
    pipeline job runs `verify.sh --boundary ci`. Because it is the same
@@ -66,8 +93,10 @@ legitimate run looks like that.
 violations in `mktemp` sandboxes and requires the real entrypoints to
 reject them: the format and shell probes run through `verify.sh` itself,
 the hook probes pipe crafted tool-call JSON through the projected hooks,
-and the secret probe stages an AWS-key-shaped string in a sandbox git repo
-with the pre-commit hook installed. The suite copies the runtime from the
+and the git probes commit in sandbox repos with the projected git hooks
+installed: an AWS-key-shaped string and a token assignment (pre-commit
+secret scan), a protected file without its `Protected-Change` trailer, and
+a message naming a default AI-branding term (commit-msg). The suite copies the runtime from the
 projected directory, so a broken _projected_ gate — not just a broken
 source tree — is what gets caught. Probes never read or write user project
 files. An accepted probe fails the suite naming the gate; CI runs the

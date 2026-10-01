@@ -62,7 +62,9 @@ self-evidencing:
   result, and duration. Evidence, never file contents.
 - **Canaries** — `canary.sh` plants known violations in disposable
   sandboxes (a prettier-dirty file, an SC2086 script, an `rm -rf /` tool
-  call, a `.env` edit, a staged AWS-key-shaped string) and requires the
+  call, a `.env` edit, a staged AWS-key-shaped string, a staged token
+  assignment, a protected file staged without its `Protected-Change`
+  trailer, a commit message naming a branded AI term) and requires the
   real gate or hook to reject each one. An accepted probe fails the suite
   naming the broken gate. CI runs it on every build — a red canary step
   means a broken gate, not a dirty tree. On demand:

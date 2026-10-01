@@ -259,6 +259,15 @@ if git -C "$PROJECT_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
             echo "${OK}$h installed, executable, delegates to the gates runtime"
         fi
     done
+    # Protected-change path (issue #47): how a staged protected_files.extra
+    # entry is treated at this boundary. Informational, never a failure.
+    if declare -f gates_protected_trailer_enabled >/dev/null 2>&1; then
+        if gates_protected_trailer_enabled; then
+            echo "${OK}protected-change trailer enabled — protected files commit with 'Protected-Change: <path>' + 'Approved-By: <name>' trailers"
+        else
+            echo "${REC}protected-change trailer disabled (git.protected_change_trailer=false) — staged protected files are refused outright"
+        fi
+    fi
 fi
 
 # Policy contract (feature 003): what the contract gate sees, from local

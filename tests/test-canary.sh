@@ -40,7 +40,7 @@ skip() { # <name> <why>
 have_node_linters() { [[ -x "$REPO_ROOT/node_modules/.bin/prettier" ]]; }
 
 # Project a full real-install layout into <dir>: runtime + canary next to it,
-# Claude hooks under .claude/hooks/gates/, git pre-commit under
+# Claude hooks under .claude/hooks/gates/, git pre-commit + commit-msg under
 # .specify/gates/hooks/ — exactly where /speckit.gates.init puts them.
 # The policy enables only the linters present in this environment so the
 # healthy-suite expectation holds everywhere (a policy-enabled-but-missing
@@ -55,7 +55,8 @@ project_fixture() { # <dir>
         "$REPO_ROOT/extension/runtime/contract.sh" "$dir/.specify/gates/"
     cp "$REPO_ROOT/extension/runtime/lib/"*.sh "$dir/.specify/gates/lib/"
     cp "$REPO_ROOT/extension/runtime/hooks/claude/"*.sh "$dir/.claude/hooks/gates/"
-    cp "$REPO_ROOT/extension/runtime/hooks/git/pre-commit" "$dir/.specify/gates/hooks/"
+    cp "$REPO_ROOT/extension/runtime/hooks/git/pre-commit" \
+        "$REPO_ROOT/extension/runtime/hooks/git/commit-msg" "$dir/.specify/gates/hooks/"
     local policy='{"hooks":{"verify-quality":{"orchestrator":"none","severity":"error"}}}'
     if have_node_linters; then
         policy="$(printf '%s' "$policy" | jq -c '.hooks.prettier = {"include":["**/*.md"],"orchestrator":"none","severity":"error"}')"
@@ -84,9 +85,12 @@ project_fixture "$FIX"
 
 # --- healthy suite: every canary blocked, exit 0 ---
 echo "=== healthy checkout: canaries pass ==="
-expect "hook canaries (bash,protect,secret) -> exit 0" \
-    "$(canary "$FIX" --only bash,protect,secret)" 0
-JSON="$(CLAUDE_PROJECT_DIR="$FIX" bash "$FIX/.specify/gates/canary.sh" --json --only bash,protect,secret)"
+HOOK_CANARIES=bash,protect,secret,credential,protected,branding
+expect "hook canaries ($HOOK_CANARIES) -> exit 0" \
+    "$(canary "$FIX" --only "$HOOK_CANARIES")" 0
+JSON="$(CLAUDE_PROJECT_DIR="$FIX" bash "$FIX/.specify/gates/canary.sh" --json --only "$HOOK_CANARIES")"
+expect "hook canaries: all six ran" \
+    "$(printf '%s' "$JSON" | jq -r '.canaries | length')" 6
 expect "hook canaries all report status=blocked" \
     "$(printf '%s' "$JSON" | jq -r '[.canaries[].status] | unique | join(",")')" blocked
 expect "hook canaries report failed=0" \
