@@ -6,7 +6,7 @@ surface: policy
 ref: attestation.parity
 expect: error
 tags: [quality, project-type/service, project-type/spa]
-provenance: "accelno multi-repo corpus (2026): lockfile committed on every dep install"
+provenance: "downstream multi-repo corpus (2026): lockfile committed on every dep install"
 ---
 
 Every dependency install commits the resulting lockfile in the same change.

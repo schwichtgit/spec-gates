@@ -4,7 +4,7 @@ statement: "Errors surface loudly and are diagnosed at the root; no silent recov
 rationale: "Silent recovery and stand-in data hide the failure until it compounds; a loud stop is cheaper than a quiet lie."
 surface: prose
 tags: [quality, all-projects]
-provenance: "CPF-8 baseline (accelno corpus, 2026): fail loudly / never fabricate"
+provenance: "CPF-8 baseline (downstream corpus, 2026): fail loudly / never fabricate"
 ---
 
 Failures are made visible and traced to their root cause before work

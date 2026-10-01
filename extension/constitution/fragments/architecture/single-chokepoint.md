@@ -4,7 +4,7 @@ statement: "Each cross-cutting concern flows through exactly one chokepoint; the
 rationale: "Multiple entry points to the same concern guarantee one is eventually forgotten in a security or correctness path."
 surface: prose
 tags: [architecture, all-projects]
-provenance: "accelno corpus (2026): Nexus data access, baseQueryWithReauth, sanitizeForExcel single chokepoints"
+provenance: "downstream corpus (2026): single chokepoints for data access, auth refresh, and output sanitization"
 ---
 
 Every instance of a cross-cutting concern — data access, auth refresh, output

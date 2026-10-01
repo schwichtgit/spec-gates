@@ -5,7 +5,7 @@ rationale: "A machine-readable history is what makes changelogs, release automat
 surface: git-hook
 ref: commit-msg
 tags: [workflow, all-projects]
-provenance: "CPF-8 baseline (accelno corpus, 2026): types enumerated, no-emoji/no-AI-isms/no Co-Authored-By"
+provenance: "CPF-8 baseline (downstream corpus, 2026): types enumerated, no-emoji/no-AI-isms/no Co-Authored-By"
 ---
 
 Commit subjects follow Conventional Commits with a type from the project's

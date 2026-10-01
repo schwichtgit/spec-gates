@@ -5,7 +5,7 @@ rationale: "Direct-to-main commits were the top pre-CPF incident source; the bra
 surface: git-hook
 ref: pre-commit
 tags: [workflow, all-projects]
-provenance: "CPF-8 baseline (accelno corpus, 2026): CPF_ALLOW_MAIN_COMMIT=1 release-only escape"
+provenance: "CPF-8 baseline (downstream corpus, 2026): CPF_ALLOW_MAIN_COMMIT=1 release-only escape"
 ---
 
 Every change reaches `main` through a pull request. The git boundary refuses

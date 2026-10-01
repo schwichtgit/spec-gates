@@ -5,7 +5,7 @@ rationale: "A gate that fails on pre-existing debt gets disabled; scoping to the
 surface: ci
 ref: gates
 tags: [quality, all-projects]
-provenance: "accelno cortex/halo/excel corpus (2026): 85% diff coverage, whole-repo debt grandfathered"
+provenance: "downstream multi-repo corpus (2026): 85% diff coverage, whole-repo debt grandfathered"
 ---
 
 Quality gates evaluate the files a change actually touches. Pre-existing

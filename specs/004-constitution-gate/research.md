@@ -53,7 +53,7 @@ rationale: "Every CPF-era repo converged on this; direct-to-main commits were th
 surface: git-hook
 ref: pre-commit
 tags: [workflow, all-projects]
-provenance: "CPF-8 baseline (accelno corpus, 2026)"
+provenance: "CPF-8 baseline (downstream corpus, 2026)"
 ---
 <fragment body: the principle text as it should appear in a constitution>
 ```

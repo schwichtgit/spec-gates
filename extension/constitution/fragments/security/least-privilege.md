@@ -5,7 +5,7 @@ rationale: "Recurred across every infra repo; broad grants are the reversible mi
 surface: scanner
 ref: checkov:CKV_GCP_117
 tags: [security, project-type/infra, posture/regulated]
-provenance: "accelno gitops corpus (2026): Checkov CKV_GCP_117, WIF-only, no SA keys"
+provenance: "downstream gitops corpus (2026): Checkov CKV_GCP_117, WIF-only, no SA keys"
 ---
 
 Access is granted at the narrowest scope that works. Primitive or basic

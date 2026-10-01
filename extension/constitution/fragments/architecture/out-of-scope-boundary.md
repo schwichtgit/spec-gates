@@ -4,7 +4,7 @@ statement: "The repository names what it must not contain and which sibling owns
 rationale: "Unstated boundaries erode; an explicit out-of-scope list is what keeps a service from quietly absorbing its neighbors."
 surface: prose
 tags: [architecture, all-projects]
-provenance: "CPF-8 baseline (accelno corpus, 2026): out-of-scope section naming the owning sibling"
+provenance: "CPF-8 baseline (downstream corpus, 2026): out-of-scope section naming the owning sibling"
 ---
 
 The constitution states what this repository deliberately does not own, and

@@ -5,7 +5,7 @@ rationale: "A governance document an agent can quietly edit is not governance; t
 surface: agent-hook
 ref: protect-files.sh
 tags: [workflow, governance, all-projects]
-provenance: "CPF-8 baseline (accelno corpus, 2026): constitution immutable without human approval"
+provenance: "CPF-8 baseline (downstream corpus, 2026): constitution immutable without human approval"
 ---
 
 The constitution is amended only through a reviewed change with explicit
