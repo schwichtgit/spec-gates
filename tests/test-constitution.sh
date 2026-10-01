@@ -348,6 +348,25 @@ expect_state "align: removed git-hook missing" "$al2" "IV. Git Hook" "missing"
 expect_state "align: ci check absent missing" "$al2" "V. Ci" "missing"
 expect_state "align: scanner config absent missing" "$al2" "VII. Scanner" "missing"
 
+# git-hook through the stub (issue #59), and from a linked worktree, whose
+# --git-dir is .git/worktrees/<name> while hooks live in the shared dir.
+mkdir -p "$PROJ/.specify/gates/hooks"
+printf '#!/bin/sh\nexit 0\n' >"$PROJ/.specify/gates/hooks/pre-commit"
+cp "$REPO_ROOT/extension/runtime/hooks/git/stub.sh" "$PROJ/.git/hooks/pre-commit"
+chmod +x "$PROJ/.git/hooks/pre-commit"
+al3="$(CLAUDE_PROJECT_DIR="$PROJ" bash "$CONST" align --constitution "$PROJ/.specify/memory/constitution.md")"
+expect_state "align: stub with this branch's hook active" "$al3" "IV. Git Hook" "active"
+(
+    cd "$PROJ" && git config user.email t@example.com && git config user.name tester \
+        && git add -A && git commit -q --no-verify -m "chore: seed" \
+        && git worktree add -q -b feat/wt "$WORKDIR/const-wt"
+) >/dev/null 2>&1
+alw="$(CLAUDE_PROJECT_DIR="$WORKDIR/const-wt" bash "$CONST" align --constitution "$WORKDIR/const-wt/.specify/memory/constitution.md")"
+expect_state "align: git-hook active from a linked worktree" "$alw" "IV. Git Hook" "active"
+rm "$PROJ/.specify/gates/hooks/pre-commit"
+al4="$(CLAUDE_PROJECT_DIR="$PROJ" bash "$CONST" align --constitution "$PROJ/.specify/memory/constitution.md")"
+expect_state "align: stub whose branch hook is gone missing" "$al4" "IV. Git Hook" "missing"
+
 # expect mismatch: policy value present but not equal to expect -> missing.
 cat >"$PROJ/.specify/memory/const-mismatch.md" <<'EOF'
 # C

@@ -576,18 +576,20 @@ _gates_const_eval_git_hook() { # <ref> <root>
         echo pending-boundary
         return 0
     }
-    local gitdir hookdir hooks_path
-    gitdir="$(git -C "$root" rev-parse --git-dir)"
-    [[ "$gitdir" != /* ]] && gitdir="$root/$gitdir"
-    hooks_path="$(git -C "$root" config core.hooksPath 2>/dev/null || true)"
-    hookdir="$gitdir/hooks"
-    if [[ -n "$hooks_path" ]]; then
-        [[ "$hooks_path" != /* ]] && hooks_path="$root/$hooks_path"
-        hookdir="$hooks_path"
-    fi
+    # --git-path hooks: the directory git actually runs hooks from -- the
+    # shared one in a linked worktree (whose --git-dir is
+    # .git/worktrees/<name>), and core.hooksPath when set.
+    local hookdir
+    hookdir="$(git -C "$root" rev-parse --git-path hooks)"
+    [[ "$hookdir" != /* ]] && hookdir="$root/$hookdir"
     local hf="$hookdir/$ref"
     if [[ ! -f "$hf" || ! -x "$hf" ]]; then
         echo missing
+        return 0
+    fi
+    # A stub (issue #59) is only active while this branch's hook exists.
+    if grep -q 'spec-gates hook stub' "$hf" 2>/dev/null; then
+        [[ -f "$root/.specify/gates/hooks/$ref" ]] && echo active || echo missing
         return 0
     fi
     grep -q 'gates\|verify.sh' "$hf" 2>/dev/null && echo active || echo missing
