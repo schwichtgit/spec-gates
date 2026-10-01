@@ -21,9 +21,28 @@ if ! echo "$COMMAND" | grep -qE 'gh\s+pr\s+create'; then
     exit 0
 fi
 
+# AI-branding terms and allow phrases from policy (git.ai_branding), shared
+# with the commit-msg hook. Absent terms -> built-in list (empty JSON here).
+PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+POLICY_LIB="$PROJECT_ROOT/.specify/gates/lib/policy.sh"
+# shellcheck source=/dev/null disable=SC1091
+[[ -f "$POLICY_LIB" ]] && source "$POLICY_LIB"
+GATES_BRAND_TERMS=""
+GATES_BRAND_ALLOW="[]"
+if command -v gates_policy_path_list >/dev/null 2>&1; then
+    if _terms="$(gates_policy_path_list git ai_branding terms)"; then
+        GATES_BRAND_TERMS="$(printf '%s\n' "$_terms" | jq -R 'select(length > 0)' | jq -sc .)"
+    fi
+    GATES_BRAND_ALLOW="$( { gates_policy_path_list git ai_branding allow_phrases || true; } \
+        | jq -R 'select(length > 0)' | jq -sc .)"
+fi
+export GATES_BRAND_TERMS GATES_BRAND_ALLOW
+
 # Extract title and body from command
 VALIDATOR_SCRIPT=$(mktemp)
 cat > "$VALIDATOR_SCRIPT" << 'PYTHON_SCRIPT'
+import json
+import os
 import re
 import sys
 
@@ -42,15 +61,21 @@ body = body_match.group(1) if body_match else ""
 text = f"{title}\n{body}"
 violations = []
 
-# AI branding (allow "Claude Code" and legitimate Claude-file references)
-cleaned = re.sub(r'Claude Code', '', text)
+# AI branding (allow "Claude Code" and legitimate Claude-file references).
+# Policy allow phrases are exact text removed before both branding checks.
+terms_env = os.environ.get("GATES_BRAND_TERMS", "")
+terms = json.loads(terms_env) if terms_env else ["Anthropic", "GPT", "OpenAI", "Copilot"]
+branded = text
+for phrase in json.loads(os.environ.get("GATES_BRAND_ALLOW", "") or "[]"):
+    branded = branded.replace(phrase, "")
+cleaned = re.sub(r'Claude Code', '', branded)
 cleaned = re.sub(r'\([^)]*\)', '', cleaned)  # Remove parenthetical scopes
 cleaned = re.sub(r'[/\\]\S+', '', cleaned)   # Remove file paths
 cleaned = re.sub(r'CLAUDE\.md', '', cleaned, flags=re.IGNORECASE)   # memory file
 cleaned = re.sub(r'\.claude\S*', '', cleaned, flags=re.IGNORECASE)  # .claude/ paths
 cleaned = re.sub(r'claude-[\w.-]+', '', cleaned, flags=re.IGNORECASE)  # kebab ids
-for term in ["Anthropic", "GPT", "OpenAI", "Copilot"]:
-    if re.search(rf'\b{term}\b', cleaned, re.IGNORECASE):
+for term in terms:
+    if re.search(rf'\b{re.escape(term)}\b', cleaned, re.IGNORECASE):
         violations.append(f"AI branding: {term}")
 if re.search(r'\bClaude\b', cleaned, re.IGNORECASE):
     violations.append("Standalone 'Claude' (use 'Claude Code' instead)")

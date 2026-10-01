@@ -49,11 +49,13 @@
     "protected_files": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Files refused at the agent PreToolUse boundary and by the git forbidden-file scan, on top of the built-in secret/key defaults.",
+      "description": "Files refused at the agent PreToolUse boundary, on top of the built-in secret/key defaults. At the git boundary a staged match needs a Protected-Change trailer (see git.protected_change_trailer).",
       "properties": {
         "extra": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Additional paths or globs to protect."
         }
       }
@@ -77,6 +79,36 @@
           "type": "boolean",
           "default": true,
           "description": "Reject AI-ism / self-referential phrasing in commit messages and PRs."
+        },
+        "protected_change_trailer": {
+          "type": "boolean",
+          "default": true,
+          "description": "Let a staged protected_files.extra path through the git boundary only when the commit message carries a 'Protected-Change: <path>' trailer for every staged protected path plus 'Approved-By: <name>' (checked in commit-msg). false restores the unconditional pre-commit refusal. The agent boundary refuses protected edits either way."
+        },
+        "ai_branding": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "AI-branding rule of git.forbid_ai_isms, applied by commit-msg and the PR validator.",
+          "properties": {
+            "terms": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "default": ["Anthropic", "GPT", "OpenAI", "Copilot"],
+              "description": "Terms refused as whole words, case-insensitive, matched literally. An empty list disables the branding check (the standalone 'Claude' rule stays)."
+            },
+            "allow_phrases": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "default": [],
+              "description": "Exact, case-sensitive phrases removed from the message before the branding and standalone 'Claude' checks, e.g. a product or branch name that contains a term."
+            }
+          }
         }
       }
     },
@@ -122,13 +154,17 @@
         },
         "include": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "default": ["*"],
           "description": "Feature-directory-name globs eligible for enforcement when marked Complete. Non-matching complete features stay informational."
         },
         "exclude": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "default": [],
           "description": "Feature-directory-name globs skipped entirely (not discovered)."
         },
@@ -149,7 +185,11 @@
       "allOf": [
         {
           "if": {
-            "properties": { "orchestrator": { "const": "custom" } },
+            "properties": {
+              "orchestrator": {
+                "const": "custom"
+              }
+            },
             "required": ["orchestrator"]
           },
           "then": {
@@ -166,12 +206,16 @@
       "properties": {
         "include": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Glob patterns selecting files in scope. Consumed by config generators."
         },
         "exclude": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Glob patterns excluded from scope. Consumed by config generators."
         },
         "orchestrator": {

@@ -83,9 +83,33 @@ if policy_enabled forbid_ai_isms; then
         ERRORS=$((ERRORS + 1))
     fi
 
-    # AI branding
-    if echo "$MSG" | grep -qiE '\b(Anthropic|GPT|OpenAI|Copilot)\b'; then
-        echo "ERROR: AI branding detected." >&2
+    # AI branding (policy: git.ai_branding). Allow phrases are exact text
+    # removed before both branding checks; terms match as literal whole words,
+    # case-insensitive. Absent keys keep the built-in list; terms: [] disables.
+    BRAND_MSG="$MSG"
+    if command -v gates_policy_path_list >/dev/null 2>&1; then
+        while IFS= read -r _phrase; do
+            [[ -n "$_phrase" ]] && BRAND_MSG="${BRAND_MSG//"$_phrase"/}"
+        done < <(gates_policy_path_list git ai_branding allow_phrases || true)
+    fi
+    BRAND_TERMS=()
+    if command -v gates_policy_path_list >/dev/null 2>&1 \
+        && _terms="$(gates_policy_path_list git ai_branding terms)"; then
+        while IFS= read -r _term; do
+            [[ -n "$_term" ]] && BRAND_TERMS+=("$_term")
+        done <<<"$_terms"
+    else
+        BRAND_TERMS=(Anthropic GPT OpenAI Copilot)
+    fi
+    BRAND_HITS=""
+    for _term in ${BRAND_TERMS[@]+"${BRAND_TERMS[@]}"}; do
+        if printf '%s\n' "$BRAND_MSG" | grep -qiwF -e "$_term"; then
+            BRAND_HITS="${BRAND_HITS:+$BRAND_HITS, }$_term"
+        fi
+    done
+    if [[ -n "$BRAND_HITS" ]]; then
+        echo "ERROR: AI branding detected ($BRAND_HITS)." >&2
+        echo "  A legitimate phrase can be allowed via git.ai_branding.allow_phrases." >&2
         ERRORS=$((ERRORS + 1))
     fi
 
@@ -94,7 +118,7 @@ if policy_enabled forbid_ai_isms; then
     # ("Claude Code"), the memory file (CLAUDE.md, any casing), .claude/ paths
     # (hooks, settings), and claude-* kebab identifiers. Portable sed only (no
     # GNU-specific case-insensitive flag).
-    CLEANED_MSG=$(echo "$MSG" \
+    CLEANED_MSG=$(echo "$BRAND_MSG" \
         | sed 's/Claude Code//g' \
         | sed 's/[Cc][Ll][Aa][Uu][Dd][Ee]\.md//g' \
         | sed 's#\.claude/[^[:space:]]*##g' \
@@ -103,6 +127,55 @@ if policy_enabled forbid_ai_isms; then
     if echo "$CLEANED_MSG" | grep -qiE '\bClaude\b'; then
         echo "ERROR: Standalone 'Claude' detected (use 'Claude Code' if needed)." >&2
         ERRORS=$((ERRORS + 1))
+    fi
+fi
+
+# --- Protected files (policy: protected_files.extra, git.protected_change_trailer) ---
+# Issue #47. The agent boundary refuses protected edits outright; at the git
+# boundary a human commits, so a staged protected path passes only when the
+# message's trailer block declares it ("Protected-Change: <path>", one per
+# path) and names an approver ("Approved-By: <name>"). The trailer is an
+# auditable declaration, not a credential: real approval is CODEOWNERS plus
+# branch protection on the server.
+if command -v gates_staged_protected_paths >/dev/null 2>&1 \
+    && gates_protected_trailer_enabled; then
+    PROTECTED_STAGED="$(gates_staged_protected_paths)"
+    TRAILERS="$(git interpret-trailers --parse "$MSG_FILE" 2>/dev/null || true)"
+    trailer_values() { # <lowercase-key>
+        printf '%s\n' "$TRAILERS" | awk -v k="$1" '
+            { i = index($0, ":"); if (i == 0) next
+              key = tolower(substr($0, 1, i - 1)); gsub(/[[:space:]]+$/, "", key)
+              if (key != k) next
+              v = substr($0, i + 1); gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
+              if (v != "") print v }'
+    }
+    DECLARED="$(trailer_values protected-change)"
+    APPROVERS="$(trailer_values approved-by)"
+    if [[ -n "$PROTECTED_STAGED" || -n "$DECLARED" ]]; then
+        # Paths this commit changes. HEAD's own changes count too, so
+        # `git commit --amend` of a declared commit is not refused for a
+        # trailer whose file is no longer in the (amend-relative) index diff.
+        CHANGED="$(git diff --cached --name-only --no-renames 2>/dev/null || true)"
+        CHANGED="$CHANGED"$'\n'"$(git diff --name-only --no-renames HEAD^ HEAD 2>/dev/null || true)"
+        while IFS= read -r _p; do
+            [[ -z "$_p" ]] && continue
+            if ! printf '%s\n' "$DECLARED" | grep -qxF -e "$_p"; then
+                echo "ERROR: protected file staged without a declaration: $_p" >&2
+                echo "  Add the trailer:  Protected-Change: $_p" >&2
+                ERRORS=$((ERRORS + 1))
+            fi
+        done <<<"$PROTECTED_STAGED"
+        while IFS= read -r _p; do
+            [[ -z "$_p" ]] && continue
+            if ! printf '%s\n' "$CHANGED" | grep -qxF -e "$_p"; then
+                echo "ERROR: Protected-Change names a path this commit does not change: $_p" >&2
+                ERRORS=$((ERRORS + 1))
+            fi
+        done <<<"$DECLARED"
+        if [[ -n "$PROTECTED_STAGED" && -z "$APPROVERS" ]]; then
+            echo "ERROR: protected change without an approver (add the trailer:  Approved-By: <name>)." >&2
+            ERRORS=$((ERRORS + 1))
+        fi
     fi
 fi
 

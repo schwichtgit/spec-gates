@@ -186,6 +186,28 @@ else
 fi
 TOTAL=$((TOTAL + 1))
 
+if grep -q "protected-change trailer enabled" "$GB/out.txt"; then
+    echo "PASS: protected-change trailer reported enabled by default"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL: protected-change trailer default (got: $(grep 'protected-change' "$GB/out.txt" || echo none))"
+    FAIL=$((FAIL + 1))
+fi
+TOTAL=$((TOTAL + 1))
+printf '%s' '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } }, "git": { "protected_change_trailer": false } }' \
+    >"$GB/.specify/gates/policy.json"
+expect "protected-change trailer off -> still exit 0" "$(run_doctor "$GB")" 0
+if grep -q "protected-change trailer disabled" "$GB/out.txt"; then
+    echo "PASS: protected-change trailer reported disabled"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL: protected-change trailer disabled report (got: $(grep 'protected-change' "$GB/out.txt" || echo none))"
+    FAIL=$((FAIL + 1))
+fi
+TOTAL=$((TOTAL + 1))
+printf '%s' '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } } }' \
+    >"$GB/.specify/gates/policy.json"
+
 chmod -x "$GB/.git/hooks/commit-msg"
 expect "non-executable installed hook -> exit 1 (silent enforcement loss)" "$(run_doctor "$GB")" 1
 if grep -q "commit-msg installed but NOT executable" "$GB/out.txt"; then

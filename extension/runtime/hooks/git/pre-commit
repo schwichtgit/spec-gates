@@ -114,8 +114,11 @@ check_for_secrets() {
         return 1
     fi
 
-    # Generic password/secret/token assignments
-    if echo "$content" | grep -qiE '(password|secret|api_key|token)\s*[=:]\s*["\x27][^\s"'\'']{8,}'; then
+    # Generic password/secret/token assignments. POSIX classes only: inside a
+    # bracket expression `\s` and `\x27` are literal characters, so the old
+    # `[^\s"']` matched spaces and flagged prose such as the runtime's own
+    # `"unparseable token: " kv` (issue #50).
+    if echo "$content" | grep -qiE '(password|secret|api_key|token)[[:space:]]*[=:][[:space:]]*["'\''][^[:space:]"'\'']{8,}'; then
         echo "  SECRET: Possible credential assignment in $file" >&2
         return 1
     fi
@@ -123,24 +126,14 @@ check_for_secrets() {
     return 0
 }
 
-# Collect policy-declared extra protected paths (protected_files.extra) once.
-PROTECTED_EXTRA=()
-if command -v gates_policy_section_list >/dev/null 2>&1; then
-    while IFS= read -r _entry; do
-        [[ -n "$_entry" ]] && PROTECTED_EXTRA+=("$_entry")
-    done < <(gates_policy_section_list protected_files extra)
+# Staged protected_files.extra paths (issue #47). With
+# git.protected_change_trailer on (the default) they are allowed through to
+# commit-msg, which requires a Protected-Change trailer per path plus
+# Approved-By; pre-commit only announces them. Off, the old refusal applies.
+PROTECTED_STAGED=""
+if command -v gates_staged_protected_paths >/dev/null 2>&1; then
+    PROTECTED_STAGED="$(gates_staged_protected_paths)"
 fi
-
-file_is_policy_protected() { # <rel_path>
-    local f="$1" e
-    [[ "${#PROTECTED_EXTRA[@]}" -eq 0 ]] && return 1
-    for e in "${PROTECTED_EXTRA[@]}"; do
-        if gates_glob_match "$f" "$e" || [[ "$(basename "$f")" == "$e" ]]; then
-            return 0
-        fi
-    done
-    return 1
-}
 
 # --- Git-specific safety pass over staged files ---
 echo "Pre-commit: scanning staged files for secrets and forbidden paths..."
@@ -152,17 +145,26 @@ for file in $STAGED_FILES; do
         continue
     fi
 
-    if file_is_policy_protected "$file"; then
-        echo "BLOCKED: policy-protected file staged: $file" >&2
-        ERRORS=$((ERRORS + 1))
-        continue
-    fi
-
     if ! check_for_secrets "$file"; then
         ERRORS=$((ERRORS + 1))
         continue
     fi
 done
+
+if [[ -n "$PROTECTED_STAGED" ]]; then
+    if gates_protected_trailer_enabled; then
+        echo "Pre-commit: $(printf '%s\n' "$PROTECTED_STAGED" | wc -l | tr -d ' ') protected file(s) staged; the commit message needs one trailer per path plus an approver:"
+        while IFS= read -r f; do
+            echo "    Protected-Change: $f"
+        done <<<"$PROTECTED_STAGED"
+        echo "    Approved-By: <name>"
+    else
+        while IFS= read -r f; do
+            echo "BLOCKED: policy-protected file staged: $f" >&2
+            ERRORS=$((ERRORS + 1))
+        done <<<"$PROTECTED_STAGED"
+    fi
+fi
 
 # --- Shared quality gate (identical to the agent and CI boundaries) ---
 if [[ "${GATES_SKIP:-0}" != "1" ]]; then

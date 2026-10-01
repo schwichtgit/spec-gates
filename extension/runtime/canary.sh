@@ -17,6 +17,12 @@ set -uo pipefail
 #   bash    -- `rm -rf /` tool call   -> validate-bash.sh hook     (exit 2)
 #   protect -- `.env` edit tool call  -> protect-files.sh hook     (exit 2)
 #   secret  -- staged AWS-key string  -> pre-commit secret scan    (blocked)
+#   credential -- staged `token: '...'` assignment
+#                                     -> pre-commit generic scan   (blocked)
+#   protected -- staged protected file, no Protected-Change trailer
+#                                     -> commit-msg trailer check  (blocked)
+#   branding -- commit message naming a default AI-branding term
+#                                     -> commit-msg branding rule  (blocked)
 #   spec    -- Complete feature with a failing accept block
 #                                     -> verify.sh spec gate       (exit 2)
 #   contract -- tampered effective policy in a synced sandbox
@@ -49,7 +55,7 @@ done
 CANARY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 
-CANARY_SET="format shell bash protect secret spec contract"
+CANARY_SET="format shell bash protect secret credential protected branding spec contract"
 
 if [[ -n "$ONLY" ]]; then
     IFS=',' read -r -a _only_ids <<<"$ONLY"
@@ -136,10 +142,13 @@ claude_hook() { # <script-name>
     return 1
 }
 
-pre_commit_hook() {
+pre_commit_hook() { git_hook pre-commit; }
+commit_msg_hook() { git_hook commit-msg; }
+
+git_hook() { # <name>
     local f
-    for f in "$PROJECT_ROOT/.specify/gates/hooks/pre-commit" \
-        "$PROJECT_ROOT/extension/runtime/hooks/git/pre-commit"; do
+    for f in "$PROJECT_ROOT/.specify/gates/hooks/$1" \
+        "$PROJECT_ROOT/extension/runtime/hooks/git/$1"; do
         if [[ -f "$f" ]]; then
             printf '%s\n' "$f"
             return 0
@@ -292,6 +301,89 @@ run_secret_canary() {
 }
 
 # ---------------------------------------------------------------------------
+# Git-hook sandbox: a repo on a non-main branch with <hooks...> installed and
+# the projected policy lib, so policy-reading hooks behave as in a project.
+# Echoes the sandbox path. Probes run with CLAUDE_PROJECT_DIR pointed at the
+# sandbox: the policy loader prefers it over the git toplevel, so an inherited
+# value would judge the probe by the host project's policy.
+# ---------------------------------------------------------------------------
+git_sandbox() { # <id> <policy-json> <hook-path>...
+    local id="$1" policy="$2"
+    shift 2
+    local d="$WORKDIR/$id"
+    mkdir -p "$d/.specify/gates/lib" || setup_fail "$id sandbox"
+    git init -q "$d" >/dev/null 2>&1 || setup_fail "$id git init"
+    git -C "$d" checkout -q -b canary-probe 2>/dev/null || setup_fail "$id branch"
+    git -C "$d" config user.email canary@example.invalid
+    git -C "$d" config user.name "gates-canary"
+    cp "$CANARY_DIR/lib/"*.sh "$d/.specify/gates/lib/" || setup_fail "$id lib"
+    printf '%s\n' "$policy" >"$d/.specify/gates/policy.json"
+    local h
+    for h in "$@"; do
+        cp "$h" "$d/.git/hooks/$(basename "$h")" || setup_fail "$id install hook"
+        chmod +x "$d/.git/hooks/$(basename "$h")"
+    done
+    printf '%s\n' "$d"
+}
+
+# Credential canary (issue #50): the generic assignment scan still blocks a
+# single-quoted token after the POSIX-class fix (the pre-fix regex never
+# matched single quotes at all).
+run_credential_canary() {
+    local hook
+    if ! command -v git >/dev/null 2>&1 || ! hook="$(pre_commit_hook)"; then
+        record credential skipped "git or pre-commit hook missing — enforcement gap (generic credential scan)" 1
+        return 0
+    fi
+    local d out rc=0
+    d="$(git_sandbox credential '{ "hooks": {} }' "$hook")"
+    printf "token: '%s'\n" "abcdefgh12" >"$d/conf.yml"
+    out="$(cd "$d" && git add conf.yml && CLAUDE_PROJECT_DIR="$d" git commit -q -m 'chore: canary credential probe' 2>&1)" || rc=$?
+    if [[ "$rc" -ne 0 ]] && printf '%s' "$out" | grep -q 'credential assignment'; then
+        record credential blocked "pre-commit refused a staged token assignment" 0
+    else
+        record credential accepted "a staged token assignment was not refused by the generic credential scan (exit $rc)" 1
+    fi
+}
+
+# Protected canary (issue #47): a staged protected_files.extra path with no
+# Protected-Change trailer must be refused by commit-msg.
+run_protected_canary() {
+    local pre msg
+    if ! command -v git >/dev/null 2>&1 || ! pre="$(pre_commit_hook)" || ! msg="$(commit_msg_hook)"; then
+        record protected skipped "git or git hooks missing — enforcement gap (protected-change trailer)" 1
+        return 0
+    fi
+    local d out rc=0
+    d="$(git_sandbox protected '{ "hooks": {}, "protected_files": { "extra": ["charter.md"] } }' "$pre" "$msg")"
+    printf '# charter\n' >"$d/charter.md"
+    out="$(cd "$d" && git add charter.md && CLAUDE_PROJECT_DIR="$d" git commit -q -m 'chore: canary protected probe' 2>&1)" || rc=$?
+    if [[ "$rc" -ne 0 ]] && printf '%s' "$out" | grep -q 'protected file staged without a declaration'; then
+        record protected blocked "commit-msg refused a protected file staged without a Protected-Change trailer" 0
+    else
+        record protected accepted "a protected file was committed without a Protected-Change trailer (exit $rc)" 1
+    fi
+}
+
+# Branding canary (issue #52): the default AI-branding list still refuses.
+run_branding_canary() {
+    local msg
+    if ! command -v git >/dev/null 2>&1 || ! msg="$(commit_msg_hook)"; then
+        record branding skipped "git or commit-msg hook missing — enforcement gap (AI-branding rule)" 1
+        return 0
+    fi
+    local d out rc=0
+    d="$(git_sandbox branding '{ "hooks": {} }' "$msg")"
+    printf 'x\n' >"$d/x.txt"
+    out="$(cd "$d" && git add x.txt && CLAUDE_PROJECT_DIR="$d" git commit -q -m 'feat: written with Copilot' 2>&1)" || rc=$?
+    if [[ "$rc" -ne 0 ]] && printf '%s' "$out" | grep -q 'AI branding detected'; then
+        record branding blocked "commit-msg refused a message naming a default AI-branding term" 0
+    else
+        record branding accepted "a message naming a default AI-branding term was accepted (exit $rc)" 1
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # Spec canary (feature 002, R8): a sandbox feature marked Complete with a
 # `false` accept block must be rejected by the sandboxed spec gate. The run
 # clears GATES_SPEC_EXEC so the canary still probes the spec gate when the
@@ -367,6 +459,9 @@ for id in $CANARY_SET; do
         bash) run_bash_canary ;;
         protect) run_protect_canary ;;
         secret) run_secret_canary ;;
+        credential) run_credential_canary ;;
+        protected) run_protected_canary ;;
+        branding) run_branding_canary ;;
         spec) run_spec_canary ;;
         contract) run_contract_canary ;;
     esac

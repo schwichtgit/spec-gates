@@ -124,6 +124,70 @@ gates_glob_match() {
     return 1
 }
 
+# Read an array at a nested path, one element per line, e.g.
+# gates_policy_path_list git ai_branding terms. Returns 1 when the key is
+# absent (or not an array) so callers can tell "absent -> use defaults" from
+# "present but empty -> disabled".
+gates_policy_path_list() {
+    [[ $# -gt 0 ]] || return 1
+    local file path_json out
+    file="$(gates_policy_file)"
+    [[ -f "$file" ]] || return 1
+    path_json="$(printf '%s\n' "$@" | jq -R . | jq -sc .)" || return 1
+    out="$(jq -r --argjson p "$path_json" '
+        (try getpath($p) catch null) as $v
+        | if ($v | type) == "array" then "+", ($v[] | tostring) else "-" end
+    ' "$file" 2>/dev/null)" || return 1
+    [[ "${out%%$'\n'*}" == "+" ]] || return 1
+    [[ "$out" == *$'\n'* ]] && printf '%s\n' "${out#*$'\n'}"
+    return 0
+}
+
+# Protected-change trailer switch (git.protected_change_trailer, default on).
+gates_protected_trailer_enabled() {
+    [[ "$(gates_policy_section_get git protected_change_trailer)" != "false" ]]
+}
+
+# protected_files.extra as the UNION of the worktree policy and HEAD's
+# committed policy (issue #47). Reading HEAD's copy means a staged policy.json
+# that drops its own protection is still judged by the protection it removes.
+# HEAD's effective policy is used when its overlay extends a baseline.
+gates_protected_list() {
+    local tmp
+    {
+        gates_policy_section_list protected_files extra
+        tmp="$(mktemp 2>/dev/null || mktemp -t gates-policy)" || tmp=""
+        if [[ -n "$tmp" ]] && git show HEAD:.specify/gates/policy.json >"$tmp" 2>/dev/null; then
+            if jq -e 'has("extends")' "$tmp" >/dev/null 2>&1; then
+                git show HEAD:.specify/gates/policy.effective.json >"$tmp" 2>/dev/null || true
+            fi
+            GATES_POLICY_FILE="$tmp" gates_policy_section_list protected_files extra
+        fi
+        [[ -n "$tmp" ]] && rm -f "$tmp"
+    } | awk 'NF && !seen[$0]++'
+}
+
+# Paths in the index (added, modified, deleted; renames split into delete +
+# add) that match a protected entry, one per line. Deleting or renaming away
+# a protected file is a protected change too.
+gates_staged_protected_paths() {
+    local -a pats=()
+    local e f
+    while IFS= read -r e; do
+        [[ -n "$e" ]] && pats+=("$e")
+    done < <(gates_protected_list)
+    [[ "${#pats[@]}" -eq 0 ]] && return 0
+    while IFS= read -r f; do
+        [[ -z "$f" ]] && continue
+        for e in "${pats[@]}"; do
+            if gates_glob_match "$f" "$e" || [[ "$(basename "$f")" == "$e" ]]; then
+                printf '%s\n' "$f"
+                break
+            fi
+        done
+    done < <(git diff --cached --name-only --no-renames --diff-filter=ACMRD 2>/dev/null)
+}
+
 gates_validate_policy() {
     local file="${1:-}"
     if [[ -z "$file" ]]; then
@@ -196,7 +260,9 @@ gates_validate_policy() {
     # sections.
     local section_errors
     section_errors="$(jq -r '
-        def git_keys: ["block_main_commits", "conventional_commits", "forbid_ai_isms"];
+        def git_keys: ["block_main_commits", "conventional_commits", "forbid_ai_isms", "protected_change_trailer", "ai_branding"];
+        def git_bool_keys: ["block_main_commits", "conventional_commits", "forbid_ai_isms", "protected_change_trailer"];
+        def brand_keys: ["terms", "allow_phrases"];
         def att_keys: ["enabled", "max_records", "parity"];
         def parity_values: ["error", "warning", "off"];
         def spec_keys: ["enabled", "severity", "include", "exclude", "timeout_s"];
@@ -220,7 +286,18 @@ gates_validate_policy() {
                 | if ($g | type) != "object" then ["git: must be an object"]
                   else
                     [ $g | to_entries[] | select((.key | IN(git_keys[])) | not) | "git: unknown field \"\(.key)\"" ]
-                    + [ $g | to_entries[] | select(.key | IN(git_keys[])) | select((.value | type) != "boolean") | "git: \(.key) must be a boolean" ]
+                    + [ $g | to_entries[] | select(.key | IN(git_bool_keys[])) | select((.value | type) != "boolean") | "git: \(.key) must be a boolean" ]
+                    + ( if ($g | has("ai_branding")) then
+                          ($g.ai_branding) as $b
+                          | if ($b | type) != "object" then ["git: ai_branding must be an object"]
+                            else
+                              [ $b | keys[] | select(IN(brand_keys[]) | not) | "git: ai_branding: unknown field \"\(.)\"" ]
+                              + [ brand_keys[] as $k | select($b | has($k))
+                                  | if ($b[$k] | type) != "array" then "git: ai_branding.\($k) must be an array of strings"
+                                    elif any($b[$k][]; type != "string" or length == 0) then "git: ai_branding.\($k) entries must be non-empty strings"
+                                    else empty end ]
+                            end
+                        else [] end )
                   end
             else [] end;
         def att_errors:

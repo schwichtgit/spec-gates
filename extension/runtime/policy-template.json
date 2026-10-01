@@ -59,7 +59,12 @@
   "git": {
     "block_main_commits": true,
     "conventional_commits": true,
-    "forbid_ai_isms": true
+    "forbid_ai_isms": true,
+    "protected_change_trailer": true,
+    "ai_branding": {
+      "terms": ["Anthropic", "GPT", "OpenAI", "Copilot"],
+      "allow_phrases": []
+    }
   },
   "attestation": {
     "enabled": true,

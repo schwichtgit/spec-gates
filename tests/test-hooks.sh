@@ -150,13 +150,29 @@ printf '%s' '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severit
 check "git.block_main_commits=false -> main commit allowed" 0 \
     bash -c "cd '$GF' && git switch -q main && echo c >c.txt && git add c.txt && git commit -q -m 'chore: c'"
 
-# pre-commit consumes protected_files.extra: staging a listed file is refused.
-printf '%s' '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error", "custom_command": "true" } }, "git": { "block_main_commits": false }, "protected_files": { "extra": ["secrets.txt", "infra/**"] } }' \
+# git.protected_change_trailer=false: pre-commit refuses a staged
+# protected_files.extra entry outright (the pre-0.3.4 behaviour).
+printf '%s' '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error", "custom_command": "true" } }, "git": { "block_main_commits": false, "protected_change_trailer": false }, "protected_files": { "extra": ["secrets.txt", "infra/**"] } }' \
     >"$GF/.specify/gates/policy.json"
 check "protected_files.extra -> staged listed file blocked" 1 \
     bash -c "cd '$GF' && echo x >secrets.txt && git add secrets.txt && git commit -q -m 'chore: s'"
 check "protected_files.extra glob -> staged match blocked" 1 \
     bash -c "cd '$GF' && mkdir -p infra && echo x >infra/main.tf && git add infra/main.tf && git commit -q -m 'chore: tf'"
+
+( cd "$GF" && git reset -q -- . >/dev/null 2>&1; rm -rf secrets.txt infra )
+
+# Secret scan regression (issue #50): the whole gates runtime commits clean,
+# while real credential assignments are still refused.
+check "secret scan: entire runtime commits clean" 0 \
+    bash -c "cd '$GF' && mkdir -p vendored && cp -R '$REPO_ROOT/extension/runtime/.' vendored/ && git add vendored && git commit -q -m 'chore: vendor runtime'"
+check "secret scan: constitution.sh:178 prose line passes" 0 \
+    bash -c "cd '$GF' && printf '%s\n' '  if (eq == 0) { bad = \"unparseable token: \" kv; break }' >prose.awk && git add prose.awk && git commit -q -m 'chore: prose'"
+check "secret scan: api_key = \"AKIA...\" blocked" 1 \
+    bash -c "cd '$GF' && printf 'api_key = \"%s\"\n' AKIAabcdefgh >k1.txt && git add k1.txt && git commit -q -m 'chore: k1'"
+( cd "$GF" && git reset -q -- . >/dev/null 2>&1; rm -f k1.txt )
+check "secret scan: token: 'abcdefgh12' blocked" 1 \
+    bash -c "cd '$GF' && printf \"token: 'abcdefgh12'\\n\" >k2.txt && git add k2.txt && git commit -q -m 'chore: k2'"
+( cd "$GF" && git reset -q -- . >/dev/null 2>&1; rm -f k2.txt )
 
 # Forbidden-file allowlist: template/example files are committable even when
 # the base name looks sensitive; real secret files still blocked.
@@ -212,6 +228,86 @@ printf '%s' '{ "hooks": {}, "git": { "conventional_commits": false, "forbid_ai_i
 printf 'random subject no type\n\nI have done it, seamless work.\n' >"$MSGF"
 check "commit-msg: both toggles off -> allowed" 0 \
     bash -c "cd '$CMD' && CLAUDE_PROJECT_DIR='$CMD' bash '$CM' '$MSGF'"
+
+# ===========================================================================
+# Part E2: protected-change trailers (issue #47). Both git hooks installed;
+# protected paths pass only with a Protected-Change trailer per staged path
+# plus Approved-By, judged against HEAD's policy as well as the worktree's.
+# ===========================================================================
+echo ""
+echo "=== commit-msg: Protected-Change trailers ==="
+PT="$WORKDIR/protected"
+mkdir -p "$PT"
+git -C "$PT" init -q -b main
+git -C "$PT" config user.email t@example.com
+git -C "$PT" config user.name tester
+project_runtime "$PT" "true"
+cp "$GITHOOKS/pre-commit" "$GITHOOKS/commit-msg" "$PT/.git/hooks/"
+chmod +x "$PT/.git/hooks/pre-commit" "$PT/.git/hooks/commit-msg"
+printf '%s' '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error", "custom_command": "true" } }, "git": { "block_main_commits": false }, "protected_files": { "extra": ["const.md", ".specify/gates/policy.json"] } }' \
+    >"$PT/.specify/gates/policy.json"
+echo "# c" >"$PT/const.md"
+( cd "$PT" && git add -A ) >/dev/null 2>&1
+PTM="$WORKDIR/pt-msg.txt"
+
+printf 'chore: seed\n' >"$PTM"
+check "protected: staged without trailer blocked" 1 bash -c "cd '$PT' && git commit -q -F '$PTM'"
+printf 'chore: seed\n\nProtected-Change: const.md\nApproved-By: Reviewer\n' >"$PTM"
+check "protected: trailer covering only some paths blocked" 1 bash -c "cd '$PT' && git commit -q -F '$PTM'"
+printf 'chore: seed\n\nProtected-Change: const.md\nProtected-Change: .specify/gates/policy.json\n' >"$PTM"
+check "protected: full trailers but no Approved-By blocked" 1 bash -c "cd '$PT' && git commit -q -F '$PTM'"
+printf 'chore: seed\n\nProtected-Change: const.md\nProtected-Change: .specify/gates/policy.json\n\nApproved-By: Reviewer\n' >"$PTM"
+check "protected: declaration outside the trailer block blocked" 1 bash -c "cd '$PT' && git commit -q -F '$PTM'"
+printf 'chore: seed\n\nProtected-Change: const.md\nProtected-Change: .specify/gates/policy.json\nApproved-By: Reviewer\n' >"$PTM"
+check "protected: correct trailers pass" 0 bash -c "cd '$PT' && git commit -q -F '$PTM'"
+
+printf 'feat: a\n\nProtected-Change: const.md\nApproved-By: Reviewer\n' >"$PTM"
+check "protected: trailer naming an unstaged path blocked" 1 \
+    bash -c "cd '$PT' && echo a >a.txt && git add a.txt && git commit -q -F '$PTM'"
+( cd "$PT" && git reset -q -- . >/dev/null 2>&1; rm -f a.txt )
+
+printf '%s' '{ "hooks": {} }' >"$PT/.specify/gates/policy.json"
+printf 'chore: drop protection\n' >"$PTM"
+check "protected: weakening staged policy still needs a trailer (HEAD policy)" 1 \
+    bash -c "cd '$PT' && git add -A && git commit -q -F '$PTM'"
+( cd "$PT" && git reset -q --hard >/dev/null 2>&1 )
+
+printf 'chore: remove const\n' >"$PTM"
+check "protected: deleting a protected file needs a trailer" 1 \
+    bash -c "cd '$PT' && git rm -q const.md && git commit -q -F '$PTM'"
+printf 'chore: remove const\n\nProtected-Change: const.md\nApproved-By: Reviewer\n' >"$PTM"
+check "protected: declared deletion passes" 0 bash -c "cd '$PT' && git commit -q -F '$PTM'"
+printf 'chore: remove the const file\n\nProtected-Change: const.md\nApproved-By: Reviewer\n' >"$PTM"
+check "protected: message-only amend of a declared commit passes" 0 \
+    bash -c "cd '$PT' && git commit -q --amend -F '$PTM'"
+
+# ===========================================================================
+# Part E3: configurable AI branding (git.ai_branding, issue #52)
+# ===========================================================================
+echo ""
+echo "=== commit-msg: git.ai_branding ==="
+AB="$WORKDIR/branding"
+project_runtime "$AB" "true"
+git -C "$AB" init -q
+abcheck() { # <name> <expect> <msg>
+    printf '%b' "$3" >"$MSGF"
+    check "$1" "$2" bash -c "cd '$AB' && CLAUDE_PROJECT_DIR='$AB' bash '$CM' '$MSGF'"
+}
+abcheck "branding: default refuses Copilot" 1 'feat: Acme Copilot add-in\n'
+abcheck "branding: default refuses GPT-4" 1 'feat: support GPT-4\n'
+abcheck "branding: default ignores embedded substrings" 0 'feat: copilotage support\n'
+printf '%s' '{ "hooks": {}, "git": { "ai_branding": { "allow_phrases": ["Acme Copilot", "feat/acme-copilot"] } } }' \
+    >"$AB/.specify/gates/policy.json"
+abcheck "branding: allow phrases pass" 0 'feat: Acme Copilot add-in\n\nFrom feat/acme-copilot.\n'
+abcheck "branding: bare term elsewhere still refused" 1 'feat: Acme Copilot add-in\n\nWritten with Copilot.\n'
+abcheck "branding: allow phrases are case-sensitive" 1 'feat: acme copilot add-in\n'
+printf '%s' '{ "hooks": {}, "git": { "ai_branding": { "terms": [] } } }' >"$AB/.specify/gates/policy.json"
+abcheck "branding: terms [] disables the term list" 0 'feat: OpenAI client\n'
+abcheck "branding: terms [] keeps the standalone Claude rule" 1 'feat: x\n\nGenerated by Claude.\n'
+printf '%s' '{ "hooks": {}, "git": { "ai_branding": { "allow_phrases": ["Claude Haiku"] } } }' >"$AB/.specify/gates/policy.json"
+abcheck "branding: allow phrase also exempts standalone Claude" 0 'feat: support Claude Haiku\n'
+check "validate-pr: allow phrase passes" 0 bash -c "printf '%s' '{\"hooks\":{},\"git\":{\"ai_branding\":{\"allow_phrases\":[\"Acme Copilot\"]}}}' >'$AB/.specify/gates/policy.json' && echo '{\"tool_input\":{\"command\":\"gh pr create --title \\\"feat: x\\\" --body \\\"Ships Acme Copilot\\\"\"}}' | CLAUDE_PROJECT_DIR='$AB' bash '$HOOKS/validate-pr.sh'"
+check "validate-pr: bare term still refused" 2 bash -c "echo '{\"tool_input\":{\"command\":\"gh pr create --title \\\"feat: x\\\" --body \\\"Uses Copilot\\\"\"}}' | CLAUDE_PROJECT_DIR='$AB' bash '$HOOKS/validate-pr.sh'"
 
 # ===========================================================================
 # Part F: the auto-format hooks actually format (they resolve the runtime lib
