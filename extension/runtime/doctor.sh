@@ -258,7 +258,7 @@ if git -C "$PROJECT_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
             if [[ -f "$PROJECT_ROOT/.specify/gates/hooks/$h" ]]; then
                 echo "${OK}$h installed as a stub, runs this branch's .specify/gates/hooks/$h"
             else
-                echo "${BAD}$h stub installed but .specify/gates/hooks/$h is missing — the stub skips, so this branch is unenforced (fix: /speckit.gates.upgrade)"
+                echo "${BAD}$h stub installed but .specify/gates/hooks/$h is missing — the stub refuses every commit on this branch until it is restored (fix: /speckit.gates.upgrade)"
                 MISSING=$((MISSING + 1))
             fi
         elif ! grep -q 'gates\|verify.sh' "$hf" 2>/dev/null; then

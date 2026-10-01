@@ -34,6 +34,9 @@ There are exactly three such places in an agentic workflow:
    projected runtime is per branch, so the stub runs the checked-out
    branch's `.specify/gates/hooks/<name>`. The hook version always
    matches the branch's runtime, and an upgrade needs no hook reinstall.
+   A branch from before gates was adopted has no runtime and is skipped.
+   A branch that has a runtime but deleted its hooks is refused, so
+   removing the hooks cannot quietly turn enforcement off.
 
    Protected files get different treatment at the two local boundaries.
    The agent may never edit them. At the git boundary a human is the

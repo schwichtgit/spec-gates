@@ -16,8 +16,16 @@ root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
 }
 hook="$root/.specify/gates/hooks/$name"
 if [ ! -f "$hook" ]; then
+    if [ -d "$root/.specify/gates" ]; then
+        # The branch has a gates runtime but its hook is gone (every
+        # release projects hooks here): deleting it must not silently
+        # turn enforcement off. Fail closed.
+        echo "gates: $name refused -- .specify/gates exists but $hook is missing" >&2
+        echo "  Restore it (/speckit.gates.upgrade) rather than committing around it." >&2
+        exit 1
+    fi
     # A branch from before gates was adopted has nothing to enforce.
-    echo "gates: $name skipped -- this branch has no projected gates hook ($hook)" >&2
+    echo "gates: $name skipped -- this branch has no gates runtime" >&2
     exit 0
 fi
 exec bash "$hook" "$@"

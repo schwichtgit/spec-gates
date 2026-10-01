@@ -374,6 +374,11 @@ check "stub: another branch runs that branch's hook" 0 \
     bash -c "cd '$ST' && git commit -q --allow-empty -m 'bad subject' 2>'$WORKDIR/stub.err' && grep -q 'other-branch hook ran' '$WORKDIR/stub.err'"
 check "stub: switching back restores this branch's hook" 1 \
     bash -c "cd '$ST' && git switch -q feat/current && git commit -q --allow-empty -m 'bad subject'"
+check "stub: deleting the branch's hooks fails closed, not open" 1 \
+    bash -c "cd '$ST' && git rm -q .specify/gates/hooks/pre-commit .specify/gates/hooks/commit-msg && git commit -q -m 'chore: drop hooks' 2>'$WORKDIR/stub.err'"
+check "stub: the refusal names the missing hook" 0 \
+    grep -q "refused -- .specify/gates exists" "$WORKDIR/stub.err"
+( cd "$ST" && git reset -q --hard >/dev/null 2>&1 )
 (
     # --orphan empties the index and removes tracked files; drop leftovers.
     cd "$ST" && git switch -q --orphan pre-adoption && rm -rf .specify
