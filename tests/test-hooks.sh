@@ -301,6 +301,43 @@ check "protected: message-only amend of a declared commit passes" 0 \
     bash -c "cd '$PT' && git commit -q --amend -F '$PTM'"
 
 # ===========================================================================
+# Part E2b: hook/runtime version skew. .git/hooks is shared by every branch,
+# the projected runtime is not: a branch still on the v0.3.3 runtime must
+# keep committing under the current hooks (message rules skipped with a
+# warning) while protected files keep that runtime's refusal.
+# ===========================================================================
+echo ""
+echo "=== hook/runtime version skew (current hooks, v0.3.3 runtime) ==="
+if git -C "$REPO_ROOT" rev-parse -q --verify v0.3.3 >/dev/null 2>&1; then
+    SK="$WORKDIR/skew"
+    mkdir -p "$SK/.specify/gates/lib"
+    git -C "$SK" init -q -b feat/old
+    git -C "$SK" config user.email t@example.com
+    git -C "$SK" config user.name tester
+    for f in $(git -C "$REPO_ROOT" ls-tree --name-only v0.3.3 extension/runtime/lib/); do
+        git -C "$REPO_ROOT" show "v0.3.3:$f" >"$SK/.specify/gates/lib/$(basename "$f")"
+    done
+    echo "0.3.3" >"$SK/.specify/gates/.runtime-version"
+    printf '%s' '{ "hooks": {}, "protected_files": { "extra": ["const.md"] } }' >"$SK/.specify/gates/policy.json"
+    cp "$GITHOOKS/pre-commit" "$GITHOOKS/commit-msg" "$SK/.git/hooks/"
+    chmod +x "$SK/.git/hooks/pre-commit" "$SK/.git/hooks/commit-msg"
+    check "skew: plain commit on a v0.3.3 branch still passes" 0 \
+        bash -c "cd '$SK' && echo a >a.txt && git add -A && git commit -q -m 'feat: a' 2>'$WORKDIR/skew.err'"
+    check "skew: the skipped message rules are announced" 0 \
+        grep -q "predates the installed commit-msg hook" "$WORKDIR/skew.err"
+    check "skew: protected file keeps the v0.3.3 refusal (pre-commit)" 1 \
+        bash -c "cd '$SK' && echo c >const.md && git add const.md && git commit -q -F - <<<\$'docs: c\\n\\nProtected-Change: const.md\\nApproved-By: R' 2>'$WORKDIR/skew.err'"
+    check "skew: the refusal comes from pre-commit's protected check" 0 \
+        grep -q "BLOCKED: policy-protected file staged: const.md" "$WORKDIR/skew.err"
+    ( cd "$SK" && git reset -q -- . >/dev/null 2>&1; rm -f const.md )
+    echo "0.3.4" >"$SK/.specify/gates/.runtime-version"
+    check "skew: a 0.3.4 runtime missing lib/message.sh fails closed" 1 \
+        bash -c "cd '$SK' && echo b >b.txt && git add b.txt && git commit -q -m 'feat: b'"
+else
+    echo "SKIP: hook/runtime skew checks (tag v0.3.3 not available in this clone)"
+fi
+
+# ===========================================================================
 # Part E3: configurable AI branding (git.ai_branding, issue #52)
 # ===========================================================================
 echo ""

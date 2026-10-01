@@ -131,8 +131,26 @@ check_for_secrets() {
 # commit-msg, which requires a Protected-Change trailer per path plus
 # Approved-By; pre-commit only announces them. Off, the old refusal applies.
 PROTECTED_STAGED=""
+PROTECTED_TRAILER=true
 if command -v gates_staged_protected_paths >/dev/null 2>&1; then
     PROTECTED_STAGED="$(gates_staged_protected_paths)"
+    gates_protected_trailer_enabled || PROTECTED_TRAILER=false
+elif command -v gates_policy_section_list >/dev/null 2>&1; then
+    # This branch's runtime predates the trailer path (.git/hooks is shared
+    # by every branch; the projected lib is not), so commit-msg cannot
+    # check trailers here: keep that runtime's refusal instead of failing
+    # open.
+    PROTECTED_TRAILER=false
+    while IFS= read -r _entry; do
+        [[ -z "$_entry" ]] && continue
+        while IFS= read -r _f; do
+            [[ -z "$_f" ]] && continue
+            if gates_glob_match "$_f" "$_entry" || [[ "$(basename "$_f")" == "$_entry" ]]; then
+                PROTECTED_STAGED="${PROTECTED_STAGED:+$PROTECTED_STAGED$'\n'}$_f"
+            fi
+        done <<<"$STAGED_FILES"
+    done < <(gates_policy_section_list protected_files extra)
+    PROTECTED_STAGED="$(printf '%s\n' "$PROTECTED_STAGED" | awk 'NF && !seen[$0]++')"
 fi
 
 # --- Git-specific safety pass over staged files ---
@@ -152,8 +170,8 @@ for file in $STAGED_FILES; do
 done
 
 if [[ -n "$PROTECTED_STAGED" ]]; then
-    if gates_protected_trailer_enabled; then
-        echo "Pre-commit: $(printf '%s\n' "$PROTECTED_STAGED" | wc -l | tr -d ' ') protected file(s) staged; the commit message needs one trailer per path plus an approver:"
+    if [[ "$PROTECTED_TRAILER" == "true" ]]; then
+        echo "Pre-commit: $(printf '%s\n' "$PROTECTED_STAGED" | wc -l | tr -d ' ') protected file(s) staged; commit-msg will check the message for these trailers (informational):"
         while IFS= read -r f; do
             echo "    Protected-Change: $f"
         done <<<"$PROTECTED_STAGED"
