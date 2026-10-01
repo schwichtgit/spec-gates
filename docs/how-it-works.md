@@ -93,8 +93,10 @@ legitimate run looks like that.
 violations in `mktemp` sandboxes and requires the real entrypoints to
 reject them: the format and shell probes run through `verify.sh` itself,
 the hook probes pipe crafted tool-call JSON through the projected hooks,
-and the secret probe stages an AWS-key-shaped string in a sandbox git repo
-with the pre-commit hook installed. The suite copies the runtime from the
+and the git probes commit in sandbox repos with the projected git hooks
+installed: an AWS-key-shaped string and a token assignment (pre-commit
+secret scan), a protected file without its `Protected-Change` trailer, and
+a message naming a default AI-branding term (commit-msg). The suite copies the runtime from the
 projected directory, so a broken _projected_ gate — not just a broken
 source tree — is what gets caught. Probes never read or write user project
 files. An accepted probe fails the suite naming the gate; CI runs the

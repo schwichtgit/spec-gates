@@ -266,6 +266,15 @@ check "protected: trailer naming an unstaged path blocked" 1 \
     bash -c "cd '$PT' && echo a >a.txt && git add a.txt && git commit -q -F '$PTM'"
 ( cd "$PT" && git reset -q -- . >/dev/null 2>&1; rm -f a.txt )
 
+# A `---` rule in the body is prose, not a patch divider; editor comments and
+# the `git commit -v` scissors section are not part of the message.
+printf 'docs: amend const\n\nIntro.\n\n---\n\nProtected-Change: const.md\nApproved-By: Reviewer\n' >"$PTM"
+check "protected: trailers below a --- rule are read" 0 \
+    bash -c "cd '$PT' && echo '## more' >>const.md && git add const.md && git commit -q -F '$PTM'"
+printf 'docs: amend const again\n\nProtected-Change: const.md\nApproved-By: Reviewer\n# Please enter the commit message.\n# ------------------------ >8 ------------------------\n# Do not modify or remove the line above.\ndiff --git a/const.md b/const.md\n' >"$PTM"
+check "protected: trailers above the scissors line are read" 0 \
+    bash -c "cd '$PT' && echo '## again' >>const.md && git add const.md && git commit -q --cleanup=scissors -F '$PTM'"
+
 printf '%s' '{ "hooks": {} }' >"$PT/.specify/gates/policy.json"
 printf 'chore: drop protection\n' >"$PTM"
 check "protected: weakening staged policy still needs a trailer (HEAD policy)" 1 \
@@ -296,6 +305,8 @@ abcheck() { # <name> <expect> <msg>
 abcheck "branding: default refuses Copilot" 1 'feat: Acme Copilot add-in\n'
 abcheck "branding: default refuses GPT-4" 1 'feat: support GPT-4\n'
 abcheck "branding: default ignores embedded substrings" 0 'feat: copilotage support\n'
+abcheck "editor comments (# On branch ...) are not checked" 0 'feat: x\n\n# Please enter the commit message for your changes.\n# On branch feat/acme-copilot\n'
+abcheck "scissors section (commit -v diff) is not checked" 0 'feat: x\n\n# ------------------------ >8 ------------------------\n# Do not modify or remove the line above.\ndiff --git a/x b/x\n+I have added a TODO for GPT\n'
 printf '%s' '{ "hooks": {}, "git": { "ai_branding": { "allow_phrases": ["Acme Copilot", "feat/acme-copilot"] } } }' \
     >"$AB/.specify/gates/policy.json"
 abcheck "branding: allow phrases pass" 0 'feat: Acme Copilot add-in\n\nFrom feat/acme-copilot.\n'

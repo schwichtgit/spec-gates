@@ -5,8 +5,14 @@ set -euo pipefail
 # Validates commit message format, blocks AI-isms, emoji, and bad patterns.
 
 MSG_FILE="$1"
-MSG=$(cat "$MSG_FILE")
-SUBJECT=$(head -n 1 "$MSG_FILE")
+# git hands this hook the editor file BEFORE its own cleanup. Drop the
+# scissors section (`git commit -v` diff) and comment lines so template text
+# such as "# On branch feat/x" or diff content is never checked as message.
+COMMENT_CHAR="$(git config core.commentChar 2>/dev/null || true)"
+[[ ${#COMMENT_CHAR} -eq 1 ]] || COMMENT_CHAR='#'
+MSG=$(awk -v c="$COMMENT_CHAR" '$0 == c " ------------------------ >8 ------------------------" { exit } { print }' "$MSG_FILE" \
+    | git -c core.commentChar="$COMMENT_CHAR" stripspace --strip-comments 2>/dev/null) || MSG=$(cat "$MSG_FILE")
+SUBJECT=$(printf '%s\n' "$MSG" | head -n 1)
 ERRORS=0
 WARNINGS=0
 
@@ -140,7 +146,8 @@ fi
 if command -v gates_staged_protected_paths >/dev/null 2>&1 \
     && gates_protected_trailer_enabled; then
     PROTECTED_STAGED="$(gates_staged_protected_paths)"
-    TRAILERS="$(git interpret-trailers --parse "$MSG_FILE" 2>/dev/null || true)"
+    # --no-divider: a `---` line in the body is prose here, not a patch start.
+    TRAILERS="$(git interpret-trailers --parse --no-divider "$MSG_FILE" 2>/dev/null || true)"
     trailer_values() { # <lowercase-key>
         printf '%s\n' "$TRAILERS" | awk -v k="$1" '
             { i = index($0, ":"); if (i == 0) next
