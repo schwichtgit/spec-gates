@@ -57,7 +57,8 @@ project_fixture() { # <dir>
     cp "$REPO_ROOT/extension/runtime/lib/"*.sh "$dir/.specify/gates/lib/"
     cp "$REPO_ROOT/extension/runtime/hooks/claude/"*.sh "$dir/.claude/hooks/gates/"
     cp "$REPO_ROOT/extension/runtime/hooks/git/pre-commit" \
-        "$REPO_ROOT/extension/runtime/hooks/git/commit-msg" "$dir/.specify/gates/hooks/"
+        "$REPO_ROOT/extension/runtime/hooks/git/commit-msg" \
+        "$REPO_ROOT/extension/runtime/hooks/git/stub.sh" "$dir/.specify/gates/hooks/"
     local policy='{"hooks":{"verify-quality":{"orchestrator":"none","severity":"error"}}}'
     if have_node_linters; then
         policy="$(printf '%s' "$policy" | jq -c '.hooks.prettier = {"include":["**/*.md"],"orchestrator":"none","severity":"error"}')"

@@ -338,6 +338,89 @@ else
 fi
 
 # ===========================================================================
+# Part E2c: hook stubs (issue #59). .git/hooks holds the stub, which runs
+# the CHECKED-OUT branch's .specify/gates/hooks/<name>: the hook version
+# follows the branch, a branch without a projected hook is skipped, and a
+# projected hook that lost its execute bit still runs.
+# ===========================================================================
+echo ""
+echo "=== hook stubs follow the checked-out branch ==="
+ST="$WORKDIR/stub"
+mkdir -p "$ST/.specify/gates/hooks"
+git -C "$ST" init -q -b feat/current
+git -C "$ST" config user.email t@example.com
+git -C "$ST" config user.name tester
+project_runtime "$ST" "true"
+cp "$GITHOOKS/pre-commit" "$GITHOOKS/commit-msg" "$ST/.specify/gates/hooks/"
+for h in pre-commit commit-msg; do
+    cp "$GITHOOKS/stub.sh" "$ST/.git/hooks/$h"
+    chmod +x "$ST/.git/hooks/$h"
+done
+( cd "$ST" && git add -A && git commit -q -m "chore: seed" ) >/dev/null 2>&1
+check "stub: the branch's commit-msg refuses a bad subject" 1 \
+    bash -c "cd '$ST' && git commit -q --allow-empty -m 'bad subject'"
+check "stub: the branch's commit-msg accepts a good subject" 0 \
+    bash -c "cd '$ST' && git commit -q --allow-empty -m 'feat: good'"
+chmod -x "$ST/.specify/gates/hooks/commit-msg"
+check "stub: a projected hook without its execute bit still runs" 1 \
+    bash -c "cd '$ST' && git commit -q --allow-empty -m 'bad subject'"
+chmod +x "$ST/.specify/gates/hooks/commit-msg"
+(
+    cd "$ST" && git switch -q -c feat/other
+    printf '#!/bin/bash\necho "other-branch hook ran" >&2\nexit 0\n' >.specify/gates/hooks/commit-msg
+    git add -A && git commit -q --no-verify -m "chore: other hook"
+) >/dev/null 2>&1
+check "stub: another branch runs that branch's hook" 0 \
+    bash -c "cd '$ST' && git commit -q --allow-empty -m 'bad subject' 2>'$WORKDIR/stub.err' && grep -q 'other-branch hook ran' '$WORKDIR/stub.err'"
+check "stub: switching back restores this branch's hook" 1 \
+    bash -c "cd '$ST' && git switch -q feat/current && git commit -q --allow-empty -m 'bad subject'"
+(
+    # --orphan empties the index and removes tracked files; drop leftovers.
+    cd "$ST" && git switch -q --orphan pre-adoption && rm -rf .specify
+) >/dev/null 2>&1
+check "stub: a branch without a projected hook is skipped, not refused" 0 \
+    bash -c "cd '$ST' && echo x >x.txt && git add x.txt && git commit -q -m 'any subject' 2>'$WORKDIR/stub.err' && grep -q 'skipped' '$WORKDIR/stub.err'"
+
+# ===========================================================================
+# Part E2d: linked worktrees. Hooks live in the shared hooks directory
+# (git rev-parse --git-path hooks); the stub runs the worktree's own
+# branch hook, and the hooks judge the worktree's policy even when an
+# inherited CLAUDE_PROJECT_DIR points at the main checkout.
+# ===========================================================================
+echo ""
+echo "=== linked worktrees ==="
+WM="$WORKDIR/wt-main"
+mkdir -p "$WM/.specify/gates/hooks"
+git -C "$WM" init -q -b main
+git -C "$WM" config user.email t@example.com
+git -C "$WM" config user.name tester
+project_runtime "$WM" "true"
+cp "$GITHOOKS/pre-commit" "$GITHOOKS/commit-msg" "$GITHOOKS/stub.sh" "$WM/.specify/gates/hooks/"
+printf '%s' '{ "hooks": {}, "git": { "block_main_commits": false }, "protected_files": { "extra": ["c.md"] } }' \
+    >"$WM/.specify/gates/policy.json"
+echo c >"$WM/c.md"
+WHOOKS="$(git -C "$WM" rev-parse --git-path hooks)"
+[[ "$WHOOKS" != /* ]] && WHOOKS="$WM/$WHOOKS"
+for h in pre-commit commit-msg; do
+    cp "$GITHOOKS/stub.sh" "$WHOOKS/$h"
+    chmod +x "$WHOOKS/$h"
+done
+( cd "$WM" && git add -A && git commit -q --no-verify -m "chore: seed" ) >/dev/null 2>&1
+WT="$WORKDIR/wt-linked"
+git -C "$WM" worktree add -q -b feat/wt "$WT" >/dev/null 2>&1
+# The worktree's branch relaxes the subject rule; the main checkout keeps it.
+printf '%s' '{ "hooks": {}, "git": { "block_main_commits": false, "conventional_commits": false }, "protected_files": { "extra": ["c.md"] } }' \
+    >"$WT/.specify/gates/policy.json"
+( cd "$WT" && git add -A && git commit -q --no-verify -m "chore: relax subjects" ) >/dev/null 2>&1
+check "worktree: hooks run from the shared hooks directory" 1 \
+    bash -c "cd '$WT' && echo x >>c.md && git add c.md && git commit -q -m 'docs: c'"
+( cd "$WT" && git reset -q --hard >/dev/null 2>&1 )
+check "worktree: the worktree's policy applies, not the inherited session's" 0 \
+    bash -c "cd '$WT' && CLAUDE_PROJECT_DIR='$WM' git commit -q --allow-empty -m 'any subject'"
+check "worktree: the main checkout still enforces its own policy" 1 \
+    bash -c "cd '$WM' && git commit -q --allow-empty -m 'any subject'"
+
+# ===========================================================================
 # Part E3: configurable AI branding (git.ai_branding, issue #52)
 # ===========================================================================
 echo ""

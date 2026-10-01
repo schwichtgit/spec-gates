@@ -40,9 +40,19 @@ needed when a policy already exists — this command is the whole bump.
   projected files is overwritten here by design. If the repo lints
   `.specify/gates/`, `.specify/extensions/`, or `.claude/hooks/gates/`,
   offer the ignore entries again.
+- Migrate copied git hooks to the stub. For each of `pre-commit` and
+  `commit-msg` in the hooks directory (`git rev-parse --git-path hooks`,
+  which also resolves linked worktrees and `core.hooksPath`): if the file
+  is a copy of a gates hook (its header reads `# Git pre-commit hook --` or
+  `# Git commit-msg hook.`), replace it with `.specify/gates/hooks/stub.sh`
+  and `chmod +x` it. Leave stubs and foreign hooks (husky, lefthook,
+  call-through lines) alone. Report what was replaced. doctor flags any
+  copied hook that remains.
 - Tell the user that `.git/hooks` is shared by every branch while the
   projected runtime is per branch. After an upgrade, a branch still on an
   older runtime (cut before the upgrade landed, or an old branch checked
   out) commits with the newer hooks: commit-msg warns that the message
   rules are skipped there, and pre-commit keeps that runtime's protected-
   file refusal. Rebasing the branch onto the upgraded one ends the skew.
+  With the stub installed (above), each branch runs its own hooks and
+  the skew does not arise.

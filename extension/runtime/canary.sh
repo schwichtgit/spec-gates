@@ -321,10 +321,22 @@ git_sandbox() { # <id> <policy-json> <hook-path>...
     git -C "$d" config user.name "gates-canary"
     cp "$CANARY_DIR/lib/"*.sh "$d/.specify/gates/lib/" || setup_fail "$id lib"
     printf '%s\n' "$policy" >"$d/.specify/gates/policy.json"
-    local h
+    # Install the way init does: the hook is projected into
+    # .specify/gates/hooks/ and .git/hooks holds the stub that runs it
+    # (issue #59), so the canaries also prove the stub dispatches. Without
+    # a stub (older projection) the hook is copied in directly.
+    local h name stub=""
+    stub="$(git_hook stub.sh 2>/dev/null)" || stub=""
+    mkdir -p "$d/.specify/gates/hooks" || setup_fail "$id hooks dir"
     for h in "$@"; do
-        cp "$h" "$d/.git/hooks/$(basename "$h")" || setup_fail "$id install hook"
-        chmod +x "$d/.git/hooks/$(basename "$h")"
+        name="$(basename "$h")"
+        cp "$h" "$d/.specify/gates/hooks/$name" || setup_fail "$id project hook"
+        if [[ -n "$stub" ]]; then
+            cp "$stub" "$d/.git/hooks/$name" || setup_fail "$id install stub"
+        else
+            cp "$h" "$d/.git/hooks/$name" || setup_fail "$id install hook"
+        fi
+        chmod +x "$d/.git/hooks/$name" "$d/.specify/gates/hooks/$name"
     done
     printf '%s\n' "$d"
 }

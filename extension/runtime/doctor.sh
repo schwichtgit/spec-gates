@@ -237,13 +237,13 @@ fi
 if git -C "$PROJECT_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
     echo ""
     echo "Git boundary (hooks git actually runs):"
-    GIT_DIR="$(git -C "$PROJECT_ROOT" rev-parse --git-dir)"
-    [[ "$GIT_DIR" != /* ]] && GIT_DIR="$PROJECT_ROOT/$GIT_DIR"
+    # --git-path hooks resolves the directory git actually runs hooks from:
+    # the shared one for a linked worktree (whose --git-dir is
+    # .git/worktrees/<name>), and core.hooksPath when set.
+    HOOK_DIR="$(git -C "$PROJECT_ROOT" rev-parse --git-path hooks)"
+    [[ "$HOOK_DIR" != /* ]] && HOOK_DIR="$PROJECT_ROOT/$HOOK_DIR"
     HOOKS_PATH="$(git -C "$PROJECT_ROOT" config core.hooksPath 2>/dev/null || true)"
-    HOOK_DIR="$GIT_DIR/hooks"
     if [[ -n "$HOOKS_PATH" ]]; then
-        [[ "$HOOKS_PATH" != /* ]] && HOOKS_PATH="$PROJECT_ROOT/$HOOKS_PATH"
-        HOOK_DIR="$HOOKS_PATH"
         echo "${REC}core.hooksPath is set ($HOOKS_PATH) — a hook manager may own this boundary; the checks below inspect that path"
     fi
     for h in pre-commit commit-msg; do
@@ -253,8 +253,19 @@ if git -C "$PROJECT_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
         elif [[ ! -x "$hf" ]]; then
             echo "${BAD}$h installed but NOT executable — git silently skips it (fix: chmod +x ${hf#"$PROJECT_ROOT"/})"
             MISSING=$((MISSING + 1))
+        elif grep -q 'spec-gates hook stub' "$hf" 2>/dev/null; then
+            # Stub (issue #59): runs the checked-out branch's projected hook.
+            if [[ -f "$PROJECT_ROOT/.specify/gates/hooks/$h" ]]; then
+                echo "${OK}$h installed as a stub, runs this branch's .specify/gates/hooks/$h"
+            else
+                echo "${BAD}$h stub installed but .specify/gates/hooks/$h is missing — the stub skips, so this branch is unenforced (fix: /speckit.gates.upgrade)"
+                MISSING=$((MISSING + 1))
+            fi
         elif ! grep -q 'gates\|verify.sh' "$hf" 2>/dev/null; then
             echo "${REC}$h is executable but does not reference the gates runtime — another tool owns it; gates checks may not run on commit"
+        elif grep -q 'Git commit-msg hook\|Git pre-commit hook --' "$hf" 2>/dev/null; then
+            echo "${OK}$h installed, executable, delegates to the gates runtime"
+            echo "${REC}$h is a copied hook: it stays at the version it was installed with on every branch — run /speckit.gates.upgrade to install the branch-following stub"
         else
             echo "${OK}$h installed, executable, delegates to the gates runtime"
         fi
