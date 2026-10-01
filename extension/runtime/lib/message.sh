@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+# message.sh -- the commit / PR message rules, shared by every boundary.
+#
+#   gates_message_check <commit|pr> <text>
+#
+# commit-msg (git boundary), validate-pr.sh (agent boundary) and pr-check.sh
+# (CI boundary) all call this, so a message refused at one boundary is
+# refused at all of them (issue #56). Prints "ERROR: ..." / "WARN: ..." lines
+# on stderr and sets GATES_MSG_ERRORS / GATES_MSG_WARNINGS. Returns 1 when
+# there is at least one error.
+#
+# Modes differ only where the text differs:
+#   commit -- emoji checked in the subject; body lines > 100 chars warn.
+#   pr     -- <text> is "title\n\nbody"; emoji checked everywhere (a PR body
+#             is free-form markdown, so no line-length rule).
+#
+# Policy (via lib/policy.sh when sourced first; defaults otherwise):
+#   git.forbid_ai_isms, git.conventional_commits, git.ai_branding.
+
+# shellcheck disable=SC2034   # GATES_MSG_* are consumed by callers
+
+_gates_msg_policy_enabled() { # <git-field>: on unless the policy says false
+    command -v gates_policy_section_get >/dev/null 2>&1 || return 0
+    [[ "$(gates_policy_section_get git "$1")" == "false" ]] && return 1
+    return 0
+}
+
+_gates_msg_has_emoji() { # <text>
+    command -v python3 >/dev/null 2>&1 || return 1
+    python3 - "$1" <<'PYEOF' 2>/dev/null
+import re, sys
+
+text = sys.argv[1] if len(sys.argv) > 1 else ""
+emoji_pattern = re.compile(
+    "["
+    "\U0001F300-\U0001F9FF"
+    "\U00002600-\U000027BF"
+    "\U0000FE00-\U0000FE0F"
+    "\U0000200D"
+    "\U00002702-\U000027B0"
+    "\U0001FA00-\U0001FA6F"
+    "\U0001FA70-\U0001FAFF"
+    "]+",
+    flags=re.UNICODE
+)
+sys.exit(0 if emoji_pattern.search(text) else 1)
+PYEOF
+}
+
+gates_message_check() { # <commit|pr> <text>
+    local mode="$1" msg="$2" subject
+    GATES_MSG_ERRORS=0
+    GATES_MSG_WARNINGS=0
+    subject="$(printf '%s\n' "$msg" | head -n 1)"
+
+    _err() { echo "ERROR: $*" >&2; GATES_MSG_ERRORS=$((GATES_MSG_ERRORS + 1)); }
+    _warn() { echo "WARN: $*" >&2; GATES_MSG_WARNINGS=$((GATES_MSG_WARNINGS + 1)); }
+
+    if [[ -z "${msg//[[:space:]]/}" ]]; then
+        _err "Empty message."
+        return 1
+    fi
+
+    if [[ ${#subject} -gt 72 ]]; then
+        _warn "Subject line exceeds 72 characters (${#subject})."
+    fi
+
+    local emoji_scope="$subject"
+    [[ "$mode" == "pr" ]] && emoji_scope="$msg"
+    if _gates_msg_has_emoji "$emoji_scope"; then
+        _err "Emoji detected in the message."
+    fi
+
+    if _gates_msg_policy_enabled forbid_ai_isms; then
+        if printf '%s\n' "$msg" | grep -qiE '\b(I have|I'\''ve|I updated|I fixed|I added|I removed|I refactored)\b'; then
+            _err "Self-referential language detected."
+        fi
+        if printf '%s\n' "$msg" | grep -qiE '\b(Certainly|I'\''d be happy to|As an AI|Happy to help)\b'; then
+            _err "AI filler language detected."
+        fi
+        if printf '%s\n' "$msg" | grep -qiE '\b(seamless|robust|powerful|elegant|streamlined|polished|enhanced|refined)\b'; then
+            _err "Marketing adjective detected."
+        fi
+
+        # AI branding (policy: git.ai_branding). Allow phrases are exact text
+        # removed before both branding checks; terms match as literal whole
+        # words, case-insensitive. Absent keys keep the built-in list;
+        # terms: [] disables it.
+        local brand_msg="$msg" phrase term terms hits=""
+        local -a brand_terms=()
+        if command -v gates_policy_path_list >/dev/null 2>&1; then
+            while IFS= read -r phrase; do
+                [[ -n "$phrase" ]] && brand_msg="${brand_msg//"$phrase"/}"
+            done < <(gates_policy_path_list git ai_branding allow_phrases || true)
+        fi
+        if command -v gates_policy_path_list >/dev/null 2>&1 \
+            && terms="$(gates_policy_path_list git ai_branding terms)"; then
+            while IFS= read -r term; do
+                [[ -n "$term" ]] && brand_terms+=("$term")
+            done <<<"$terms"
+        else
+            brand_terms=(Anthropic GPT OpenAI Copilot)
+        fi
+        for term in ${brand_terms[@]+"${brand_terms[@]}"}; do
+            if printf '%s\n' "$brand_msg" | grep -qiwF -e "$term"; then
+                hits="${hits:+$hits, }$term"
+            fi
+        done
+        if [[ -n "$hits" ]]; then
+            _err "AI branding detected ($hits)."
+            echo "  A legitimate phrase can be allowed via git.ai_branding.allow_phrases." >&2
+        fi
+
+        # Standalone "Claude". Strip legitimate references first: the product
+        # name ("Claude Code"), the memory file (CLAUDE.md, any casing),
+        # .claude/ paths, claude-* kebab identifiers, and parenthesized
+        # scopes. Portable sed only (no GNU case-insensitive flag).
+        local cleaned
+        cleaned="$(printf '%s\n' "$brand_msg" \
+            | sed 's/Claude Code//g' \
+            | sed 's/[Cc][Ll][Aa][Uu][Dd][Ee]\.md//g' \
+            | sed 's#\.claude/[^[:space:]]*##g' \
+            | sed 's/[Cc]laude-[A-Za-z0-9._-]*//g' \
+            | sed 's/([^)]*)//g')"
+        if printf '%s\n' "$cleaned" | grep -qiE '\bClaude\b'; then
+            _err "Standalone 'Claude' detected (use 'Claude Code' if needed)."
+        fi
+    fi
+
+    # A PR edit that changes only the body has no title to judge.
+    if _gates_msg_policy_enabled conventional_commits \
+        && ! [[ "$mode" == "pr" && -z "$subject" ]]; then
+        if ! printf '%s\n' "$subject" | grep -qE '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?: .+'; then
+            _err "Subject does not match conventional commit format."
+            echo "  Expected: type(scope)?: description" >&2
+            echo "  Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert" >&2
+        fi
+    fi
+
+    if printf '%s\n' "$msg" | grep -qiE '\b(WIP|FIXME|TODO|XXX|DO NOT MERGE)\b'; then
+        _warn "Draft marker detected."
+    fi
+
+    if printf '%s\n' "$msg" | grep -qi 'Co-Authored-By:'; then
+        _err "Co-Authored-By trailer detected."
+    fi
+
+    if [[ "$mode" == "commit" ]] && [[ $(printf '%s\n' "$msg" | wc -l) -gt 1 ]]; then
+        local long
+        long="$(printf '%s\n' "$msg" | tail -n +3 | awk 'length > 100 { count++ } END { print count+0 }')"
+        if [[ "$long" -gt 0 ]]; then
+            _warn "$long body line(s) exceed 100 characters."
+        fi
+    fi
+
+    unset -f _err _warn
+    [[ "$GATES_MSG_ERRORS" -eq 0 ]]
+}

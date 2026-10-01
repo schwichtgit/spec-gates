@@ -3,14 +3,23 @@
 gates:
   stage: test
   image: node:22-slim
+  variables:
+    # Full history: the MR check walks base..head for protected changes.
+    GIT_DEPTH: "0"
   before_script:
-    - apt-get update -q && apt-get install -y -q jq shellcheck git
+    # python3: the emoji rule of the message check needs it.
+    - apt-get update -q && apt-get install -y -q jq shellcheck git python3
     - npm install -g prettier markdownlint-cli2
   script:
     - bash .specify/gates/verify.sh --boundary ci
     # A failure here means a BROKEN GATE (a canary violation was accepted),
     # not a dirty tree.
     - bash .specify/gates/canary.sh
+    # MR title/description against the commit-message rules, and
+    # Protected-Change declarations across the MR's commits. Skips itself
+    # outside merge-request pipelines. Note: editing an MR title or
+    # description does not start a pipeline; re-run it after such edits.
+    - bash .specify/gates/pr-check.sh
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == "main"'

@@ -6,5 +6,9 @@ stage('Quality Gates') {
         // A failure here means a BROKEN GATE (a canary violation was
         // accepted), not a dirty tree.
         sh 'bash .specify/gates/canary.sh'
+        // PR title (CHANGE_TITLE; Jenkins exposes no description) and
+        // Protected-Change declarations across origin/CHANGE_TARGET..HEAD.
+        // Needs a full-history checkout; skips itself outside PR builds.
+        sh 'bash .specify/gates/pr-check.sh'
     }
 }
