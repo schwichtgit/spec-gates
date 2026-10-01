@@ -4,6 +4,8 @@
 name: Quality Gates
 on:
   pull_request:
+    # `edited`: a title/description change re-runs the PR check.
+    types: [opened, synchronize, reopened, edited]
   push:
     branches: [main]
 jobs:
@@ -11,6 +13,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Full history: the PR check walks base..head for protected changes.
+          fetch-depth: 0
       - uses: actions/setup-node@v6
         with:
           node-version: "26"
@@ -27,3 +32,12 @@ jobs:
       # (known violation) was accepted instead of blocked.
       - name: Prove the gate still blocks (canaries)
         run: bash .specify/gates/canary.sh
+      # PR title/description against the commit-message rules, and
+      # Protected-Change declarations across the PR's commits. Passed via
+      # env, never interpolated into the script (injection-safe).
+      - name: Check the pull request (text + protected changes)
+        if: github.event_name == 'pull_request'
+        env:
+          GATES_PR_TITLE: ${{ github.event.pull_request.title }}
+          GATES_PR_BODY: ${{ github.event.pull_request.body }}
+        run: bash .specify/gates/pr-check.sh

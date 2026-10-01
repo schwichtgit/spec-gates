@@ -23,6 +23,9 @@ set -uo pipefail
 #                                     -> commit-msg trailer check  (blocked)
 #   branding -- commit message naming a default AI-branding term
 #                                     -> commit-msg branding rule  (blocked)
+#   pr      -- PR range with an undeclared protected change, and a PR
+#              description with an AI-ism
+#                                     -> pr-check.sh (CI boundary) (exit 1)
 #   spec    -- Complete feature with a failing accept block
 #                                     -> verify.sh spec gate       (exit 2)
 #   contract -- tampered effective policy in a synced sandbox
@@ -55,7 +58,7 @@ done
 CANARY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 
-CANARY_SET="format shell bash protect secret credential protected branding spec contract"
+CANARY_SET="format shell bash protect secret credential protected branding pr spec contract"
 
 if [[ -n "$ONLY" ]]; then
     IFS=',' read -r -a _only_ids <<<"$ONLY"
@@ -358,7 +361,7 @@ run_protected_canary() {
     d="$(git_sandbox protected '{ "hooks": {}, "protected_files": { "extra": ["charter.md"] } }' "$pre" "$msg")"
     printf '# charter\n' >"$d/charter.md"
     out="$(cd "$d" && git add charter.md && CLAUDE_PROJECT_DIR="$d" git commit -q -m 'chore: canary protected probe' 2>&1)" || rc=$?
-    if [[ "$rc" -ne 0 ]] && printf '%s' "$out" | grep -q 'protected file staged without a declaration'; then
+    if [[ "$rc" -ne 0 ]] && printf '%s' "$out" | grep -q 'protected file changed without a declaration'; then
         record protected blocked "commit-msg refused a protected file staged without a Protected-Change trailer" 0
     else
         record protected accepted "a protected file was committed without a Protected-Change trailer (exit $rc)" 1
@@ -380,6 +383,47 @@ run_branding_canary() {
         record branding blocked "commit-msg refused a message naming a default AI-branding term" 0
     else
         record branding accepted "a message naming a default AI-branding term was accepted (exit $rc)" 1
+    fi
+}
+
+# PR canary (issues #53, #56): pr-check.sh must refuse a commit range with an
+# undeclared protected change AND a PR description with an AI-ism. Inherited
+# CI variables are cleared so a real pipeline's PR context cannot leak in.
+# The seed commits the policy: the range check reads committed policy only.
+pr_check_script() {
+    local f
+    for f in "$CANARY_DIR/pr-check.sh" "$PROJECT_ROOT/extension/runtime/pr-check.sh"; do
+        [[ -f "$f" ]] && { printf '%s\n' "$f"; return 0; }
+    done
+    return 1
+}
+
+run_pr_canary() {
+    local script
+    if ! command -v git >/dev/null 2>&1 || ! script="$(pr_check_script)"; then
+        record pr skipped "git or pr-check.sh missing — enforcement gap (CI PR check)" 1
+        return 0
+    fi
+    local d base rc1=0 rc2=0 out1 out2
+    d="$(git_sandbox pr '{ "hooks": {}, "protected_files": { "extra": ["charter.md"] } }')"
+    cp "$script" "$d/.specify/gates/pr-check.sh" || setup_fail "pr install"
+    (cd "$d" && printf 'x\n' >seed.txt && git add -A && git commit -q -m 'chore: seed') >/dev/null 2>&1 \
+        || setup_fail "pr seed"
+    base="$(git -C "$d" rev-parse HEAD)"
+    (cd "$d" && printf '# charter\n' >charter.md && git add charter.md && git commit -q -m 'docs: charter') >/dev/null 2>&1 \
+        || setup_fail "pr commit"
+    local -a clean=(env -u GITHUB_EVENT_NAME -u GITHUB_BASE_REF -u CI_MERGE_REQUEST_DIFF_BASE_SHA
+        -u CI_MERGE_REQUEST_TITLE -u CI_MERGE_REQUEST_DESCRIPTION -u CHANGE_TARGET -u CHANGE_TITLE
+        -u GATES_PR_TITLE -u GATES_PR_BODY -u GATES_COMMIT_RANGE CLAUDE_PROJECT_DIR="$d")
+    out1="$(cd "$d" && "${clean[@]}" bash .specify/gates/pr-check.sh --range "$base..HEAD" 2>&1)" || rc1=$?
+    out2="$(cd "$d" && "${clean[@]}" GATES_PR_TITLE='feat: canary' GATES_PR_BODY='I have made this seamless.' \
+        bash .specify/gates/pr-check.sh 2>&1)" || rc2=$?
+    if [[ "$rc1" -ne 1 ]] || ! printf '%s' "$out1" | grep -q 'changed without a declaration'; then
+        record pr accepted "pr-check.sh exit $rc1 on an undeclared protected change in the PR range — the CI protected check did not block" 1
+    elif [[ "$rc2" -ne 1 ]] || ! printf '%s' "$out2" | grep -q 'Self-referential'; then
+        record pr accepted "pr-check.sh exit $rc2 on a PR description with an AI-ism — the CI text check did not block" 1
+    else
+        record pr blocked "pr-check.sh refused an undeclared protected change and an AI-ism PR description" 0
     fi
 }
 
@@ -462,6 +506,7 @@ for id in $CANARY_SET; do
         credential) run_credential_canary ;;
         protected) run_protected_canary ;;
         branding) run_branding_canary ;;
+        pr) run_pr_canary ;;
         spec) run_spec_canary ;;
         contract) run_contract_canary ;;
     esac

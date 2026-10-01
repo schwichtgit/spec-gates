@@ -1,8 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
-# PreToolUse hook for Bash commands that run `gh pr create`.
-# Checks PR title/body for AI-isms, emoji, Co-Authored-By.
+# PreToolUse hook for Bash commands that create or edit a pull/merge request:
+# `gh pr create|edit` and `glab mr create|update`. Checks the title and body
+# (inline, heredoc, or --body-file) with the shared message rules in
+# lib/message.sh -- the same rules commit-msg and the CI PR check apply.
 # Exit 0 = allow or not a PR command, Exit 2 = block (Claude Code convention).
 
 trap 'exit 0' ERR
@@ -16,131 +18,77 @@ fi
 INPUT=$(cat /dev/stdin)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null || echo "")
 
-# Only check gh pr create commands
-if ! echo "$COMMAND" | grep -qE 'gh\s+pr\s+create'; then
+if ! echo "$COMMAND" | grep -qE '(gh[[:space:]]+pr[[:space:]]+(create|edit)|glab[[:space:]]+mr[[:space:]]+(create|update))'; then
     exit 0
 fi
 
-# AI-branding terms and allow phrases from policy (git.ai_branding), shared
-# with the commit-msg hook. Absent terms -> built-in list (empty JSON here).
-PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
-POLICY_LIB="$PROJECT_ROOT/.specify/gates/lib/policy.sh"
-# shellcheck source=/dev/null disable=SC1091
-[[ -f "$POLICY_LIB" ]] && source "$POLICY_LIB"
-GATES_BRAND_TERMS=""
-GATES_BRAND_ALLOW="[]"
-if command -v gates_policy_path_list >/dev/null 2>&1; then
-    if _terms="$(gates_policy_path_list git ai_branding terms)"; then
-        GATES_BRAND_TERMS="$(printf '%s\n' "$_terms" | jq -R 'select(length > 0)' | jq -sc .)"
-    fi
-    GATES_BRAND_ALLOW="$( { gates_policy_path_list git ai_branding allow_phrases || true; } \
-        | jq -R 'select(length > 0)' | jq -sc .)"
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "gates: python3 not found, skipping" \
+        "PR validation" \
+        "(run /speckit.gates.doctor)" >&2
+    exit 0
 fi
-export GATES_BRAND_TERMS GATES_BRAND_ALLOW
 
-# Extract title and body from command
-VALIDATOR_SCRIPT=$(mktemp)
-cat > "$VALIDATOR_SCRIPT" << 'PYTHON_SCRIPT'
+PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+GATES_LIB_DIR="$PROJECT_ROOT/.specify/gates/lib"
+if [[ ! -f "$GATES_LIB_DIR/message.sh" ]]; then
+    echo "gates: $GATES_LIB_DIR/message.sh not found, skipping PR validation" \
+        "(run /speckit.gates.doctor)" >&2
+    exit 0
+fi
+# shellcheck source=/dev/null disable=SC1091
+[[ -f "$GATES_LIB_DIR/policy.sh" ]] && source "$GATES_LIB_DIR/policy.sh"
+# shellcheck source=/dev/null disable=SC1091
+source "$GATES_LIB_DIR/message.sh"
+
+# Extract title, inline body, and body file from the command line.
+PARTS=$(python3 - "$COMMAND" <<'PYEOF'
 import json
-import os
 import re
 import sys
 
 command = sys.argv[1] if len(sys.argv) > 1 else ""
 
-# Extract --title value
-title_match = re.search(r'--title\s+["\']([^"\']*)["\']', command)
-title = title_match.group(1) if title_match else ""
+def quoted(flags):
+    pattern = r'(?:%s)(?:\s+|=)(?:"((?:\\.|[^"\\])*)"|\'([^\']*)\')' % "|".join(flags)
+    m = re.search(pattern, command, re.DOTALL)
+    if not m:
+        return ""
+    return m.group(1) if m.group(1) is not None else m.group(2)
 
-# Extract --body value (may be multiline via heredoc)
-body_match = re.search(r'--body\s+["\']([^"\']*)["\']', command, re.DOTALL)
-if not body_match:
-    body_match = re.search(r'--body\s+"([^"]*)"', command, re.DOTALL)
-body = body_match.group(1) if body_match else ""
+def path(flags):
+    pattern = r'(?:%s)(?:\s+|=)(?:"([^"]*)"|\'([^\']*)\'|(\S+))' % "|".join(flags)
+    m = re.search(pattern, command)
+    if not m:
+        return ""
+    return next(g for g in m.groups() if g is not None)
 
-text = f"{title}\n{body}"
-violations = []
-
-# AI branding (allow "Claude Code" and legitimate Claude-file references).
-# Policy allow phrases are exact text removed before both branding checks.
-terms_env = os.environ.get("GATES_BRAND_TERMS", "")
-terms = json.loads(terms_env) if terms_env else ["Anthropic", "GPT", "OpenAI", "Copilot"]
-branded = text
-for phrase in json.loads(os.environ.get("GATES_BRAND_ALLOW", "") or "[]"):
-    branded = branded.replace(phrase, "")
-cleaned = re.sub(r'Claude Code', '', branded)
-cleaned = re.sub(r'\([^)]*\)', '', cleaned)  # Remove parenthetical scopes
-cleaned = re.sub(r'[/\\]\S+', '', cleaned)   # Remove file paths
-cleaned = re.sub(r'CLAUDE\.md', '', cleaned, flags=re.IGNORECASE)   # memory file
-cleaned = re.sub(r'\.claude\S*', '', cleaned, flags=re.IGNORECASE)  # .claude/ paths
-cleaned = re.sub(r'claude-[\w.-]+', '', cleaned, flags=re.IGNORECASE)  # kebab ids
-for term in terms:
-    if re.search(rf'\b{re.escape(term)}\b', cleaned, re.IGNORECASE):
-        violations.append(f"AI branding: {term}")
-if re.search(r'\bClaude\b', cleaned, re.IGNORECASE):
-    violations.append("Standalone 'Claude' (use 'Claude Code' instead)")
-
-# Co-Authored-By
-if re.search(r'Co-Authored-By:', text, re.IGNORECASE):
-    violations.append("Co-Authored-By trailer")
-
-# AI-isms
-ai_isms = [
-    (r'\bI have\b', "Self-reference: 'I have'"),
-    (r"\bI've\b", "Self-reference: 'I've'"),
-    (r'\bI updated\b', "Self-reference: 'I updated'"),
-    (r'\bI fixed\b', "Self-reference: 'I fixed'"),
-    (r'\bCertainly\b', "Filler: 'Certainly'"),
-    (r"\bI'd be happy to\b", "Filler: 'I'd be happy to'"),
-    (r'\bAs an AI\b', "Filler: 'As an AI'"),
-]
-for pattern, msg in ai_isms:
-    if re.search(pattern, text, re.IGNORECASE):
-        violations.append(msg)
-
-# Marketing adjectives
-marketing = ["seamless", "robust", "powerful", "elegant", "streamlined", "polished", "enhanced", "refined"]
-for word in marketing:
-    if re.search(rf'\b{word}\b', text, re.IGNORECASE):
-        violations.append(f"Marketing adjective: '{word}'")
-
-# Emoji detection
-emoji_pattern = re.compile(
-    "["
-    "\U0001F300-\U0001F9FF"
-    "\U00002600-\U000027BF"
-    "\U0000FE00-\U0000FE0F"
-    "\U0000200D"
-    "\U00002702-\U000027B0"
-    "\U0001FA00-\U0001FA6F"
-    "\U0001FA70-\U0001FAFF"
-    "]+",
-    flags=re.UNICODE
+print(json.dumps({
+    "title": quoted([r"--title", r"-t"]),
+    "body": quoted([r"--body", r"-b", r"--description", r"-d"]),
+    "body_file": path([r"--body-file", r"-F"]),
+}))
+PYEOF
 )
-if emoji_pattern.search(text):
-    violations.append("Emoji detected")
 
-if violations:
-    for v in violations:
-        print(v, file=sys.stderr)
-    sys.exit(1)
-else:
-    sys.exit(0)
-PYTHON_SCRIPT
-if ! command -v python3 >/dev/null 2>&1; then
-    echo "gates: python3 not found, skipping" \
-        "PR validation" \
-        "(run /speckit.gates.doctor)" >&2
-    rm -f "$VALIDATOR_SCRIPT"
+TITLE=$(printf '%s' "$PARTS" | jq -r '.title')
+BODY=$(printf '%s' "$PARTS" | jq -r '.body')
+BODY_FILE=$(printf '%s' "$PARTS" | jq -r '.body_file')
+if [[ -n "$BODY_FILE" && "$BODY_FILE" != "-" ]]; then
+    [[ "$BODY_FILE" != /* ]] && BODY_FILE="$PWD/$BODY_FILE"
+    if [[ -f "$BODY_FILE" ]]; then
+        BODY="$(cat "$BODY_FILE")"
+    fi
+fi
+
+if [[ -z "$TITLE" && -z "$BODY" ]]; then
     exit 0
 fi
 
-VIOLATIONS=$(python3 "$VALIDATOR_SCRIPT" "$COMMAND" 2>&1) || {
+if ! VIOLATIONS=$(gates_message_check pr "$TITLE"$'\n\n'"$BODY" 2>&1); then
     echo "PR validation failed:" >&2
-    echo "$VIOLATIONS" >&2
-    rm -f "$VALIDATOR_SCRIPT"
+    printf '%s\n' "$VIOLATIONS" | grep -v '^WARN' >&2
     exit 2
-}
-rm -f "$VALIDATOR_SCRIPT"
+fi
 
 exit 0

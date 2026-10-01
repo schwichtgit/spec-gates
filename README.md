@@ -64,10 +64,11 @@ self-evidencing:
   sandboxes (a prettier-dirty file, an SC2086 script, an `rm -rf /` tool
   call, a `.env` edit, a staged AWS-key-shaped string, a staged token
   assignment, a protected file staged without its `Protected-Change`
-  trailer, a commit message naming a branded AI term) and requires the
-  real gate or hook to reject each one. An accepted probe fails the suite
-  naming the broken gate. CI runs it on every build — a red canary step
-  means a broken gate, not a dirty tree. On demand:
+  trailer, a commit message naming a branded AI term, a PR range with an
+  undeclared protected change) and requires the real gate or hook to
+  reject each one. An accepted probe fails the suite naming the broken
+  gate. CI runs it on every build — a red canary step means a broken
+  gate, not a dirty tree. On demand:
   `bash .specify/gates/canary.sh` (or `doctor.sh --canary`).
 - **Verified parity** — a synthetic `parity` gate compares each tool's
   resolved version against its lockfile pin on every run, at every
@@ -291,7 +292,7 @@ as they grow hook APIs.
 
 ```bash
 npm ci              # pinned prettier + markdownlint-cli2
-bash tests/run.sh   # 10 suites: parity, gate, hooks, policy, doctor, canary, attest, spec-gate, contract, constitution
+bash tests/run.sh   # 12 suites: parity, gate, hooks, policy, doctor, canary, attest, spec-gate, contract, constitution, package, pr-check
 ```
 
 The repo gates itself: `.github/workflows/ci.yml` projects the runtime and

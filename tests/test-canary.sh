@@ -52,7 +52,8 @@ project_fixture() { # <dir>
     cp "$REPO_ROOT/extension/runtime/verify.sh" \
         "$REPO_ROOT/extension/runtime/doctor.sh" \
         "$REPO_ROOT/extension/runtime/canary.sh" \
-        "$REPO_ROOT/extension/runtime/contract.sh" "$dir/.specify/gates/"
+        "$REPO_ROOT/extension/runtime/contract.sh" \
+        "$REPO_ROOT/extension/runtime/pr-check.sh" "$dir/.specify/gates/"
     cp "$REPO_ROOT/extension/runtime/lib/"*.sh "$dir/.specify/gates/lib/"
     cp "$REPO_ROOT/extension/runtime/hooks/claude/"*.sh "$dir/.claude/hooks/gates/"
     cp "$REPO_ROOT/extension/runtime/hooks/git/pre-commit" \

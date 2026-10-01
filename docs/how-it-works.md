@@ -56,6 +56,19 @@ There are exactly three such places in an agentic workflow:
    pipeline job runs `verify.sh --boundary ci`. Because it is the same
    script and the same policy, CI is a backstop, never a surprise.
 
+   A second CI step, `pr-check.sh`, needs context only a pull/merge
+   request has, so it is deliberately not a `verify.sh` gate. It checks
+   the PR/MR title and description with the same message rules as
+   `commit-msg` (`lib/message.sh`, shared by all three boundaries). On a
+   squash-merge repository that text becomes the commit on the default
+   branch, and no local hook ever sees it. It also re-checks the
+   protected-change rule for every commit in the range, catching commits
+   that never passed a local hook. A declaration in the description
+   covers every commit, since a squash merge keeps the description and
+   drops the commit trailers. GitHub re-runs it when a PR is `edited`.
+   GitLab starts no pipeline on an MR title or description edit, so a
+   fresh pipeline is needed after one.
+
 ## One entrypoint
 
 `verify.sh --boundary agent|git|ci [--json] [--dry-run]`
@@ -96,8 +109,10 @@ the hook probes pipe crafted tool-call JSON through the projected hooks,
 and the git probes commit in sandbox repos with the projected git hooks
 installed: an AWS-key-shaped string and a token assignment (pre-commit
 secret scan), a protected file without its `Protected-Change` trailer, and
-a message naming a default AI-branding term (commit-msg). The suite copies the runtime from the
-projected directory, so a broken _projected_ gate — not just a broken
+a message naming a default AI-branding term (commit-msg). The `pr` probe
+runs `pr-check.sh` over a sandbox range with an undeclared protected change
+and over a PR description containing an AI-ism. The suite copies the
+runtime from the projected directory, so a broken _projected_ gate — not just a broken
 source tree — is what gets caught. Probes never read or write user project
 files. An accepted probe fails the suite naming the gate; CI runs the
 suite on every build.

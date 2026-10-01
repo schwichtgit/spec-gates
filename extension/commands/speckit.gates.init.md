@@ -70,6 +70,7 @@ Copy from `RUNTIME_SRC` into the project:
 | `canary.sh`            | `.specify/gates/canary.sh`                         |
 | `contract.sh`          | `.specify/gates/contract.sh`                       |
 | `constitution.sh`      | `.specify/gates/constitution.sh`                   |
+| `pr-check.sh`          | `.specify/gates/pr-check.sh`                       |
 | `lib/*.sh`             | `.specify/gates/lib/`                              |
 | `policy.schema.json`   | `.specify/gates/policy.schema.json`                |
 | `hooks/claude/*.sh`    | `.claude/hooks/gates/` (unless `--no-agent-hooks`) |

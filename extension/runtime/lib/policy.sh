@@ -148,35 +148,57 @@ gates_protected_trailer_enabled() {
     [[ "$(gates_policy_section_get git protected_change_trailer)" != "false" ]]
 }
 
-# protected_files.extra as the UNION of the worktree policy and HEAD's
-# committed policy (issue #47). Reading HEAD's copy means a staged policy.json
-# that drops its own protection is still judged by the protection it removes.
-# HEAD's effective policy is used when its overlay extends a baseline.
-gates_protected_list() {
-    local tmp
+# Write the policy committed at <rev> to <dest> -- its materialized effective
+# policy when the overlay extends a baseline. Returns 1 when <rev> carries no
+# policy (dest untouched).
+gates_policy_at_rev() { # <rev> <dest>
+    local rev="$1" dest="$2" tmp
+    tmp="$(mktemp 2>/dev/null || mktemp -t gates-policy)" || return 1
+    if ! git show "$rev:.specify/gates/policy.json" >"$tmp" 2>/dev/null; then
+        rm -f "$tmp"
+        return 1
+    fi
+    if jq -e 'has("extends")' "$tmp" >/dev/null 2>&1 \
+        && git cat-file -e "$rev:.specify/gates/policy.effective.json" 2>/dev/null; then
+        git show "$rev:.specify/gates/policy.effective.json" >"$tmp" 2>/dev/null
+    fi
+    mv "$tmp" "$dest"
+}
+
+# protected_files.extra as the UNION of the policies committed at <rev>...,
+# plus the worktree policy when called with no revs (worktree + HEAD). Reading
+# the committed copy means a staged policy.json that drops its own protection
+# is still judged by the protection it removes (issue #47).
+# shellcheck disable=SC2120  # revs are passed by protected-range.sh
+gates_protected_list() { # [rev...]
+    local tmp rev
+    local -a revs=("$@")
     {
-        gates_policy_section_list protected_files extra
-        tmp="$(mktemp 2>/dev/null || mktemp -t gates-policy)" || tmp=""
-        if [[ -n "$tmp" ]] && git show HEAD:.specify/gates/policy.json >"$tmp" 2>/dev/null; then
-            if jq -e 'has("extends")' "$tmp" >/dev/null 2>&1; then
-                git show HEAD:.specify/gates/policy.effective.json >"$tmp" 2>/dev/null || true
-            fi
-            GATES_POLICY_FILE="$tmp" gates_policy_section_list protected_files extra
+        if [[ "${#revs[@]}" -eq 0 ]]; then
+            gates_policy_section_list protected_files extra
+            revs=(HEAD)
         fi
-        [[ -n "$tmp" ]] && rm -f "$tmp"
+        tmp="$(mktemp 2>/dev/null || mktemp -t gates-policy)" || tmp=""
+        if [[ -n "$tmp" ]]; then
+            for rev in "${revs[@]}"; do
+                if gates_policy_at_rev "$rev" "$tmp"; then
+                    GATES_POLICY_FILE="$tmp" gates_policy_section_list protected_files extra
+                fi
+            done
+            rm -f "$tmp"
+        fi
     } | awk 'NF && !seen[$0]++'
 }
 
-# Paths in the index (added, modified, deleted; renames split into delete +
-# add) that match a protected entry, one per line. Deleting or renaming away
-# a protected file is a protected change too.
-gates_staged_protected_paths() {
+# Filter paths on stdin down to those matching a protected entry in
+# <patterns> (newline-separated, as printed by gates_protected_list).
+gates_match_protected() { # <patterns>
     local -a pats=()
     local e f
     while IFS= read -r e; do
         [[ -n "$e" ]] && pats+=("$e")
-    done < <(gates_protected_list)
-    [[ "${#pats[@]}" -eq 0 ]] && return 0
+    done <<<"$1"
+    [[ "${#pats[@]}" -eq 0 ]] && { cat >/dev/null; return 0; }
     while IFS= read -r f; do
         [[ -z "$f" ]] && continue
         for e in "${pats[@]}"; do
@@ -185,7 +207,58 @@ gates_staged_protected_paths() {
                 break
             fi
         done
-    done < <(git diff --cached --name-only --no-renames --diff-filter=ACMRD 2>/dev/null)
+    done
+}
+
+# Paths in the index (added, modified, deleted; renames split into delete +
+# add) that match a protected entry, one per line. Deleting or renaming away
+# a protected file is a protected change too.
+# shellcheck disable=SC2119  # no revs: worktree + HEAD
+gates_staged_protected_paths() {
+    { git diff --cached --name-only --no-renames --diff-filter=ACMRD 2>/dev/null || true; } \
+        | gates_match_protected "$(gates_protected_list)"
+}
+
+# Values of the trailer <key> (case-insensitive) in "Key: value" text on
+# stdin, one per line, trimmed. Feed it `git interpret-trailers --parse`
+# output, or a PR body (any line starting with the key counts there).
+gates_trailer_values() { # <key>
+    awk -v k="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" '
+        { i = index($0, ":"); if (i == 0) next
+          key = tolower(substr($0, 1, i - 1)); gsub(/^[[:space:]]+|[[:space:]]+$/, "", key)
+          if (key != k) next
+          v = substr($0, i + 1); gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
+          if (v != "") print v }'
+}
+
+# The protected-change rule, shared by commit-msg (git boundary) and
+# protected-range.sh (CI). Every protected path must be declared, a
+# declaration must name a path the change touches, and a protected change
+# needs an approver. Prints one ERROR line per violation (plus a hint) on
+# stderr; returns the violation count, capped at 255 (0 = pass).
+gates_protected_check() { # <protected> <changed> <declared> <approvers>
+    local protected="$1" changed="$2" declared="$3" approvers="$4" p n=0
+    while IFS= read -r p; do
+        [[ -z "$p" ]] && continue
+        if ! printf '%s\n' "$declared" | grep -qxF -e "$p"; then
+            echo "ERROR: protected file changed without a declaration: $p" >&2
+            echo "  Add the trailer:  Protected-Change: $p" >&2
+            n=$((n + 1))
+        fi
+    done <<<"$protected"
+    while IFS= read -r p; do
+        [[ -z "$p" ]] && continue
+        if ! printf '%s\n' "$changed" | grep -qxF -e "$p"; then
+            echo "ERROR: Protected-Change names a path this change does not touch: $p" >&2
+            n=$((n + 1))
+        fi
+    done <<<"$declared"
+    if [[ -n "$protected" && -z "$approvers" ]]; then
+        echo "ERROR: protected change without an approver (add the trailer:  Approved-By: <name>)." >&2
+        n=$((n + 1))
+    fi
+    [[ "$n" -gt 255 ]] && n=255
+    return "$n"
 }
 
 gates_validate_policy() {

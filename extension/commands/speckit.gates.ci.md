@@ -45,6 +45,21 @@ create`; GitLab: `glab repo create` or the web UI; Jenkins: the SCM
 3. Never clobber an existing workflow silently; always show a diff.
 4. Remind the user of the parity property: this job runs the same
    entrypoint as the Stop hook and pre-commit, so local green == CI green.
+5. Explain the PR/MR step (`pr-check.sh`). It checks the PR/MR title and
+   description against the commit-message rules, and Protected-Change
+   declarations across the PR's commits (declarations in the description
+   count for every commit, since a squash merge keeps the description).
+   It needs full history (`fetch-depth: 0` / `GIT_DEPTH: 0`, set in the
+   templates) and skips itself outside PR/MR pipelines. Platform notes:
+   - github: the workflow also runs on `edited`, so a title or
+     description change re-runs the check.
+   - gitlab: editing an MR title or description does NOT start a
+     pipeline. Re-run the pipeline after such edits, or require a fresh
+     pipeline before merge. A long description may be truncated by
+     GitLab (`CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED`), and the check
+     warns when that happens.
+   - jenkins: only the title is available (`CHANGE_TITLE`); the
+     description is not checked.
 
 ## `--protect` (github)
 
