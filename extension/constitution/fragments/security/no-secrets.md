@@ -5,7 +5,7 @@ rationale: "Every CPF-era repo converged on this after a real incident; git hist
 surface: scanner
 ref: gitleaks:default
 tags: [security, all-projects, posture/security-hardened]
-provenance: "CPF-8 baseline (accelno corpus, 2026); excel constitution names leaked-key commit 2cf8bcc"
+provenance: "CPF-8 baseline (downstream corpus, 2026); a downstream constitution records a leaked-key incident"
 ---
 
 Secrets never enter the repository, its history, or its logs. Credentials

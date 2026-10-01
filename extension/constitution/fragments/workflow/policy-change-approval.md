@@ -5,7 +5,7 @@ rationale: "The one file that decides what blocks must itself be governed, or en
 surface: agent-hook
 ref: protect-files.sh
 tags: [workflow, governance, all-projects]
-provenance: "accelno halo corpus (2026): no-policy-changes.sh hook with one-shot marker"
+provenance: "downstream corpus (2026): no-policy-changes.sh hook with one-shot marker"
 ---
 
 Changes to the enforcement policy require prior human approval and land as a

@@ -235,7 +235,7 @@ remotes are auto-deleted.
   T018 annotates — so the block order (dogfood before Status flip)
   matters and is enforced by the task ordering above.
 - The corpus (T003) is content, not plumbing: every fragment must carry
-  provenance from the mined CPF-era corpus (Kahi, accelno, this repo's
+  provenance from the mined CPF-era corpus (Kahi, a downstream multi-repo corpus, this repo's
   constitution) — an unattributed rule doesn't ship.
 - `verify.sh` is untouched by this feature; anything that looks like it
   needs a verify change belongs to a future "constitution gate class"

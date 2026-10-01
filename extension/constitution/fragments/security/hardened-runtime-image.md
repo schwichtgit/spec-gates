@@ -5,7 +5,7 @@ rationale: "Smaller attack surface and no ambient shell turns a code-execution b
 surface: scanner
 ref: hadolint:DL3002
 tags: [security, project-type/service, posture/security-hardened]
-provenance: "accelno service corpus (2026): distroless/nonroot, CGO_ENABLED=0 static binaries"
+provenance: "downstream service corpus (2026): distroless/nonroot, CGO_ENABLED=0 static binaries"
 ---
 
 Runtime images ship the application and nothing else: a distroless or

@@ -1,7 +1,7 @@
 name: "spec-gates starter corpus"
 description: >-
-  Constitution fragments mined from CPF-era cross-project baselines (accelno,
-  Kahi) and the spec-gates constitution v1.0.0. Charter-compatible: charter
+  Constitution fragments mined from CPF-era cross-project baselines (a downstream
+  multi-repo corpus, Kahi) and the spec-gates constitution v1.0.0. Charter-compatible: charter
   reads each fragment body, spec-gates reads its frontmatter.
 mandatory_fragments:
   - "security/no-secrets"

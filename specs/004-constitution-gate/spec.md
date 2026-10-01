@@ -105,7 +105,7 @@ without explicit approval; on approval, the enforcement layer matches the
 constitution it just ratified.
 
 **Why this priority**: annotation without alignment is documentation —
-the accelno corpus showed constitutions overstating their own enforcement
+the downstream corpus showed constitutions overstating their own enforcement
 in six of eight repos. Depends on US1's output.
 
 **Independent Test**: complete a session in a fixture repo with an existing

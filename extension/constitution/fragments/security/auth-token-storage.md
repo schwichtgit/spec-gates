@@ -4,7 +4,7 @@ statement: "Session tokens live in HTTP-only cookies, never in localStorage or a
 rationale: "A token any script can read is a token any XSS can steal; the browser boundary is the only durable one."
 surface: prose
 tags: [security, project-type/spa]
-provenance: "accelno frontend corpus (2026): HTTP-only cookies, baseQueryWithReauth refresh"
+provenance: "downstream frontend corpus (2026): HTTP-only cookies, centralized token refresh"
 ---
 
 Authentication tokens are stored in HTTP-only, Secure cookies. They are never
