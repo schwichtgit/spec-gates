@@ -122,6 +122,17 @@ expect "truncated, token, clean full text -> exit 0" \
     "$(run "${GL[@]}" CI_MERGE_REQUEST_DESCRIPTION="Adds a." CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED=true GATES_GITLAB_TOKEN=t)" 0
 expect "truncated, CI_JOB_TOKEN fallback works -> exit 0" \
     "$(run "${GL[@]}" CI_MERGE_REQUEST_DESCRIPTION="Adds a." CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED=true CI_JOB_TOKEN=j)" 0
+# Without curl (slim CI images): the fetch falls back to python3's urllib.
+NOCURL="$WORKDIR/path-nocurl"
+mkdir -p "$NOCURL"
+for t in bash sh git jq python3 perl cat grep sed awk head tail tr wc dirname basename mktemp rm cp env sort uniq cut date; do
+    command -v "$t" >/dev/null 2>&1 && ln -sf "$(command -v "$t")" "$NOCURL/$t"
+done
+mr_api "Adds a."$'\n\n'"Tail line: I have made this seamless."
+expect "no curl: python3 fetch still finds the tail violation (exit 1)" \
+    "$(run "${GL[@]}" PATH="$NOCURL" CI_MERGE_REQUEST_DESCRIPTION="Adds a." CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED=true GATES_GITLAB_TOKEN=t)" 1
+expect "no curl: the violation came from the fetched tail" "$(grep -c 'Self-referential' "$WORKDIR/out.txt")" 1
+mr_api "Adds a."$'\n\n'"A long but clean tail."
 expect "GitLab < 16.7 (no description var), no token -> notice, title checked (exit 0)" \
     "$(run "${GL[@]}")" 0
 expect "the < 16.7 notice is printed" "$(grep -c 'GitLab < 16.7' "$WORKDIR/out.txt")" 1

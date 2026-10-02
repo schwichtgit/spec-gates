@@ -83,7 +83,7 @@ for needle in "pr-check.sh" "fetch-depth: 0" "edited" "contents: read" \
         fail "github template lacks '$needle'"
     fi
 done
-for needle in "pr-check.sh" 'GIT_DEPTH: "0"' "python3" "timeout:" "if [ -f package-lock.json ]"; do
+for needle in "pr-check.sh" 'GIT_DEPTH: "0"' "python3" "curl" "timeout:" "if [ -f package-lock.json ]"; do
     if grep -qF -- "$needle" "$GL_T"; then
         pass "gitlab template has '$needle'"
     else

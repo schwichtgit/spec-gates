@@ -40,7 +40,7 @@ fi
 
 if ! python3 -c 'import json, re' >/dev/null 2>&1; then
     refuse "ERROR: python3 with the json module not found -- the PR hook cannot parse the command." \
-        "  Install python3 (Debian: python3, not python3-minimal)."
+        "  Install python3 with the json module (check: python3 -c \"import json\")."
 fi
 
 PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"

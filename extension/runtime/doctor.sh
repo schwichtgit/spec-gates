@@ -76,7 +76,7 @@ done
 if python3 -c 'import json, re' >/dev/null 2>&1; then
     echo "${OK}python3 (json, re)"
 else
-    echo "${BAD}python3 with the json module — the PR hook refuses every PR command without it (Debian: install python3, not python3-minimal)"
+    echo "${BAD}python3 with the json module — the PR hook refuses every PR command without it (install python3; on minimal images confirm that python3 can import json)"
     MISSING=$((MISSING + 1))
 fi
 if ! python3 -c 'import re' >/dev/null 2>&1 && ! perl -e 1 >/dev/null 2>&1; then
