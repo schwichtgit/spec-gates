@@ -93,6 +93,17 @@ printf 'I have made this seamless.\n' >"$BF"
 check "PR --body-file with AI-ism blocked" 2 bash -c "echo '{\"tool_input\":{\"command\":\"gh pr create --title \\\"feat: x\\\" --body-file $BF\"}}' | '$HOOKS/validate-pr.sh'"
 check "PR -F with AI-ism blocked" 2 bash -c "echo '{\"tool_input\":{\"command\":\"gh pr create -t \\\"feat: x\\\" -F $BF\"}}' | '$HOOKS/validate-pr.sh'"
 check "gh pr edit --body with AI-ism blocked" 2 bash -c 'echo '"'"'{"tool_input":{"command":"gh pr edit 5 --body \"I have made it seamless.\""}}'"'"' | '"'$HOOKS/validate-pr.sh'"''
+# --body-file the hook cannot read fails closed (issue #65); a leading
+# $VAR / ${VAR} / ~ is resolved from the hook's environment.
+BFD="$WORKDIR/bf"
+mkdir -p "$BFD"
+printf 'I have made this seamless.\n' >"$BFD/bad.md"
+printf 'Adds a parser.\n' >"$BFD/ok.md"
+check "PR --body-file \$VAR/bad resolved and blocked" 2 bash -c "echo '{\"tool_input\":{\"command\":\"gh pr create --title \\\"feat: x\\\" --body-file \$GATES_BF/bad.md\"}}' | GATES_BF='$BFD' '$HOOKS/validate-pr.sh'"
+check "PR --body-file \${VAR}/ok resolved and allowed" 0 bash -c "echo '{\"tool_input\":{\"command\":\"gh pr create --title \\\"feat: x\\\" --body-file \${GATES_BF}/ok.md\"}}' | GATES_BF='$BFD' '$HOOKS/validate-pr.sh'"
+check "PR --body-file unreadable path refused" 2 bash -c "echo '{\"tool_input\":{\"command\":\"gh pr create --title \\\"feat: x\\\" --body-file $BFD/missing.md\"}}' | '$HOOKS/validate-pr.sh'"
+check "PR --body-file with unset variable refused" 2 bash -c "echo '{\"tool_input\":{\"command\":\"gh pr create --title \\\"feat: x\\\" --body-file \$GATES_UNSET_VAR/ok.md\"}}' | '$HOOKS/validate-pr.sh'"
+check "PR --body-file - (stdin) refused" 2 bash -c "echo '{\"tool_input\":{\"command\":\"gh pr create --title \\\"feat: x\\\" --body-file -\"}}' | '$HOOKS/validate-pr.sh'"
 check "gh pr edit without title/body allowed" 0 bash -c 'echo '"'"'{"tool_input":{"command":"gh pr edit 5 --add-label bug"}}'"'"' | '"'$HOOKS/validate-pr.sh'"''
 check "gh pr edit body-only (no title) allowed" 0 bash -c 'echo '"'"'{"tool_input":{"command":"gh pr edit 5 --body \"Adds a parser.\""}}'"'"' | '"'$HOOKS/validate-pr.sh'"''
 check "glab mr create with AI-ism blocked" 2 bash -c 'echo '"'"'{"tool_input":{"command":"glab mr create --title \"feat: x\" --description \"I have made it seamless.\""}}'"'"' | '"'$HOOKS/validate-pr.sh'"''

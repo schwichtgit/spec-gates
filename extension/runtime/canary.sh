@@ -16,7 +16,8 @@ set -uo pipefail
 #   shell   -- SC2086-class script    -> verify.sh shellcheck gate (exit 2)
 #   bash    -- `rm -rf /` tool call   -> validate-bash.sh hook     (exit 2)
 #   protect -- `.env` edit tool call  -> protect-files.sh hook     (exit 2)
-#   prhook  -- clean PR allowed AND AI-ism PR body refused
+#   prhook  -- clean PR allowed AND AI-ism PR body AND unreadable
+#              --body-file refused
 #                                     -> validate-pr.sh hook
 #   secret  -- staged AWS-key string  -> pre-commit secret scan    (blocked)
 #   credential -- staged `token: '...'` assignment
@@ -294,12 +295,18 @@ run_prhook_canary() {
         | CLAUDE_PROJECT_DIR="$d" "$script" >/dev/null 2>&1 || rc_ok=$?
     out_bad="$(printf '%s' '{"tool_input":{"command":"gh pr create --title \"feat: canary\" --body \"I have made this seamless.\""}}' \
         | CLAUDE_PROJECT_DIR="$d" "$script" 2>&1 >/dev/null)" || rc_bad=$?
+    # An unreadable --body-file must be refused, not skipped (issue #65).
+    local rc_nf=0 out_nf
+    out_nf="$(printf '%s' "{\"tool_input\":{\"command\":\"gh pr create --title \\\"feat: canary\\\" --body-file $d/missing-body.md\"}}" \
+        | CLAUDE_PROJECT_DIR="$d" "$script" 2>&1 >/dev/null)" || rc_nf=$?
     if [[ "$rc_ok" -ne 0 ]]; then
         record prhook accepted "validate-pr.sh exit $rc_ok on a CLEAN PR — the hook is broken (it blocks every PR command)" 1
     elif [[ "$rc_bad" -ne 2 ]] || ! printf '%s' "$out_bad" | grep -q 'PR validation failed'; then
         record prhook accepted "validate-pr.sh exit $rc_bad on an AI-ism PR body — the PR hook did not block" 1
+    elif [[ "$rc_nf" -ne 2 ]] || ! printf '%s' "$out_nf" | grep -q 'cannot read --body-file'; then
+        record prhook accepted "validate-pr.sh exit $rc_nf on an unreadable --body-file — the body went unchecked" 1
     else
-        record prhook blocked "validate-pr.sh allowed a clean PR and refused an AI-ism body" 0
+        record prhook blocked "validate-pr.sh allowed a clean PR and refused an AI-ism body and an unreadable body file" 0
     fi
 }
 

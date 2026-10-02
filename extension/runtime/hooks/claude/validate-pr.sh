@@ -80,11 +80,47 @@ PARTS=$(pr_parts "$COMMAND")
 TITLE=$(printf '%s' "$PARTS" | jq -r '.title')
 BODY=$(printf '%s' "$PARTS" | jq -r '.body')
 BODY_FILE=$(printf '%s' "$PARTS" | jq -r '.body_file')
-if [[ -n "$BODY_FILE" && "$BODY_FILE" != "-" ]]; then
-    [[ "$BODY_FILE" != /* ]] && BODY_FILE="$PWD/$BODY_FILE"
-    if [[ -f "$BODY_FILE" ]]; then
-        BODY="$(cat "$BODY_FILE")"
+
+# The hook sees the command text before the shell expands it. Resolve a
+# leading ~, $VAR or ${VAR} from this hook's environment (indirect expansion,
+# never eval), then relative paths against $PWD. The quoted ~ and ${ below
+# are literal on purpose: they match the UNexpanded command text.
+# shellcheck disable=SC2088,SC2016
+resolve_body_file() { # <path>
+    local p="$1" name rest
+    case "$p" in
+        "~") p="$HOME" ;;
+        "~/"*) p="$HOME/${p#"~/"}" ;;
+        '${'*'}'*)
+            name="${p#'${'}"; rest="${name#*'}'}"; name="${name%%'}'*}"
+            [[ "$name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ && -n "${!name:-}" ]] && p="${!name}$rest"
+            ;;
+        '$'[A-Za-z_]*)
+            name="${p#'$'}"; name="${name%%[!A-Za-z0-9_]*}"; rest="${p#'$'"$name"}"
+            [[ -n "${!name:-}" ]] && p="${!name}$rest"
+            ;;
+    esac
+    [[ "$p" != /* ]] && p="$PWD/$p"
+    printf '%s\n' "$p"
+}
+
+# Fail closed (issue #65): a body this hook cannot read is a body it cannot
+# check -- refuse instead of validating the title alone.
+if [[ -n "$BODY_FILE" ]]; then
+    if [[ "$BODY_FILE" == "-" ]]; then
+        echo "PR validation failed:" >&2
+        echo "ERROR: --body-file - (stdin) cannot be checked before the command runs." >&2
+        echo "  Write the body to a file in a separate step and pass its path, or use --body." >&2
+        exit 2
     fi
+    RESOLVED="$(resolve_body_file "$BODY_FILE")"
+    if [[ ! -f "$RESOLVED" || ! -r "$RESOLVED" ]]; then
+        echo "PR validation failed:" >&2
+        echo "ERROR: cannot read --body-file $BODY_FILE (resolved: $RESOLVED)." >&2
+        echo "  Write the file in a separate step first and pass a readable path, or use --body." >&2
+        exit 2
+    fi
+    BODY="$(cat "$RESOLVED")"
 fi
 
 if [[ -z "$TITLE" && -z "$BODY" ]]; then
