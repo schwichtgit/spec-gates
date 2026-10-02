@@ -57,6 +57,8 @@ run() { # <env-assignment>... -> exit code
     (cd "$W" && env -u GITHUB_EVENT_NAME -u GITHUB_BASE_REF -u CI_MERGE_REQUEST_DIFF_BASE_SHA \
         -u CI_MERGE_REQUEST_TITLE -u CI_MERGE_REQUEST_DESCRIPTION -u CHANGE_TARGET -u CHANGE_TITLE \
         -u GATES_PR_TITLE -u GATES_PR_BODY -u GATES_COMMIT_RANGE -u CLAUDE_PROJECT_DIR \
+        -u CI_MERGE_REQUEST_IID -u CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED -u CI_API_V4_URL \
+        -u CI_PROJECT_ID -u CI_JOB_TOKEN -u GATES_GITLAB_TOKEN \
         "$@" bash .specify/gates/pr-check.sh) >"$WORKDIR/out.txt" 2>&1 || rc=$?
     echo "$rc"
 }
@@ -95,9 +97,37 @@ expect "MR variables resolve the range; undeclared -> exit 1" \
     "$(run CI_MERGE_REQUEST_DIFF_BASE_SHA="$BASE" CI_MERGE_REQUEST_TITLE="feat: x" CI_MERGE_REQUEST_DESCRIPTION="Adds a.")" 1
 expect "declared in the MR description -> exit 0" \
     "$(run CI_MERGE_REQUEST_DIFF_BASE_SHA="$BASE" CI_MERGE_REQUEST_TITLE="feat: x" CI_MERGE_REQUEST_DESCRIPTION="Adds a.$DECL")" 0
-expect "truncated description -> warned" \
-    "$(run CI_MERGE_REQUEST_DIFF_BASE_SHA="$BASE" CI_MERGE_REQUEST_TITLE="feat: x" CI_MERGE_REQUEST_DESCRIPTION="Adds a.$DECL" CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED=true; grep -c 'truncated' "$WORKDIR/out.txt")" "0
-1"
+expect "truncated description without API access -> fails closed" \
+    "$(run CI_MERGE_REQUEST_DIFF_BASE_SHA="$BASE" CI_MERGE_REQUEST_TITLE="feat: x" CI_MERGE_REQUEST_DESCRIPTION="Adds a.$DECL" CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED=true)" 1
+
+echo ""
+echo "=== GitLab: truncated or missing description (#67) ==="
+# A fake GitLab API served from disk: curl reads file:// URLs directly.
+API="$WORKDIR/api"
+mkdir -p "$API/projects/7/merge_requests"
+mr_api() { # <description>
+    jq -n --arg d "$1" '{iid: 3, title: "feat: x", description: $d}' >"$API/projects/7/merge_requests/3"
+}
+GL=(CI_MERGE_REQUEST_IID=3 CI_PROJECT_ID=7 "CI_API_V4_URL=file://$API" CI_MERGE_REQUEST_TITLE="feat: x"
+    GATES_COMMIT_RANGE="$BASE..$BASE")
+mr_api "Adds a."$'\n\n'"Tail line: I have made this seamless."
+expect "truncated, no token -> fails closed (exit 1)" \
+    "$(run "${GL[@]}" CI_MERGE_REQUEST_DESCRIPTION="Adds a." CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED=true)" 1
+expect "truncated failure names the fix" "$(grep -c 'GATES_GITLAB_TOKEN' "$WORKDIR/out.txt")" 1
+expect "truncated, token -> full text fetched, tail violation caught (exit 1)" \
+    "$(run "${GL[@]}" CI_MERGE_REQUEST_DESCRIPTION="Adds a." CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED=true GATES_GITLAB_TOKEN=t)" 1
+expect "the caught violation is the AI-ism in the tail" "$(grep -c 'Self-referential' "$WORKDIR/out.txt")" 1
+mr_api "Adds a."$'\n\n'"A long but clean tail."
+expect "truncated, token, clean full text -> exit 0" \
+    "$(run "${GL[@]}" CI_MERGE_REQUEST_DESCRIPTION="Adds a." CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED=true GATES_GITLAB_TOKEN=t)" 0
+expect "truncated, CI_JOB_TOKEN fallback works -> exit 0" \
+    "$(run "${GL[@]}" CI_MERGE_REQUEST_DESCRIPTION="Adds a." CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED=true CI_JOB_TOKEN=j)" 0
+expect "GitLab < 16.7 (no description var), no token -> notice, title checked (exit 0)" \
+    "$(run "${GL[@]}")" 0
+expect "the < 16.7 notice is printed" "$(grep -c 'GitLab < 16.7' "$WORKDIR/out.txt")" 1
+mr_api "I have made this seamless."
+expect "GitLab < 16.7 with token -> description fetched and checked (exit 1)" \
+    "$(run "${GL[@]}" GATES_GITLAB_TOKEN=t)" 1
 
 echo ""
 echo "=== Jenkins and explicit range ==="

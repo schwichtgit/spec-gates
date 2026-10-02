@@ -23,6 +23,11 @@ gates:
     # Protected-Change declarations across the MR's commits. Skips itself
     # outside merge-request pipelines. Note: editing an MR title or
     # description does not start a pipeline; re-run it after such edits.
+    # GitLab exposes the description from 16.7 and truncates long ones; then
+    # pr-check fetches the full text from the API with GATES_GITLAB_TOKEN (a
+    # masked CI/CD variable holding a read_api token) or CI_JOB_TOKEN. A
+    # truncated description it cannot fetch fails the job; before 16.7
+    # without a token only the title is checked (pr-check prints a notice).
     - bash .specify/gates/pr-check.sh
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
