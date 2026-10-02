@@ -42,7 +42,14 @@ create`; GitLab: `glab repo create` or the web UI; Jenkins: the SCM
      (create if absent; if present, show the merged diff first)
    - jenkins → print the `Quality Gates` stage fragment and, if a
      `Jenkinsfile` exists, propose the insertion diff
-3. Never clobber an existing workflow silently; always show a diff.
+3. Never clobber an existing workflow silently; always show a diff. If
+   the repository already has a gates workflow or CI job (look for
+   `verify.sh --boundary ci`), MERGE instead of replacing it. Add only
+   what is missing (triggers, `fetch-depth: 0` / `GIT_DEPTH`, steps), and
+   keep every stricter setting the user already has: SHA-pinned actions,
+   `permissions`, `persist-credentials: false`, `concurrency`, timeouts,
+   `npm ci` from the lockfile. The template is a floor, not a
+   replacement.
 4. Remind the user of the parity property: this job runs the same
    entrypoint as the Stop hook and pre-commit, so local green == CI green.
 5. Explain the PR/MR step (`pr-check.sh`). It checks the PR/MR title and
