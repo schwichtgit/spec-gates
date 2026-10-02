@@ -93,11 +93,49 @@ printf 'I have made this seamless.\n' >"$BF"
 check "PR --body-file with AI-ism blocked" 2 bash -c "echo '{\"tool_input\":{\"command\":\"gh pr create --title \\\"feat: x\\\" --body-file $BF\"}}' | '$HOOKS/validate-pr.sh'"
 check "PR -F with AI-ism blocked" 2 bash -c "echo '{\"tool_input\":{\"command\":\"gh pr create -t \\\"feat: x\\\" -F $BF\"}}' | '$HOOKS/validate-pr.sh'"
 check "gh pr edit --body with AI-ism blocked" 2 bash -c 'echo '"'"'{"tool_input":{"command":"gh pr edit 5 --body \"I have made it seamless.\""}}'"'"' | '"'$HOOKS/validate-pr.sh'"''
+# --body-file the hook cannot read fails closed (issue #65); a leading
+# $VAR / ${VAR} / ~ is resolved from the hook's environment.
+BFD="$WORKDIR/bf"
+mkdir -p "$BFD"
+printf 'I have made this seamless.\n' >"$BFD/bad.md"
+printf 'Adds a parser.\n' >"$BFD/ok.md"
+check "PR --body-file \$VAR/bad resolved and blocked" 2 bash -c "echo '{\"tool_input\":{\"command\":\"gh pr create --title \\\"feat: x\\\" --body-file \$GATES_BF/bad.md\"}}' | GATES_BF='$BFD' '$HOOKS/validate-pr.sh'"
+check "PR --body-file \${VAR}/ok resolved and allowed" 0 bash -c "echo '{\"tool_input\":{\"command\":\"gh pr create --title \\\"feat: x\\\" --body-file \${GATES_BF}/ok.md\"}}' | GATES_BF='$BFD' '$HOOKS/validate-pr.sh'"
+check "PR --body-file unreadable path refused" 2 bash -c "echo '{\"tool_input\":{\"command\":\"gh pr create --title \\\"feat: x\\\" --body-file $BFD/missing.md\"}}' | '$HOOKS/validate-pr.sh'"
+check "PR --body-file with unset variable refused" 2 bash -c "echo '{\"tool_input\":{\"command\":\"gh pr create --title \\\"feat: x\\\" --body-file \$GATES_UNSET_VAR/ok.md\"}}' | '$HOOKS/validate-pr.sh'"
+check "PR --body-file - (stdin) refused" 2 bash -c "echo '{\"tool_input\":{\"command\":\"gh pr create --title \\\"feat: x\\\" --body-file -\"}}' | '$HOOKS/validate-pr.sh'"
 check "gh pr edit without title/body allowed" 0 bash -c 'echo '"'"'{"tool_input":{"command":"gh pr edit 5 --add-label bug"}}'"'"' | '"'$HOOKS/validate-pr.sh'"''
 check "gh pr edit body-only (no title) allowed" 0 bash -c 'echo '"'"'{"tool_input":{"command":"gh pr edit 5 --body \"Adds a parser.\""}}'"'"' | '"'$HOOKS/validate-pr.sh'"''
 check "glab mr create with AI-ism blocked" 2 bash -c 'echo '"'"'{"tool_input":{"command":"glab mr create --title \"feat: x\" --description \"I have made it seamless.\""}}'"'"' | '"'$HOOKS/validate-pr.sh'"''
 check "glab mr update non-conventional title blocked" 2 bash -c 'echo '"'"'{"tool_input":{"command":"glab mr update 3 --title \"add stuff\""}}'"'"' | '"'$HOOKS/validate-pr.sh'"''
 check "PR with emoji body blocked" 2 bash -c 'echo '"'"'{"tool_input":{"command":"gh pr create --title \"feat: x\" --body \"Adds JWT ✨\""}}'"'"' | '"'$HOOKS/validate-pr.sh'"''
+
+# Fail closed once a PR command matched (issue #66): a missing tool or a
+# missing runtime blocks it; a non-PR command is unaffected. PATH is reduced
+# to a shim holding only the tools listed, minus the one under test.
+toolpath() { # <dir> <excluded-tool>... -> builds <dir> with symlinks
+    local dir="$1" t x skip
+    shift
+    mkdir -p "$dir"
+    for t in cat grep git head sed awk tail wc tr dirname basename perl python3 jq; do
+        skip=0
+        for x in "$@"; do [[ "$t" == "$x" ]] && skip=1; done
+        [[ "$skip" -eq 1 ]] && continue
+        command -v "$t" >/dev/null 2>&1 && ln -sf "$(command -v "$t")" "$dir/$t"
+    done
+}
+NOJQ="$WORKDIR/path-nojq"; toolpath "$NOJQ" jq
+NOPY="$WORKDIR/path-nopy"; toolpath "$NOPY" python3
+NOBOTH="$WORKDIR/path-noboth"; toolpath "$NOBOTH" python3 perl
+PRCMD='{"tool_input":{"command":"gh pr create --title \"feat: x\" --body \"Adds a parser.\""}}'
+check "PR hook: no jq -> PR command refused" 2 bash -c "printf '%s' '$PRCMD' | PATH='$NOJQ' '$HOOKS/validate-pr.sh'"
+check "PR hook: no jq -> non-PR command still allowed" 0 bash -c "printf '%s' '{\"tool_input\":{\"command\":\"ls -la\"}}' | PATH='$NOJQ' '$HOOKS/validate-pr.sh'"
+check "PR hook: no python3 -> PR command refused" 2 bash -c "printf '%s' '$PRCMD' | PATH='$NOPY' '$HOOKS/validate-pr.sh'"
+check "PR hook: missing runtime lib -> PR command refused" 2 bash -c "printf '%s' '$PRCMD' | CLAUDE_PROJECT_DIR='$WORKDIR/no-runtime-here' '$HOOKS/validate-pr.sh'"
+check "PR hook: clean PR still allowed with full tooling" 0 bash -c "printf '%s' '$PRCMD' | '$HOOKS/validate-pr.sh'"
+printf 'feat: add a thing\n' >"$WORKDIR/emoji-msg.txt"
+check "emoji rule: perl fallback when python3 is absent" 0 bash -c "PATH='$NOPY' '$GITHOOKS/commit-msg' '$WORKDIR/emoji-msg.txt'"
+check "emoji rule: neither python3 nor perl -> message refused" 0 bash -c "out=\$(PATH='$NOBOTH' '$GITHOOKS/commit-msg' '$WORKDIR/emoji-msg.txt' 2>&1); rc=\$?; [[ \$rc -eq 1 ]] && printf '%s' \"\$out\" | grep -q 'Cannot check for emoji'"
 
 echo ""
 echo "=== post-edit.sh ==="

@@ -71,6 +71,18 @@ echo "Required:"
 for t in jq git; do
     if have "$t"; then echo "${OK}$t"; else echo "${BAD}$t"; MISSING=$((MISSING + 1)); fi
 done
+# The PR hook parses commands with python3 (json + re) and fails closed
+# without it (#66). The message rules' emoji check runs on python3 or perl.
+if python3 -c 'import json, re' >/dev/null 2>&1; then
+    echo "${OK}python3 (json, re)"
+else
+    echo "${BAD}python3 with the json module — the PR hook refuses every PR command without it (Debian: install python3, not python3-minimal)"
+    MISSING=$((MISSING + 1))
+fi
+if ! python3 -c 'import re' >/dev/null 2>&1 && ! perl -e 1 >/dev/null 2>&1; then
+    echo "${BAD}python3 or perl — the emoji rule cannot run, so every commit and PR message is refused"
+    MISSING=$((MISSING + 1))
+fi
 
 echo ""
 if [[ ! -f "$PROJECT_ROOT/.specify/gates/policy.json" ]]; then
