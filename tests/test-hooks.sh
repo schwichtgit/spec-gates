@@ -76,6 +76,28 @@ check "allowed ls" 0 bash -c "echo '{\"tool_input\":{\"command\":\"ls -la\"}}' |
 check "blocked rm -rf /" 2 bash -c 'echo '"'"'{"tool_input":{"command":"rm -rf /"}}'"'"' | '"'$HOOKS/validate-bash.sh'"''
 check "blocked rm -rf ~" 2 bash -c 'echo '"'"'{"tool_input":{"command":"rm -rf ~"}}'"'"' | '"'$HOOKS/validate-bash.sh'"''
 check "blocked rm -rf /var/data" 2 bash -c 'echo '"'"'{"tool_input":{"command":"rm -rf /var/data"}}'"'"' | '"'$HOOKS/validate-bash.sh'"''
+# rm guard (#68): whole-word rm, root/home as a complete argument, absolute
+# paths blocked unless under a temp root. Payloads go through jq so quoting
+# stays readable. Literal $TMPDIR / $HOME in the payloads are intended.
+# shellcheck disable=SC2016
+rmcheck() { # <name> <expect> <command>
+    check "$1" "$2" bash -c "printf '%s' \"\$1\" | jq -Rc '{tool_input:{command:.}}' | '$HOOKS/validate-bash.sh'" _ "$3"
+}
+rmcheck "rm: brainstorm / is not rm" 0 'echo brainstorm /'
+rmcheck "rm: temp dir path allowed" 0 'rm -rf /tmp/build-x'
+rmcheck "rm: quoted temp path with space allowed" 0 'rm -rf "/tmp/build x"'
+rmcheck "rm: macOS per-user temp allowed" 0 'rm -rf /var/folders/ab/cd/T/z'
+# shellcheck disable=SC2016
+rmcheck "rm: \$TMPDIR path allowed" 0 'rm -rf $TMPDIR/probe'
+rmcheck "rm: git rm unaffected" 0 'git rm -r --cached docs/'
+rmcheck "rm: later ls / is not an rm target" 0 'rm -rf build && ls /'
+rmcheck "rm: root wildcard blocked" 2 'rm -rf /*'
+# shellcheck disable=SC2016
+rmcheck "rm: \$HOME blocked" 2 'rm -rf $HOME'
+rmcheck "rm: /bin/rm on root blocked" 2 '/bin/rm -rf /'
+rmcheck "rm: root as a later argument blocked" 2 'rm -rf ./build /'
+rmcheck "rm: /tmp itself blocked" 2 'rm -rf /tmp'
+rmcheck "rm: system path blocked" 2 'cd x && rm -rf /opt/app'
 check "allowed rm -rf ./build" 0 bash -c 'echo '"'"'{"tool_input":{"command":"rm -rf ./build"}}'"'"' | '"'$HOOKS/validate-bash.sh'"''
 check "blocked git push --force" 2 bash -c 'echo '"'"'{"tool_input":{"command":"git push --force origin main"}}'"'"' | '"'$HOOKS/validate-bash.sh'"''
 check "blocked fork bomb" 2 bash -c 'echo '"'"'{"tool_input":{"command":":(){ :|:& };:"}}'"'"' | '"'$HOOKS/validate-bash.sh'"''

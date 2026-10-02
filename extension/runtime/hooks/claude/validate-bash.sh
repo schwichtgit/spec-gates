@@ -22,13 +22,36 @@ fi
 
 BLOCKED=""
 
-# Destructive filesystem operations (matching literal $HOME in user commands).
-# No trailing \b: a word boundary after "/" never matches at end-of-string on
-# GNU grep (Linux/CI), so `rm -rf /` slipped through there while matching on
-# BSD grep (macOS). The dangerous-target alternation is anchor enough.
+# Destructive filesystem operations (#68). `rm` must be a whole word (a path
+# prefix such as /bin/rm is fine), so "brainstorm /" does not match. Two
+# rules over each rm command segment:
+#   1. root, root wildcard, or home as a complete argument -- always blocked;
+#   2. any other absolute path -- blocked unless under a temp root (/tmp,
+#      /private/tmp, /var/folders, /private/var/folders, $TMPDIR), so
+#      `rm -rf /tmp/build` is fine while `rm -rf /var/data` is not.
+# POSIX classes only: \b and \s differ between GNU grep (Linux/CI) and BSD
+# grep (macOS).
 # shellcheck disable=SC2016
-if echo "$COMMAND" | grep -qE 'rm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+)?(-[a-zA-Z]*r[a-zA-Z]*\s+)?(\/|\/\*|~|\$HOME)'; then
+RM_TARGET='(/|/\*|~|~/|~/\*|\$HOME|\$HOME/|\$HOME/\*|\$\{HOME\}|\$\{HOME\}/|"\$HOME"|"\$HOME/")'
+if echo "$COMMAND" | grep -qE '(^|[^[:alnum:]_.-])rm[[:space:]]+([^;&|]*[[:space:]])?'"$RM_TARGET"'([[:space:]]|[;&|)]|$)'; then
     BLOCKED="Destructive rm command targeting root, home, or wildcard"
+fi
+if [[ -z "$BLOCKED" ]]; then
+    while IFS= read -r _seg; do
+        # shellcheck disable=SC2086  # deliberate word split of the arguments
+        for _arg in ${_seg#*rm}; do
+            _arg="${_arg#[\"\']}"
+            _arg="${_arg%[\"\']}"
+            # The quoted $TMPDIR patterns are literal on purpose: they match
+            # the unexpanded command text.
+            # shellcheck disable=SC2016
+            case "$_arg" in
+                /tmp/?* | /private/tmp/?* | /var/folders/?* | /private/var/folders/?*) ;;
+                '$TMPDIR'/?* | '${TMPDIR}'/?*) ;;
+                /*) BLOCKED="Destructive rm command on an absolute path outside the temp directories ($_arg)" ;;
+            esac
+        done
+    done < <(echo "$COMMAND" | grep -oE '(^|[^[:alnum:]_.-])rm[[:space:]]+[^;&|]*' || true)
 fi
 
 # Force push
