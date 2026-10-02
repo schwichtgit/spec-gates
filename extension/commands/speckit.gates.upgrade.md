@@ -40,3 +40,9 @@ needed when a policy already exists — this command is the whole bump.
   projected files is overwritten here by design. If the repo lints
   `.specify/gates/`, `.specify/extensions/`, or `.claude/hooks/gates/`,
   offer the ignore entries again.
+- Tell the user that `.git/hooks` is shared by every branch while the
+  projected runtime is per branch. After an upgrade, a branch still on an
+  older runtime (cut before the upgrade landed, or an old branch checked
+  out) commits with the newer hooks: commit-msg warns that the message
+  rules are skipped there, and pre-commit keeps that runtime's protected-
+  file refusal. Rebasing the branch onto the upgraded one ends the skew.

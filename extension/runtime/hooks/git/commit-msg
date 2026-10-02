@@ -21,18 +21,45 @@ POLICY_LIB="$PROJECT_ROOT/.specify/gates/lib/policy.sh"
 [[ -f "$POLICY_LIB" ]] && source "$POLICY_LIB"
 
 MESSAGE_LIB="$PROJECT_ROOT/.specify/gates/lib/message.sh"
-if [[ ! -f "$MESSAGE_LIB" ]]; then
-    # Fail closed: the hook is installed but the runtime it enforces is not.
-    echo "ERROR: $MESSAGE_LIB not found -- re-project the gates runtime (/speckit.gates.upgrade)." >&2
-    exit 1
-fi
-# shellcheck source=/dev/null disable=SC1091
-source "$MESSAGE_LIB"
+RUNTIME_VERSION="$(head -n 1 "$PROJECT_ROOT/.specify/gates/.runtime-version" 2>/dev/null || true)"
+
+# True when version $1 is older than $2 (numeric major.minor.patch).
+version_lt() {
+    local a b i x y
+    IFS=. read -r -a a <<<"$1"
+    IFS=. read -r -a b <<<"$2"
+    for i in 0 1 2; do
+        x="${a[$i]:-0}"
+        y="${b[$i]:-0}"
+        x="${x%%[!0-9]*}"
+        y="${y%%[!0-9]*}"
+        [[ "${x:-0}" -lt "${y:-0}" ]] && return 0
+        [[ "${x:-0}" -gt "${y:-0}" ]] && return 1
+    done
+    return 1
+}
 
 # --- Message rules (shared with validate-pr.sh and pr-check.sh) ---
-gates_message_check commit "$MSG" || true
-ERRORS="$GATES_MSG_ERRORS"
-WARNINGS="$GATES_MSG_WARNINGS"
+if [[ -f "$MESSAGE_LIB" ]]; then
+    # shellcheck source=/dev/null disable=SC1091
+    source "$MESSAGE_LIB"
+    gates_message_check commit "$MSG" || true
+    ERRORS="$GATES_MSG_ERRORS"
+    WARNINGS="$GATES_MSG_WARNINGS"
+elif [[ -z "$RUNTIME_VERSION" ]] || version_lt "$RUNTIME_VERSION" 0.3.4; then
+    # .git/hooks is shared by every branch, the projected runtime is not: a
+    # branch still on a pre-0.3.4 runtime (cut before the upgrade landed) has
+    # no lib/message.sh. Refusing every commit there would strand it, so the
+    # message rules that runtime never had are skipped, loudly.
+    echo "WARN: this branch's gates runtime (${RUNTIME_VERSION:-unversioned}) predates the installed commit-msg hook;" >&2
+    echo "  message rules skipped. Rebase onto the upgraded branch or run /speckit.gates.upgrade." >&2
+    ERRORS=0
+    WARNINGS=1
+else
+    # A 0.3.4+ runtime without its message lib is a broken projection: fail closed.
+    echo "ERROR: $MESSAGE_LIB not found but the runtime is $RUNTIME_VERSION -- re-project it (/speckit.gates.upgrade)." >&2
+    exit 1
+fi
 
 # --- Protected files (policy: protected_files.extra, git.protected_change_trailer) ---
 # Issue #47. The agent boundary refuses protected edits outright; at the git
