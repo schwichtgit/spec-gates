@@ -25,9 +25,17 @@ _gates_msg_policy_enabled() { # <git-field>: on unless the policy says false
     return 0
 }
 
+# Emoji detection. Returns 0 = emoji found, 1 = none, 2 = cannot check.
+# python3 first, perl as the fallback (perl ships with macOS and with the
+# Debian base that slim images use). Neither usable means the rule cannot
+# run, and the caller fails closed instead of passing silently (#66).
+_GATES_EMOJI_RANGES='\x{1F300}-\x{1F9FF}\x{2600}-\x{27BF}\x{FE00}-\x{FE0F}\x{200D}\x{2702}-\x{27B0}\x{1FA00}-\x{1FA6F}\x{1FA70}-\x{1FAFF}'
+
 _gates_msg_has_emoji() { # <text>
-    command -v python3 >/dev/null 2>&1 || return 1
-    python3 - "$1" <<'PYEOF' 2>/dev/null
+    local rc
+    if python3 -c 'import re, sys' >/dev/null 2>&1; then
+        rc=0
+        python3 - "$1" <<'PYEOF' 2>/dev/null || rc=$?
 import re, sys
 
 text = sys.argv[1] if len(sys.argv) > 1 else ""
@@ -45,6 +53,14 @@ emoji_pattern = re.compile(
 )
 sys.exit(0 if emoji_pattern.search(text) else 1)
 PYEOF
+        [[ "$rc" -le 1 ]] && return "$rc"
+    fi
+    if perl -e 1 >/dev/null 2>&1; then
+        rc=0
+        printf '%s' "$1" | perl -CS -0777 -ne "exit(/[$_GATES_EMOJI_RANGES]/ ? 0 : 1)" 2>/dev/null || rc=$?
+        [[ "$rc" -le 1 ]] && return "$rc"
+    fi
+    return 2
 }
 
 gates_message_check() { # <commit|pr> <text>
@@ -67,8 +83,12 @@ gates_message_check() { # <commit|pr> <text>
 
     local emoji_scope="$subject"
     [[ "$mode" == "pr" ]] && emoji_scope="$msg"
-    if _gates_msg_has_emoji "$emoji_scope"; then
+    local emoji_rc=0
+    _gates_msg_has_emoji "$emoji_scope" || emoji_rc=$?
+    if [[ "$emoji_rc" -eq 0 ]]; then
         _err "Emoji detected in the message."
+    elif [[ "$emoji_rc" -eq 2 ]]; then
+        _err "Cannot check for emoji: neither python3 nor perl is usable (install one; see /speckit.gates.doctor)."
     fi
 
     if _gates_msg_policy_enabled forbid_ai_isms; then
