@@ -113,6 +113,25 @@ else
     echo "SKIP: shellcheck not installed"
 fi
 
+# Every shipped shell file must parse under the oldest bash it meets: hooks
+# run through their shebang (#!/bin/bash), which on macOS is bash 3.2.
+# 0.3.4 shipped a validate-pr.sh that only bash >= 4 could parse. Runs
+# wherever a 3.x /bin/bash exists (any Mac, and the macOS CI job).
+echo ""
+echo "=== shipped shell parses under the stock macOS bash (3.2) ==="
+if [[ -x /bin/bash ]] && /bin/bash -c '[[ ${BASH_VERSINFO[0]} -lt 4 ]]'; then
+    BAD32=""
+    while IFS= read -r f; do
+        [[ -z "$f" ]] && continue
+        case "$f" in *.json | *.md | *.yml | *.yaml) continue ;; esac
+        head -n 1 "$f" | grep -q 'bash' || [[ "$f" == *.sh ]] || continue
+        /bin/bash -n "$f" 2>/dev/null || BAD32="$BAD32 ${f#"$REPO_ROOT"/}"
+    done < <(find "$REPO_ROOT/extension/runtime" -type f | sort)
+    expect "every shipped script parses under /bin/bash $(/bin/bash -c 'echo $BASH_VERSION')" "${BAD32:-none}" "none"
+else
+    echo "SKIP: no bash 3.x at /bin/bash (the macOS CI job covers this)"
+fi
+
 echo ""
 echo "test-package: $PASS/$TOTAL passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]

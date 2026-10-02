@@ -41,8 +41,13 @@ fi
 # shellcheck source=/dev/null disable=SC1091
 source "$GATES_LIB_DIR/message.sh"
 
-# Extract title, inline body, and body file from the command line.
-PARTS=$(python3 - "$COMMAND" <<'PYEOF'
+# Extract title, inline body, and body file from the command line. The
+# heredoc lives in a function, never inside $( ): macOS /bin/bash 3.2
+# mis-parses a quoted heredoc within command substitution when its body
+# holds \' and parentheses, and a syntax error exits 2 -- which Claude Code
+# reads as "block", refusing every PR command.
+pr_parts() { # <command>
+    python3 - "$1" <<'PYEOF'
 import json
 import re
 import sys
@@ -69,7 +74,8 @@ print(json.dumps({
     "body_file": path([r"--body-file", r"-F"]),
 }))
 PYEOF
-)
+}
+PARTS=$(pr_parts "$COMMAND")
 
 TITLE=$(printf '%s' "$PARTS" | jq -r '.title')
 BODY=$(printf '%s' "$PARTS" | jq -r '.body')
