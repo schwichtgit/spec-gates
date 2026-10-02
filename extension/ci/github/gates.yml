@@ -1,6 +1,12 @@
 # spec-gates CI boundary — projected by /speckit.gates.ci github
 # Runs the IDENTICAL entrypoint used by the Claude Code Stop hook and the
 # git pre-commit hook. Parity property: local green == CI green.
+#
+# Hardened by default: read-only token, no persisted git credentials, one
+# run per ref, a job timeout. Actions are referenced by major tag; pin them
+# to commit SHAs if your organization requires it (Dependabot keeps pinned
+# SHAs current). When merging into an existing workflow, keep its stricter
+# settings and add only what is missing.
 name: Quality Gates
 on:
   pull_request:
@@ -8,24 +14,36 @@ on:
     types: [opened, synchronize, reopened, edited]
   push:
     branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: gates-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   gates:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
         with:
           # Full history: the PR check walks base..head for protected changes.
           fetch-depth: 0
-      - uses: actions/setup-node@v6
+          persist-credentials: false
+      - uses: actions/setup-node@v7
         with:
           node-version: "26"
       - name: Install gate tooling
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q jq shellcheck
-          # If your repo pins prettier/markdownlint-cli2 in package.json,
-          # prefer `npm ci` here so CI and local use identical versions.
-          npm install -g prettier markdownlint-cli2
+          # Lockfile-pinned linters keep CI on the versions local runs use
+          # (the parity gate compares them); fall back to the latest only
+          # when the repo pins nothing.
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install -g prettier markdownlint-cli2
+          fi
       - name: Run quality gates
         run: bash .specify/gates/verify.sh --boundary ci
       # A red step here means a BROKEN GATE, not a dirty tree: a canary

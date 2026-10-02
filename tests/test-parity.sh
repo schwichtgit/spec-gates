@@ -69,6 +69,28 @@ assert_invokes "CI/jenkins" "$REPO_ROOT/extension/ci/jenkins/Jenkinsfile.gates" 
 assert_invokes "agent hook" "$REPO_ROOT/extension/runtime/hooks/claude/verify-quality.sh" "agent"
 assert_invokes "git hook" "$REPO_ROOT/extension/runtime/hooks/git/pre-commit" "git"
 
+# The projected CI templates carry the PR check and a hardened default:
+# a consumer merging them must not be handed weaker settings than it has.
+echo ""
+echo "=== CI templates: PR check and hardening ==="
+GH_T="$REPO_ROOT/extension/ci/github/gates.yml"
+GL_T="$REPO_ROOT/extension/ci/gitlab/gates.gitlab-ci.yml"
+for needle in "pr-check.sh" "fetch-depth: 0" "edited" "contents: read" \
+    "persist-credentials: false" "concurrency:" "timeout-minutes:" "if [ -f package-lock.json ]"; do
+    if grep -qF -- "$needle" "$GH_T"; then
+        pass "github template has '$needle'"
+    else
+        fail "github template lacks '$needle'"
+    fi
+done
+for needle in "pr-check.sh" 'GIT_DEPTH: "0"' "python3" "timeout:" "if [ -f package-lock.json ]"; do
+    if grep -qF -- "$needle" "$GL_T"; then
+        pass "gitlab template has '$needle'"
+    else
+        fail "gitlab template lacks '$needle'"
+    fi
+done
+
 # ===========================================================================
 # Part 2: the gate lives in exactly one place
 # ===========================================================================

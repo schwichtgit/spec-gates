@@ -3,13 +3,17 @@
 gates:
   stage: test
   image: node:22-slim
+  timeout: 20m
+  interruptible: true
   variables:
     # Full history: the MR check walks base..head for protected changes.
     GIT_DEPTH: "0"
   before_script:
     # python3: the emoji rule of the message check needs it.
     - apt-get update -q && apt-get install -y -q jq shellcheck git python3
-    - npm install -g prettier markdownlint-cli2
+    # Lockfile-pinned linters keep CI on the versions local runs use (the
+    # parity gate compares them); latest only when the repo pins nothing.
+    - if [ -f package-lock.json ]; then npm ci; else npm install -g prettier markdownlint-cli2; fi
   script:
     - bash .specify/gates/verify.sh --boundary ci
     # A failure here means a BROKEN GATE (a canary violation was accepted),
