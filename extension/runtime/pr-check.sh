@@ -86,18 +86,35 @@ fi
 # does not set it at all. In both cases fetch the full description through
 # the API: GATES_GITLAB_TOKEN (a read_api token) first, then CI_JOB_TOKEN as
 # a best effort (its API scope may not cover merge requests).
+# http_get <header> <url>: body on stdout, nonzero on any failure. curl when
+# present, else python3's urllib: slim CI images (the GitLab template's
+# node:*-slim) ship without curl, while python3 is already required.
+http_get() { # <header "Name: value"> <url>
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsS --max-time 20 -H "$1" "$2" 2>/dev/null
+        return
+    fi
+    python3 - "$1" "$2" <<'PYEOF' 2>/dev/null
+import sys, urllib.request
+
+name, _, value = sys.argv[1].partition(":")
+request = urllib.request.Request(sys.argv[2], headers={name.strip(): value.strip()})
+with urllib.request.urlopen(request, timeout=20) as response:
+    sys.stdout.write(response.read().decode("utf-8"))
+PYEOF
+}
+
 gitlab_fetch_description() { # -> full description on stdout, or return 1
     [[ -n "${CI_API_V4_URL:-}" && -n "${CI_PROJECT_ID:-}" && -n "${CI_MERGE_REQUEST_IID:-}" ]] || return 1
-    command -v curl >/dev/null 2>&1 || return 1
     local url="$CI_API_V4_URL/projects/$CI_PROJECT_ID/merge_requests/$CI_MERGE_REQUEST_IID" json
     if [[ -n "${GATES_GITLAB_TOKEN:-}" ]] \
-        && json="$(curl -fsS --max-time 20 -H "PRIVATE-TOKEN: $GATES_GITLAB_TOKEN" "$url" 2>/dev/null)" \
+        && json="$(http_get "PRIVATE-TOKEN: $GATES_GITLAB_TOKEN" "$url")" \
         && printf '%s' "$json" | jq -e 'has("description")' >/dev/null 2>&1; then
         printf '%s' "$json" | jq -r '.description // ""'
         return 0
     fi
     if [[ -n "${CI_JOB_TOKEN:-}" ]] \
-        && json="$(curl -fsS --max-time 20 -H "JOB-TOKEN: $CI_JOB_TOKEN" "$url" 2>/dev/null)" \
+        && json="$(http_get "JOB-TOKEN: $CI_JOB_TOKEN" "$url")" \
         && printf '%s' "$json" | jq -e 'has("description")' >/dev/null 2>&1; then
         printf '%s' "$json" | jq -r '.description // ""'
         return 0

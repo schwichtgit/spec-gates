@@ -26,6 +26,9 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   truncates it, or doesn't expose it (before 16.7), pr-check fetches the
   full text from the API with `GATES_GITLAB_TOKEN` or `CI_JOB_TOKEN`. A
   truncated description it can't fetch fails the job (#67).
+- **GitLab: the description fetch works without curl.** It falls back to
+  python3's `urllib`, and the GitLab template installs curl. Slim CI images
+  have no curl, so a truncated description could never be fetched there.
 - **The `rm` guard is narrowed to real root, home and system-path deletes.**
   `echo brainstorm /` and `rm -rf /tmp/<dir>` are no longer blocked. Root
   as a later argument (`rm -rf ./build /`) now is (#68).
