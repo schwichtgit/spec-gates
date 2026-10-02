@@ -8,7 +8,7 @@ never touches `.specify/gates/policy.json`. New policy keys take the
 defaults stated here until you set them. Releases before 0.3.3 are
 described in their [GitHub release notes](https://github.com/schwichtgit/spec-gates/releases).
 
-## [Unreleased] — 0.3.6
+## 0.3.6 — 2026-10-02
 
 ### Fixed
 
