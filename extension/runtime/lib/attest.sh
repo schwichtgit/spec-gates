@@ -100,6 +100,25 @@ gates_pin_mismatches() { # <gates-json-array>
         | join("; ")' 2>/dev/null || true
 }
 
+# Keep the attestation log out of version control (#69): it is disposable
+# run evidence, documented as gitignored. Adds the entry to the .gitignore
+# next to the log, creating the file when absent and never rewriting other
+# lines. Best effort: a failure here never affects the gate outcome.
+gates_attest_ignore() { # <log-path>
+    local log="${1:-}" dir name ignore
+    [[ -n "$log" ]] || return 0
+    dir="$(dirname "$log")"
+    name="$(basename "$log")"
+    ignore="$dir/.gitignore"
+    if [[ -f "$ignore" ]] && grep -qxF -e "$name" -e "/$name" "$ignore" 2>/dev/null; then
+        return 0
+    fi
+    local sep=""
+    [[ -s "$ignore" && -n "$(tail -c 1 "$ignore" 2>/dev/null)" ]] && sep=$'\n'
+    printf '%s%s\n' "$sep" "$name" >>"$ignore" 2>/dev/null || true
+    return 0
+}
+
 # Append one single-line record, then cap: records are well under PIPE_BUF so
 # the append is a single atomic-in-practice write; the cap rewrite goes
 # through a temp file in the same directory + mv (atomic rename), so readers
@@ -113,6 +132,7 @@ gates_attest_append() { # <record-json> <log-path> <max-records>
         mkdir -p "$dir" || return 1
     fi
     printf '%s\n' "$record" >>"$log" || return 1
+    gates_attest_ignore "$log"
     local lines
     lines="$(wc -l <"$log" | tr -d '[:space:]')" || return 1
     if [[ "$lines" -gt "$max" ]]; then
