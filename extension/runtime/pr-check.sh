@@ -27,6 +27,9 @@ set -uo pipefail
 # Inputs, flag first, then the CI's own variables:
 #   title  --title | $GATES_PR_TITLE | $CI_MERGE_REQUEST_TITLE | $CHANGE_TITLE
 #   body   --body-file | $GATES_PR_BODY | $CI_MERGE_REQUEST_DESCRIPTION
+#          (GitLab: when that is truncated, or unset before GitLab 16.7, the
+#          full description is fetched from the API with $GATES_GITLAB_TOKEN
+#          or $CI_JOB_TOKEN; a truncated one that cannot be fetched fails)
 #   range  --range | $GATES_COMMIT_RANGE | origin/$GITHUB_BASE_REF..HEAD
 #          (pull_request events) | $CI_MERGE_REQUEST_DIFF_BASE_SHA..HEAD |
 #          origin/$CHANGE_TARGET..HEAD
@@ -77,15 +80,59 @@ if [[ -n "$BODY_FILE" ]]; then
 else
     BODY="${GATES_PR_BODY:-${CI_MERGE_REQUEST_DESCRIPTION:-}}"
 fi
+
+# GitLab MR pipelines (#67). The CI variable can be truncated
+# (CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED=true), and GitLab before 16.7
+# does not set it at all. In both cases fetch the full description through
+# the API: GATES_GITLAB_TOKEN (a read_api token) first, then CI_JOB_TOKEN as
+# a best effort (its API scope may not cover merge requests).
+gitlab_fetch_description() { # -> full description on stdout, or return 1
+    [[ -n "${CI_API_V4_URL:-}" && -n "${CI_PROJECT_ID:-}" && -n "${CI_MERGE_REQUEST_IID:-}" ]] || return 1
+    command -v curl >/dev/null 2>&1 || return 1
+    local url="$CI_API_V4_URL/projects/$CI_PROJECT_ID/merge_requests/$CI_MERGE_REQUEST_IID" json
+    if [[ -n "${GATES_GITLAB_TOKEN:-}" ]] \
+        && json="$(curl -fsS --max-time 20 -H "PRIVATE-TOKEN: $GATES_GITLAB_TOKEN" "$url" 2>/dev/null)" \
+        && printf '%s' "$json" | jq -e 'has("description")' >/dev/null 2>&1; then
+        printf '%s' "$json" | jq -r '.description // ""'
+        return 0
+    fi
+    if [[ -n "${CI_JOB_TOKEN:-}" ]] \
+        && json="$(curl -fsS --max-time 20 -H "JOB-TOKEN: $CI_JOB_TOKEN" "$url" 2>/dev/null)" \
+        && printf '%s' "$json" | jq -e 'has("description")' >/dev/null 2>&1; then
+        printf '%s' "$json" | jq -r '.description // ""'
+        return 0
+    fi
+    return 1
+}
+DESCRIPTION_UNCHECKABLE=""
+if [[ -z "$BODY_FILE" && -z "${GATES_PR_BODY:-}" ]]; then
+    if [[ "${CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED:-}" == "true" ]]; then
+        if FULL="$(gitlab_fetch_description)"; then
+            BODY="$FULL"
+            echo "pr-check: GitLab truncated the MR description; checking the full text fetched from the API"
+        else
+            DESCRIPTION_UNCHECKABLE="GitLab truncated the MR description and the full text could not be fetched (set GATES_GITLAB_TOKEN to a read_api token, or shorten the description)"
+        fi
+    elif [[ -n "${CI_MERGE_REQUEST_IID:-}" && -z "${CI_MERGE_REQUEST_DESCRIPTION+set}" ]]; then
+        if FULL="$(gitlab_fetch_description)"; then
+            BODY="$FULL"
+            echo "pr-check: CI_MERGE_REQUEST_DESCRIPTION is not set (GitLab < 16.7); checking the description fetched from the API"
+        else
+            echo "pr-check: NOTICE -- CI_MERGE_REQUEST_DESCRIPTION is not set (GitLab < 16.7) and no API token is available; only the MR title is checked (set GATES_GITLAB_TOKEN to check the description)"
+        fi
+    fi
+fi
 # Web forms submit CRLF line endings.
 BODY="$(printf '%s' "$BODY" | tr -d '\r')"
 TITLE="$(printf '%s' "$TITLE" | tr -d '\r')"
 
 # --- 1. PR/MR text ---
-if [[ -n "$TITLE" || -n "${BODY//[[:space:]]/}" ]]; then
-    if [[ "${CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED:-}" == "true" ]]; then
-        echo "pr-check: WARN -- GitLab truncated the MR description; only its first part is checked"
-    fi
+if [[ -n "$DESCRIPTION_UNCHECKABLE" ]]; then
+    # Fail closed: passing on the visible part would hide a violation in the
+    # truncated tail.
+    echo "pr-check: ERROR -- $DESCRIPTION_UNCHECKABLE" >&2
+    FAILED=$((FAILED + 1))
+elif [[ -n "$TITLE" || -n "${BODY//[[:space:]]/}" ]]; then
     if gates_message_check pr "$TITLE"$'\n\n'"$BODY"; then
         echo "pr-check: PR/MR title and description pass the message rules"
     else

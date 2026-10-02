@@ -62,9 +62,14 @@ create`; GitLab: `glab repo create` or the web UI; Jenkins: the SCM
      description change re-runs the check.
    - gitlab: editing an MR title or description does NOT start a
      pipeline. Re-run the pipeline after such edits, or require a fresh
-     pipeline before merge. A long description may be truncated by
-     GitLab (`CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED`), and the check
-     warns when that happens.
+     pipeline before merge. GitLab exposes the MR description to CI from
+     16.7, and truncates long ones
+     (`CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED`). In both cases the
+     check fetches the full description from the API using
+     `GATES_GITLAB_TOKEN` (offer to set it as a masked CI/CD variable
+     holding a `read_api` token) or `CI_JOB_TOKEN`. A truncated
+     description it cannot fetch fails the job. Before 16.7 without a
+     token, only the title is checked, and the job prints a notice.
    - jenkins: only the title is available (`CHANGE_TITLE`); the
      description is not checked.
 
