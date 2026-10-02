@@ -67,3 +67,45 @@ jobs:
 
       - name: Run the test suites
         run: bash tests/run.sh
+
+  # Hooks run through their shebang (#!/bin/bash): on macOS that is the
+  # stock bash 3.2 with BSD userland, which the ubuntu job above never
+  # exercises. 0.3.4 shipped a validate-pr.sh only bash >= 4 could parse.
+  macos-bash32:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Every shipped and test script parses under /bin/bash 3.2
+        run: |
+          /bin/bash --version | head -n 1
+          fail=0
+          for f in $(git ls-files 'extension/runtime/*.sh' 'extension/runtime/hooks/git/*' 'extension/runtime/hooks/claude/*.sh' 'tests/*.sh' '.github/scripts/*.sh'); do
+            /bin/bash -n "$f" || { echo "::error file=$f::does not parse under /bin/bash 3.2"; fail=1; }
+          done
+          exit "$fail"
+
+      - name: Project the gate runtime
+        run: |
+          mkdir -p .specify/gates/lib
+          cp extension/runtime/verify.sh extension/runtime/doctor.sh extension/runtime/canary.sh extension/runtime/contract.sh extension/runtime/constitution.sh extension/runtime/pr-check.sh .specify/gates/
+          cp extension/runtime/lib/*.sh .specify/gates/lib/
+          cp extension/runtime/policy.schema.json .specify/gates/
+
+      # Stock macOS userland: /bin/bash 3.2 and BSD sed/awk/grep/date first
+      # on PATH, so no Homebrew GNU tool can mask a portability bug.
+      - name: Hook, PR-check, and package suites under the stock macOS shell
+        run: |
+          export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+          for suite in test-hooks test-pr-check test-package; do
+            echo "=== $suite"
+            /bin/bash "tests/$suite.sh"
+          done
+
+      - name: Agent- and git-boundary canaries under the stock macOS shell
+        run: |
+          export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+          /bin/bash .specify/gates/canary.sh --only bash,protect,prhook,secret,credential,protected,branding,pr

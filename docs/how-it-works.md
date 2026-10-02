@@ -120,8 +120,12 @@ installed: an AWS-key-shaped string and a token assignment (pre-commit
 secret scan), a protected file without its `Protected-Change` trailer, and
 a message naming a default AI-branding term (commit-msg). The `pr` probe
 runs `pr-check.sh` over a sandbox range with an undeclared protected change
-and over a PR description containing an AI-ism. The suite copies the
-runtime from the projected directory, so a broken _projected_ gate — not just a broken
+and over a PR description containing an AI-ism. Hooks run by path, as
+Claude Code runs them, so their shebang picks the interpreter (bash 3.2 on
+macOS). The PR-hook probe needs a clean PR allowed as well as a bad one
+refused, because a hook that fails to parse also exits 2 and would
+otherwise count as blocking. The suite copies the runtime from the
+projected directory, so a broken _projected_ gate — not just a broken
 source tree — is what gets caught. Probes never read or write user project
 files. An accepted probe fails the suite naming the gate; CI runs the
 suite on every build.

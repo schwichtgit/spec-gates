@@ -19,6 +19,11 @@ PASS=0
 FAIL=0
 TOTAL=0
 
+# Hooks are executed by path, never as `bash <hook>`: Claude Code and git
+# run them through their shebang (#!/bin/bash), which on macOS is the stock
+# bash 3.2. Invoking them through the PATH bash (often 5.x) hid a 3.2-only
+# syntax error in validate-pr.sh until it shipped in 0.3.4.
+
 check() {
     local name="$1" expected_exit="$2"
     shift 2
@@ -57,51 +62,51 @@ have_node_linters() { [[ -x "$REPO_ROOT/node_modules/.bin/prettier" ]]; }
 # Part A: self-contained hooks
 # ===========================================================================
 echo "=== protect-files.sh ==="
-check "allowed file (src/main.ts)" 0 bash -c "echo '{\"tool_input\":{\"file_path\":\"src/main.ts\"}}' | bash '$HOOKS/protect-files.sh'"
-check "blocked .env" 2 bash -c "echo '{\"tool_input\":{\"file_path\":\".env\"}}' | bash '$HOOKS/protect-files.sh'"
-check "blocked id_rsa" 2 bash -c "echo '{\"tool_input\":{\"file_path\":\"config/id_rsa\"}}' | bash '$HOOKS/protect-files.sh'"
-check "allowed .env.example" 0 bash -c "echo '{\"tool_input\":{\"file_path\":\".env.example\"}}' | bash '$HOOKS/protect-files.sh'"
-check "allowed .env.template" 0 bash -c "echo '{\"tool_input\":{\"file_path\":\".env.template\"}}' | bash '$HOOKS/protect-files.sh'"
-check "blocked .env.local" 2 bash -c "echo '{\"tool_input\":{\"file_path\":\".env.local\"}}' | bash '$HOOKS/protect-files.sh'"
-check "fail-open bad JSON" 0 bash -c "echo 'not-json' | bash '$HOOKS/protect-files.sh'"
+check "allowed file (src/main.ts)" 0 bash -c "echo '{\"tool_input\":{\"file_path\":\"src/main.ts\"}}' | '$HOOKS/protect-files.sh'"
+check "blocked .env" 2 bash -c "echo '{\"tool_input\":{\"file_path\":\".env\"}}' | '$HOOKS/protect-files.sh'"
+check "blocked id_rsa" 2 bash -c "echo '{\"tool_input\":{\"file_path\":\"config/id_rsa\"}}' | '$HOOKS/protect-files.sh'"
+check "allowed .env.example" 0 bash -c "echo '{\"tool_input\":{\"file_path\":\".env.example\"}}' | '$HOOKS/protect-files.sh'"
+check "allowed .env.template" 0 bash -c "echo '{\"tool_input\":{\"file_path\":\".env.template\"}}' | '$HOOKS/protect-files.sh'"
+check "blocked .env.local" 2 bash -c "echo '{\"tool_input\":{\"file_path\":\".env.local\"}}' | '$HOOKS/protect-files.sh'"
+check "fail-open bad JSON" 0 bash -c "echo 'not-json' | '$HOOKS/protect-files.sh'"
 
 echo ""
 echo "=== validate-bash.sh ==="
-check "allowed ls" 0 bash -c "echo '{\"tool_input\":{\"command\":\"ls -la\"}}' | bash '$HOOKS/validate-bash.sh'"
-check "blocked rm -rf /" 2 bash -c 'echo '"'"'{"tool_input":{"command":"rm -rf /"}}'"'"' | bash '"'$HOOKS/validate-bash.sh'"''
-check "blocked rm -rf ~" 2 bash -c 'echo '"'"'{"tool_input":{"command":"rm -rf ~"}}'"'"' | bash '"'$HOOKS/validate-bash.sh'"''
-check "blocked rm -rf /var/data" 2 bash -c 'echo '"'"'{"tool_input":{"command":"rm -rf /var/data"}}'"'"' | bash '"'$HOOKS/validate-bash.sh'"''
-check "allowed rm -rf ./build" 0 bash -c 'echo '"'"'{"tool_input":{"command":"rm -rf ./build"}}'"'"' | bash '"'$HOOKS/validate-bash.sh'"''
-check "blocked git push --force" 2 bash -c 'echo '"'"'{"tool_input":{"command":"git push --force origin main"}}'"'"' | bash '"'$HOOKS/validate-bash.sh'"''
-check "blocked fork bomb" 2 bash -c 'echo '"'"'{"tool_input":{"command":":(){ :|:& };:"}}'"'"' | bash '"'$HOOKS/validate-bash.sh'"''
-check "fail-open bad JSON" 0 bash -c "echo 'not-json' | bash '$HOOKS/validate-bash.sh'"
+check "allowed ls" 0 bash -c "echo '{\"tool_input\":{\"command\":\"ls -la\"}}' | '$HOOKS/validate-bash.sh'"
+check "blocked rm -rf /" 2 bash -c 'echo '"'"'{"tool_input":{"command":"rm -rf /"}}'"'"' | '"'$HOOKS/validate-bash.sh'"''
+check "blocked rm -rf ~" 2 bash -c 'echo '"'"'{"tool_input":{"command":"rm -rf ~"}}'"'"' | '"'$HOOKS/validate-bash.sh'"''
+check "blocked rm -rf /var/data" 2 bash -c 'echo '"'"'{"tool_input":{"command":"rm -rf /var/data"}}'"'"' | '"'$HOOKS/validate-bash.sh'"''
+check "allowed rm -rf ./build" 0 bash -c 'echo '"'"'{"tool_input":{"command":"rm -rf ./build"}}'"'"' | '"'$HOOKS/validate-bash.sh'"''
+check "blocked git push --force" 2 bash -c 'echo '"'"'{"tool_input":{"command":"git push --force origin main"}}'"'"' | '"'$HOOKS/validate-bash.sh'"''
+check "blocked fork bomb" 2 bash -c 'echo '"'"'{"tool_input":{"command":":(){ :|:& };:"}}'"'"' | '"'$HOOKS/validate-bash.sh'"''
+check "fail-open bad JSON" 0 bash -c "echo 'not-json' | '$HOOKS/validate-bash.sh'"
 
 echo ""
 echo "=== validate-pr.sh ==="
-check "clean PR" 0 bash -c 'echo '"'"'{"tool_input":{"command":"gh pr create --title \"feat: add auth\" --body \"Adds JWT\""}}'"'"' | bash '"'$HOOKS/validate-pr.sh'"''
-check "AI-ism blocked" 2 bash -c 'echo '"'"'{"tool_input":{"command":"gh pr create --title \"I have fixed it\" --body \"desc\""}}'"'"' | bash '"'$HOOKS/validate-pr.sh'"''
-check "non-PR skipped" 0 bash -c 'echo '"'"'{"tool_input":{"command":"npm install"}}'"'"' | bash '"'$HOOKS/validate-pr.sh'"''
-check "PR mentioning CLAUDE.md / .claude allowed" 0 bash -c 'echo '"'"'{"tool_input":{"command":"gh pr create --title \"docs: update CLAUDE.md\" --body \"edits .claude/hooks/foo.sh\""}}'"'"' | bash '"'$HOOKS/validate-pr.sh'"''
-check "PR with standalone Claude still blocked" 2 bash -c 'echo '"'"'{"tool_input":{"command":"gh pr create --title \"feat: x\" --body \"Generated by Claude\""}}'"'"' | bash '"'$HOOKS/validate-pr.sh'"''
+check "clean PR" 0 bash -c 'echo '"'"'{"tool_input":{"command":"gh pr create --title \"feat: add auth\" --body \"Adds JWT\""}}'"'"' | '"'$HOOKS/validate-pr.sh'"''
+check "AI-ism blocked" 2 bash -c 'echo '"'"'{"tool_input":{"command":"gh pr create --title \"I have fixed it\" --body \"desc\""}}'"'"' | '"'$HOOKS/validate-pr.sh'"''
+check "non-PR skipped" 0 bash -c 'echo '"'"'{"tool_input":{"command":"npm install"}}'"'"' | '"'$HOOKS/validate-pr.sh'"''
+check "PR mentioning CLAUDE.md / .claude allowed" 0 bash -c 'echo '"'"'{"tool_input":{"command":"gh pr create --title \"docs: update CLAUDE.md\" --body \"edits .claude/hooks/foo.sh\""}}'"'"' | '"'$HOOKS/validate-pr.sh'"''
+check "PR with standalone Claude still blocked" 2 bash -c 'echo '"'"'{"tool_input":{"command":"gh pr create --title \"feat: x\" --body \"Generated by Claude\""}}'"'"' | '"'$HOOKS/validate-pr.sh'"''
 BF="$WORKDIR/pr-body.md"
 printf 'I have made this seamless.\n' >"$BF"
-check "PR --body-file with AI-ism blocked" 2 bash -c "echo '{\"tool_input\":{\"command\":\"gh pr create --title \\\"feat: x\\\" --body-file $BF\"}}' | bash '$HOOKS/validate-pr.sh'"
-check "PR -F with AI-ism blocked" 2 bash -c "echo '{\"tool_input\":{\"command\":\"gh pr create -t \\\"feat: x\\\" -F $BF\"}}' | bash '$HOOKS/validate-pr.sh'"
-check "gh pr edit --body with AI-ism blocked" 2 bash -c 'echo '"'"'{"tool_input":{"command":"gh pr edit 5 --body \"I have made it seamless.\""}}'"'"' | bash '"'$HOOKS/validate-pr.sh'"''
-check "gh pr edit without title/body allowed" 0 bash -c 'echo '"'"'{"tool_input":{"command":"gh pr edit 5 --add-label bug"}}'"'"' | bash '"'$HOOKS/validate-pr.sh'"''
-check "gh pr edit body-only (no title) allowed" 0 bash -c 'echo '"'"'{"tool_input":{"command":"gh pr edit 5 --body \"Adds a parser.\""}}'"'"' | bash '"'$HOOKS/validate-pr.sh'"''
-check "glab mr create with AI-ism blocked" 2 bash -c 'echo '"'"'{"tool_input":{"command":"glab mr create --title \"feat: x\" --description \"I have made it seamless.\""}}'"'"' | bash '"'$HOOKS/validate-pr.sh'"''
-check "glab mr update non-conventional title blocked" 2 bash -c 'echo '"'"'{"tool_input":{"command":"glab mr update 3 --title \"add stuff\""}}'"'"' | bash '"'$HOOKS/validate-pr.sh'"''
-check "PR with emoji body blocked" 2 bash -c 'echo '"'"'{"tool_input":{"command":"gh pr create --title \"feat: x\" --body \"Adds JWT ✨\""}}'"'"' | bash '"'$HOOKS/validate-pr.sh'"''
+check "PR --body-file with AI-ism blocked" 2 bash -c "echo '{\"tool_input\":{\"command\":\"gh pr create --title \\\"feat: x\\\" --body-file $BF\"}}' | '$HOOKS/validate-pr.sh'"
+check "PR -F with AI-ism blocked" 2 bash -c "echo '{\"tool_input\":{\"command\":\"gh pr create -t \\\"feat: x\\\" -F $BF\"}}' | '$HOOKS/validate-pr.sh'"
+check "gh pr edit --body with AI-ism blocked" 2 bash -c 'echo '"'"'{"tool_input":{"command":"gh pr edit 5 --body \"I have made it seamless.\""}}'"'"' | '"'$HOOKS/validate-pr.sh'"''
+check "gh pr edit without title/body allowed" 0 bash -c 'echo '"'"'{"tool_input":{"command":"gh pr edit 5 --add-label bug"}}'"'"' | '"'$HOOKS/validate-pr.sh'"''
+check "gh pr edit body-only (no title) allowed" 0 bash -c 'echo '"'"'{"tool_input":{"command":"gh pr edit 5 --body \"Adds a parser.\""}}'"'"' | '"'$HOOKS/validate-pr.sh'"''
+check "glab mr create with AI-ism blocked" 2 bash -c 'echo '"'"'{"tool_input":{"command":"glab mr create --title \"feat: x\" --description \"I have made it seamless.\""}}'"'"' | '"'$HOOKS/validate-pr.sh'"''
+check "glab mr update non-conventional title blocked" 2 bash -c 'echo '"'"'{"tool_input":{"command":"glab mr update 3 --title \"add stuff\""}}'"'"' | '"'$HOOKS/validate-pr.sh'"''
+check "PR with emoji body blocked" 2 bash -c 'echo '"'"'{"tool_input":{"command":"gh pr create --title \"feat: x\" --body \"Adds JWT ✨\""}}'"'"' | '"'$HOOKS/validate-pr.sh'"''
 
 echo ""
 echo "=== post-edit.sh ==="
-check "valid path exit 0" 0 bash -c "echo '{\"tool_input\":{\"file_path\":\"test.xyz\"}}' | bash '$HOOKS/post-edit.sh'"
-check "empty path exit 0" 0 bash -c "echo '{\"tool_input\":{\"file_path\":\"\"}}' | bash '$HOOKS/post-edit.sh'"
+check "valid path exit 0" 0 bash -c "echo '{\"tool_input\":{\"file_path\":\"test.xyz\"}}' | '$HOOKS/post-edit.sh'"
+check "empty path exit 0" 0 bash -c "echo '{\"tool_input\":{\"file_path\":\"\"}}' | '$HOOKS/post-edit.sh'"
 
 echo ""
 echo "=== format-changed.sh ==="
-check "stop_hook_active true" 0 bash -c "echo '{\"stop_hook_active\": true}' | bash '$HOOKS/format-changed.sh'"
+check "stop_hook_active true" 0 bash -c "echo '{\"stop_hook_active\": true}' | '$HOOKS/format-changed.sh'"
 
 # ===========================================================================
 # Part B: agent-boundary delegation (verify-quality.sh -> verify.sh)
@@ -114,13 +119,13 @@ AGENT_FAIL="$WORKDIR/agent-fail"
 project_runtime "$AGENT_FAIL" "false"
 
 check "green gate -> allow stop" 0 \
-    bash -c "echo '{}' | CLAUDE_PROJECT_DIR='$AGENT_PASS' bash '$HOOKS/verify-quality.sh'"
+    bash -c "echo '{}' | CLAUDE_PROJECT_DIR='$AGENT_PASS' '$HOOKS/verify-quality.sh'"
 check "failing gate -> block stop (exit 2)" 2 \
-    bash -c "echo '{}' | CLAUDE_PROJECT_DIR='$AGENT_FAIL' bash '$HOOKS/verify-quality.sh'"
+    bash -c "echo '{}' | CLAUDE_PROJECT_DIR='$AGENT_FAIL' '$HOOKS/verify-quality.sh'"
 check "loop guard (stop_hook_active) -> allow" 0 \
-    bash -c "echo '{\"stop_hook_active\":true}' | CLAUDE_PROJECT_DIR='$AGENT_FAIL' bash '$HOOKS/verify-quality.sh'"
+    bash -c "echo '{\"stop_hook_active\":true}' | CLAUDE_PROJECT_DIR='$AGENT_FAIL' '$HOOKS/verify-quality.sh'"
 check "runtime not projected -> fail open" 0 \
-    bash -c "echo '{}' | CLAUDE_PROJECT_DIR='$WORKDIR/unprojected' bash '$HOOKS/verify-quality.sh'"
+    bash -c "echo '{}' | CLAUDE_PROJECT_DIR='$WORKDIR/unprojected' '$HOOKS/verify-quality.sh'"
 
 # ===========================================================================
 # Part C: git-boundary delegation (pre-commit -> verify.sh)
@@ -204,11 +209,11 @@ project_runtime "$PF" "true"
 printf '%s' '{ "hooks": {}, "protected_files": { "extra": ["docs/internal.md", "infra/**"] } }' \
     >"$PF/.specify/gates/policy.json"
 check "policy-listed exact path blocked" 2 \
-    bash -c "echo '{\"tool_input\":{\"file_path\":\"docs/internal.md\"}}' | CLAUDE_PROJECT_DIR='$PF' bash '$HOOKS/protect-files.sh'"
+    bash -c "echo '{\"tool_input\":{\"file_path\":\"docs/internal.md\"}}' | CLAUDE_PROJECT_DIR='$PF' '$HOOKS/protect-files.sh'"
 check "policy-listed glob path blocked" 2 \
-    bash -c "echo '{\"tool_input\":{\"file_path\":\"infra/prod.tf\"}}' | CLAUDE_PROJECT_DIR='$PF' bash '$HOOKS/protect-files.sh'"
+    bash -c "echo '{\"tool_input\":{\"file_path\":\"infra/prod.tf\"}}' | CLAUDE_PROJECT_DIR='$PF' '$HOOKS/protect-files.sh'"
 check "non-listed path allowed" 0 \
-    bash -c "echo '{\"tool_input\":{\"file_path\":\"docs/public.md\"}}' | CLAUDE_PROJECT_DIR='$PF' bash '$HOOKS/protect-files.sh'"
+    bash -c "echo '{\"tool_input\":{\"file_path\":\"docs/public.md\"}}' | CLAUDE_PROJECT_DIR='$PF' '$HOOKS/protect-files.sh'"
 
 # ===========================================================================
 # Part E: commit-msg toggles (git.conventional_commits, git.forbid_ai_isms)
@@ -219,17 +224,17 @@ CM="$GITHOOKS/commit-msg"
 MSGF="$WORKDIR/msg.txt"
 
 printf 'add a thing without a type\n' >"$MSGF"
-check "commit-msg: non-conventional blocked (default)" 1 bash -c "bash '$CM' '$MSGF'"
+check "commit-msg: non-conventional blocked (default)" 1 bash -c "'$CM' '$MSGF'"
 printf 'feat: add a thing\n\nA plain body line.\n' >"$MSGF"
-check "commit-msg: clean conventional passes (default)" 0 bash -c "bash '$CM' '$MSGF'"
+check "commit-msg: clean conventional passes (default)" 0 bash -c "'$CM' '$MSGF'"
 printf 'feat: add a thing\n\nI have done the work.\n' >"$MSGF"
-check "commit-msg: ai-ism blocked (default)" 1 bash -c "bash '$CM' '$MSGF'"
+check "commit-msg: ai-ism blocked (default)" 1 bash -c "'$CM' '$MSGF'"
 printf 'docs: update CLAUDE.md and .claude/hooks\n' >"$MSGF"
-check "commit-msg: CLAUDE.md / .claude refs allowed" 0 bash -c "bash '$CM' '$MSGF'"
+check "commit-msg: CLAUDE.md / .claude refs allowed" 0 bash -c "'$CM' '$MSGF'"
 printf 'chore: bump claude-opus-4 model id\n' >"$MSGF"
-check "commit-msg: claude- kebab identifier allowed" 0 bash -c "bash '$CM' '$MSGF'"
+check "commit-msg: claude- kebab identifier allowed" 0 bash -c "'$CM' '$MSGF'"
 printf 'feat: add a thing\n\nGenerated by Claude.\n' >"$MSGF"
-check "commit-msg: standalone Claude still blocked" 1 bash -c "bash '$CM' '$MSGF'"
+check "commit-msg: standalone Claude still blocked" 1 bash -c "'$CM' '$MSGF'"
 
 CMD="$WORKDIR/cmsg"
 project_runtime "$CMD" "true"
@@ -237,7 +242,7 @@ printf '%s' '{ "hooks": {}, "git": { "conventional_commits": false, "forbid_ai_i
     >"$CMD/.specify/gates/policy.json"
 printf 'random subject no type\n\nI have done it, seamless work.\n' >"$MSGF"
 check "commit-msg: both toggles off -> allowed" 0 \
-    bash -c "cd '$CMD' && CLAUDE_PROJECT_DIR='$CMD' bash '$CM' '$MSGF'"
+    bash -c "cd '$CMD' && CLAUDE_PROJECT_DIR='$CMD' '$CM' '$MSGF'"
 
 # ===========================================================================
 # Part E2: protected-change trailers (issue #47). Both git hooks installed;
@@ -435,7 +440,7 @@ project_runtime "$AB" "true"
 git -C "$AB" init -q
 abcheck() { # <name> <expect> <msg>
     printf '%b' "$3" >"$MSGF"
-    check "$1" "$2" bash -c "cd '$AB' && CLAUDE_PROJECT_DIR='$AB' bash '$CM' '$MSGF'"
+    check "$1" "$2" bash -c "cd '$AB' && CLAUDE_PROJECT_DIR='$AB' '$CM' '$MSGF'"
 }
 abcheck "branding: default refuses Copilot" 1 'feat: Acme Copilot add-in\n'
 abcheck "branding: default refuses GPT-4" 1 'feat: support GPT-4\n'
@@ -452,8 +457,8 @@ abcheck "branding: terms [] disables the term list" 0 'feat: OpenAI client\n'
 abcheck "branding: terms [] keeps the standalone Claude rule" 1 'feat: x\n\nGenerated by Claude.\n'
 printf '%s' '{ "hooks": {}, "git": { "ai_branding": { "allow_phrases": ["Claude Haiku"] } } }' >"$AB/.specify/gates/policy.json"
 abcheck "branding: allow phrase also exempts standalone Claude" 0 'feat: support Claude Haiku\n'
-check "validate-pr: allow phrase passes" 0 bash -c "printf '%s' '{\"hooks\":{},\"git\":{\"ai_branding\":{\"allow_phrases\":[\"Acme Copilot\"]}}}' >'$AB/.specify/gates/policy.json' && echo '{\"tool_input\":{\"command\":\"gh pr create --title \\\"feat: x\\\" --body \\\"Ships Acme Copilot\\\"\"}}' | CLAUDE_PROJECT_DIR='$AB' bash '$HOOKS/validate-pr.sh'"
-check "validate-pr: bare term still refused" 2 bash -c "echo '{\"tool_input\":{\"command\":\"gh pr create --title \\\"feat: x\\\" --body \\\"Uses Copilot\\\"\"}}' | CLAUDE_PROJECT_DIR='$AB' bash '$HOOKS/validate-pr.sh'"
+check "validate-pr: allow phrase passes" 0 bash -c "printf '%s' '{\"hooks\":{},\"git\":{\"ai_branding\":{\"allow_phrases\":[\"Acme Copilot\"]}}}' >'$AB/.specify/gates/policy.json' && echo '{\"tool_input\":{\"command\":\"gh pr create --title \\\"feat: x\\\" --body \\\"Ships Acme Copilot\\\"\"}}' | CLAUDE_PROJECT_DIR='$AB' '$HOOKS/validate-pr.sh'"
+check "validate-pr: bare term still refused" 2 bash -c "echo '{\"tool_input\":{\"command\":\"gh pr create --title \\\"feat: x\\\" --body \\\"Uses Copilot\\\"\"}}' | CLAUDE_PROJECT_DIR='$AB' '$HOOKS/validate-pr.sh'"
 
 # ===========================================================================
 # Part F: the auto-format hooks actually format (they resolve the runtime lib
@@ -473,7 +478,7 @@ if have_node_linters; then
     printf '#Bad md\n\n\n- x\n' >"$FMT/doc.md"
     check "post-edit: fixture starts prettier-dirty" 1 "$PRETTIER" --check "$FMT/doc.md"
     echo "{\"tool_input\":{\"file_path\":\"$FMT/doc.md\"}}" \
-        | CLAUDE_PROJECT_DIR="$FMT" bash "$HOOKS/post-edit.sh" >/dev/null 2>&1 || true
+        | CLAUDE_PROJECT_DIR="$FMT" "$HOOKS/post-edit.sh" >/dev/null 2>&1 || true
     check "post-edit: file is prettier-clean afterwards" 0 "$PRETTIER" --check "$FMT/doc.md"
 
     # format-changed (Stop): formats tracked files that changed.
@@ -489,7 +494,7 @@ if have_node_linters; then
     printf '#Bad\n\n\n- x\n' >"$FC/doc.md"
     check "format-changed: target starts prettier-dirty" 1 "$PRETTIER" --check "$FC/doc.md"
     echo '{"stop_hook_active":false}' \
-        | CLAUDE_PROJECT_DIR="$FC" bash "$HOOKS/format-changed.sh" >/dev/null 2>&1 || true
+        | CLAUDE_PROJECT_DIR="$FC" "$HOOKS/format-changed.sh" >/dev/null 2>&1 || true
     check "format-changed: changed file is prettier-clean afterwards" 0 "$PRETTIER" --check "$FC/doc.md"
 else
     echo "SKIP: auto-format hook checks (run npm ci to install pinned prettier)"

@@ -16,6 +16,8 @@ set -uo pipefail
 #   shell   -- SC2086-class script    -> verify.sh shellcheck gate (exit 2)
 #   bash    -- `rm -rf /` tool call   -> validate-bash.sh hook     (exit 2)
 #   protect -- `.env` edit tool call  -> protect-files.sh hook     (exit 2)
+#   prhook  -- clean PR allowed AND AI-ism PR body refused
+#                                     -> validate-pr.sh hook
 #   secret  -- staged AWS-key string  -> pre-commit secret scan    (blocked)
 #   credential -- staged `token: '...'` assignment
 #                                     -> pre-commit generic scan   (blocked)
@@ -58,7 +60,7 @@ done
 CANARY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 
-CANARY_SET="format shell bash protect secret credential protected branding pr spec contract"
+CANARY_SET="format shell bash protect prhook secret credential protected branding pr spec contract"
 
 if [[ -n "$ONLY" ]]; then
     IFS=',' read -r -a _only_ids <<<"$ONLY"
@@ -245,8 +247,15 @@ run_hook_canary() { # <id> <script-name> <payload> <gate-label>
     fi
     local d="$WORKDIR/hookenv"
     mkdir -p "$d" || setup_fail "hook sandbox"
+    # Run it by path, as Claude Code does: the shebang (#!/bin/bash, which
+    # is bash 3.2 on macOS) picks the interpreter, and a hook without its
+    # execute bit is a gap, not something `bash <hook>` should paper over.
+    if [[ ! -x "$script" ]]; then
+        record "$id" accepted "$script_name is not executable — Claude Code runs it by path, so the $label never fires" 1
+        return 0
+    fi
     local rc=0
-    printf '%s' "$payload" | CLAUDE_PROJECT_DIR="$d" bash "$script" >/dev/null 2>&1 || rc=$?
+    printf '%s' "$payload" | CLAUDE_PROJECT_DIR="$d" "$script" >/dev/null 2>&1 || rc=$?
     if [[ "$rc" -eq 2 ]]; then
         record "$id" blocked "$label blocked the probe" 0
     else
@@ -262,6 +271,36 @@ run_bash_canary() {
 run_protect_canary() {
     run_hook_canary protect protect-files.sh \
         '{"tool_input":{"file_path":".env"}}' "protect-files hook"
+}
+
+# PR-hook canary: validate-pr.sh must ALLOW a clean `gh pr create` and BLOCK
+# an AI-ism body with its own message. Both halves matter: a hook that fails
+# to parse also exits 2 (0.3.4 shipped one under macOS bash 3.2), which a
+# block-only probe would count as "blocked".
+run_prhook_canary() {
+    local script
+    if ! script="$(claude_hook validate-pr.sh)"; then
+        record prhook skipped "validate-pr.sh not found — agent boundary not projected (PR hook)" 1
+        return 0
+    fi
+    if [[ ! -x "$script" ]]; then
+        record prhook accepted "validate-pr.sh is not executable — Claude Code runs it by path, so the PR hook never fires" 1
+        return 0
+    fi
+    local d="$WORKDIR/prhookenv" rc_ok=0 rc_bad=0 out_bad
+    mkdir -p "$d/.specify/gates/lib" || setup_fail "prhook sandbox"
+    cp "$CANARY_DIR/lib/"*.sh "$d/.specify/gates/lib/" || setup_fail "prhook lib"
+    printf '%s' '{"tool_input":{"command":"gh pr create --title \"feat: canary\" --body \"Adds a parser.\""}}' \
+        | CLAUDE_PROJECT_DIR="$d" "$script" >/dev/null 2>&1 || rc_ok=$?
+    out_bad="$(printf '%s' '{"tool_input":{"command":"gh pr create --title \"feat: canary\" --body \"I have made this seamless.\""}}' \
+        | CLAUDE_PROJECT_DIR="$d" "$script" 2>&1 >/dev/null)" || rc_bad=$?
+    if [[ "$rc_ok" -ne 0 ]]; then
+        record prhook accepted "validate-pr.sh exit $rc_ok on a CLEAN PR — the hook is broken (it blocks every PR command)" 1
+    elif [[ "$rc_bad" -ne 2 ]] || ! printf '%s' "$out_bad" | grep -q 'PR validation failed'; then
+        record prhook accepted "validate-pr.sh exit $rc_bad on an AI-ism PR body — the PR hook did not block" 1
+    else
+        record prhook blocked "validate-pr.sh allowed a clean PR and refused an AI-ism body" 0
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -514,6 +553,7 @@ for id in $CANARY_SET; do
         shell) run_shell_canary ;;
         bash) run_bash_canary ;;
         protect) run_protect_canary ;;
+        prhook) run_prhook_canary ;;
         secret) run_secret_canary ;;
         credential) run_credential_canary ;;
         protected) run_protected_canary ;;
