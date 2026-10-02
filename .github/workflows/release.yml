@@ -43,13 +43,13 @@ jobs:
           # Dotfile: keeps our vendored markdown out of a consumer's repo-wide
           # lint sweep (nearest-config resolution). cp -R above skips it.
           cp extension/.markdownlint-cli2.jsonc dist/gates/
-          cp README.md LICENSE dist/gates/
+          cp README.md LICENSE CHANGELOG.md dist/gates/
           (cd dist && zip -qr "gates-$VERSION.zip" gates)
           # Sanity: the manifest AND every consumable the commands depend on
           # must be present — the constitution corpus was silently missing
           # from the 0.3.0 asset (issue #31), leaving the guided session
           # unrunnable on stock installs.
-          for probe in gates/extension.yml gates/constitution/manifest.yml gates/runtime/constitution.sh gates/runtime/pr-check.sh gates/runtime/lib/message.sh gates/runtime/hooks/git/stub.sh gates/.markdownlint-cli2.jsonc; do
+          for probe in gates/extension.yml gates/CHANGELOG.md gates/constitution/manifest.yml gates/runtime/constitution.sh gates/runtime/pr-check.sh gates/runtime/lib/message.sh gates/runtime/hooks/git/stub.sh gates/.markdownlint-cli2.jsonc; do
             unzip -l "dist/gates-$VERSION.zip" | grep -q "$probe" \
               || { echo "::error::package sanity check failed: $probe missing from zip"; exit 1; }
           done
@@ -73,6 +73,11 @@ jobs:
           cp "gates-$VERSION.zip" gates.zip
           sha256sum gates.zip > gates.zip.sha256
           cp "gates-$VERSION.zip.sigstore.json" gates.zip.sigstore.json
+          # One checksum list for every asset. Proxies such as Artifactory
+          # treat a ".sha256" suffix as a checksum query, so the per-file
+          # .sha256 assets cannot be fetched through them; SHA256SUMS can.
+          sha256sum "gates-$VERSION.zip" "gates-$VERSION.zip.sigstore.json" \
+            gates.zip gates.zip.sigstore.json > SHA256SUMS
 
       - name: Create the release with asset, checksum, and signature
         env:
@@ -86,6 +91,7 @@ jobs:
             "dist/gates.zip" \
             "dist/gates.zip.sha256" \
             "dist/gates.zip.sigstore.json" \
+            "dist/SHA256SUMS" \
             --title "$GITHUB_REF_NAME" \
             --generate-notes \
             --notes "Install (evergreen URL — always the latest release):
@@ -102,7 +108,7 @@ jobs:
 
           The zip is the installable package (flat, \`extension.yml\` at its root); the source archives are not installable.
 
-          Verify the artifact (checksum, then sigstore keyless signature):
+          Verify the artifact (checksum, then sigstore keyless signature). Behind a proxy that treats \`.sha256\` as a checksum query (e.g. Artifactory), use \`sha256sum -c --ignore-missing SHA256SUMS\` instead of the per-file checksum:
 
           \`\`\`bash
           sha256sum -c gates-${VERSION}.zip.sha256

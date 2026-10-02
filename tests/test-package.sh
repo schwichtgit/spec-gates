@@ -48,7 +48,7 @@ cp -R "$REPO_ROOT/extension/extension.yml" "$REPO_ROOT/extension/commands" \
 # Tolerated so a MISSING file is reported by the assertions below rather than
 # aborting the suite — the assertions are the diagnostic, not the copy.
 cp "$REPO_ROOT/extension/.markdownlint-cli2.jsonc" "$STAGE/" 2>/dev/null || true
-cp "$REPO_ROOT/README.md" "$REPO_ROOT/LICENSE" "$STAGE/"
+cp "$REPO_ROOT/README.md" "$REPO_ROOT/LICENSE" "$REPO_ROOT/CHANGELOG.md" "$STAGE/"
 
 echo "=== package contents ==="
 expect "nested markdownlint config ships at the extension root" \

@@ -84,6 +84,12 @@ expect "non-json run also appends (now two records)" \
     "$(wc -l <"$LOG" | tr -d ' ')" 2
 expect "dry-run appends nothing" \
     "$(gate "$D" --dry-run >/dev/null; wc -l <"$LOG" | tr -d ' ')" 2
+expect "the log is gitignored next to it (#69)" \
+    "$(grep -cxF attestations.jsonl "$D/.specify/gates/.gitignore" 2>/dev/null)" 1
+if git -C "$D" rev-parse --git-dir >/dev/null 2>&1 || git init -q "$D" >/dev/null 2>&1; then
+    expect "git treats the log as ignored" \
+        "$(git -C "$D" check-ignore -q .specify/gates/attestations.jsonl && echo ignored || echo tracked)" ignored
+fi
 
 # --- 2: record shape matches the contract schema ---
 echo ""
