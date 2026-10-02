@@ -23,6 +23,13 @@ fi
 ERRORS=0
 
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+# The git boundary judges the repository being committed. An inherited
+# CLAUDE_PROJECT_DIR (a session in the main checkout committing in a linked
+# worktree, or `git -C <other repo>`) would otherwise select another
+# checkout's policy, since the policy loader prefers it.
+if git rev-parse --show-toplevel >/dev/null 2>&1; then
+    export CLAUDE_PROJECT_DIR="$PROJECT_ROOT"
+fi
 POLICY_LIB="$PROJECT_ROOT/.specify/gates/lib/policy.sh"
 # shellcheck source=/dev/null disable=SC1091
 [[ -f "$POLICY_LIB" ]] && source "$POLICY_LIB"

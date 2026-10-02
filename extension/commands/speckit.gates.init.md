@@ -76,6 +76,7 @@ Copy from `RUNTIME_SRC` into the project:
 | `hooks/claude/*.sh`    | `.claude/hooks/gates/` (unless `--no-agent-hooks`) |
 | `hooks/git/pre-commit` | `.specify/gates/hooks/pre-commit`                  |
 | `hooks/git/commit-msg` | `.specify/gates/hooks/commit-msg`                  |
+| `hooks/git/stub.sh`    | `.specify/gates/hooks/stub.sh`                     |
 
 Then EXPLICITLY set execute bits — do not rely on the source having them
 (zip-based installs extract without file modes, so the installed
@@ -83,7 +84,8 @@ extension's scripts are usually mode 644):
 
 ```sh
 chmod +x .specify/gates/*.sh .specify/gates/lib/*.sh \
-         .specify/gates/hooks/pre-commit .specify/gates/hooks/commit-msg
+         .specify/gates/hooks/pre-commit .specify/gates/hooks/commit-msg \
+         .specify/gates/hooks/stub.sh
 [ -d .claude/hooks/gates ] && chmod +x .claude/hooks/gates/*.sh
 ```
 
@@ -179,21 +181,39 @@ Unless `--no-agent-hooks`:
 
 ### 5. Wire the git boundary
 
-Unless `--no-git-hooks` and if `.git/` exists:
+Unless `--no-git-hooks` and if the project is inside a git work tree
+(`git rev-parse --is-inside-work-tree`). Resolve the hooks directory with
+`git rev-parse --git-path hooks`, never a literal `.git/hooks`: in a linked
+worktree `.git` is a file and the hooks live in the shared directory, and
+the command also honors `core.hooksPath`. `.git/hooks` below means that
+resolved directory.
 
-- Install `.specify/gates/hooks/pre-commit` and `commit-msg` into
-  `.git/hooks/`, then `chmod +x` both installed copies — a hook without
+- Install `.specify/gates/hooks/stub.sh` into `.git/hooks/` TWICE, as
+  `pre-commit` and as `commit-msg`, then `chmod +x` both — a hook without
   the execute bit is SILENTLY skipped by git, which is enforcement loss
-  with no error.
-- If a hook already exists there, do NOT clobber it: append a
-  call-through line invoking the gates hook, and tell the user what was
-  done.
+  with no error. Install the stub, never a copy of the hook itself:
+  `.git/hooks` is shared by every branch, while `.specify/gates/` is per
+  branch. The stub runs the checked-out branch's
+  `.specify/gates/hooks/<name>`, so the hook always matches that
+  branch's runtime and later upgrades need no reinstall.
+
+  ```sh
+  HOOKS="$(git rev-parse --git-path hooks)" && mkdir -p "$HOOKS"
+  for h in pre-commit commit-msg; do
+    cp .specify/gates/hooks/stub.sh "$HOOKS/$h" && chmod +x "$HOOKS/$h"
+  done
+  ```
+
+- If a non-gates hook already exists there, do NOT clobber it: append a
+  call-through line that runs the branch's gates hook, and tell the user
+  what was done:
+  `bash "$(git rev-parse --show-toplevel)/.specify/gates/hooks/<name>" "$@" || exit $?`
 - If `git config core.hooksPath` is set (husky, lefthook, …), `.git/hooks`
   is not consulted: tell the user, and wire the call-through into the
   configured path instead (never unset their hooksPath).
-- If the repo has no `.git/` yet (greenfield), say explicitly that the
-  git boundary is NOT wired and must be re-wired after `git init` — a
-  later `git init` does not pick these hooks up by itself.
+- If the project is not a git work tree yet (greenfield), say explicitly
+  that the git boundary is NOT wired and must be re-wired after
+  `git init` — a later `git init` does not pick these hooks up by itself.
 
 ### 6. Self-test (mandatory — the user must SEE enforcement work)
 
@@ -209,9 +229,10 @@ Run these and show the results:
    execute bits and hook-manager overrides):
 
    ```sh
-   test -x .git/hooks/pre-commit && test -x .git/hooks/commit-msg
+   HOOKS="$(git rev-parse --git-path hooks)"
+   test -x "$HOOKS/pre-commit" && test -x "$HOOKS/commit-msg"
    printf 'bad subject with no conventional prefix\n' >/tmp/gates-msg-probe \
-     && ! bash .git/hooks/commit-msg /tmp/gates-msg-probe
+     && ! bash "$HOOKS/commit-msg" /tmp/gates-msg-probe
    ```
 
    The first line must succeed; the second must show the hook REFUSING

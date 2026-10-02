@@ -220,6 +220,56 @@ fi
 TOTAL=$((TOTAL + 1))
 chmod +x "$GB/.git/hooks/commit-msg"
 
+# Copied hooks (pre-#59 install) -> the [rec] nudge toward the stub.
+if grep -q "is a copied hook" "$GB/out.txt"; then
+    echo "PASS: copied hooks get the stub nudge"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL: copied-hook nudge missing"
+    FAIL=$((FAIL + 1))
+fi
+TOTAL=$((TOTAL + 1))
+
+# Stubs (issue #59): ok while the branch's projected hooks exist, a
+# failure when they are missing (the stub would skip = unenforced branch).
+mkdir -p "$GB/.specify/gates/hooks"
+cp "$REPO_ROOT/extension/runtime/hooks/git/pre-commit" \
+    "$REPO_ROOT/extension/runtime/hooks/git/commit-msg" "$GB/.specify/gates/hooks/"
+for h in pre-commit commit-msg; do
+    cp "$REPO_ROOT/extension/runtime/hooks/git/stub.sh" "$GB/.git/hooks/$h"
+    chmod +x "$GB/.git/hooks/$h"
+done
+expect "stub hooks with projected targets -> exit 0" "$(run_doctor "$GB")" 0
+if grep -q "commit-msg installed as a stub" "$GB/out.txt" && ! grep -q "is a copied hook" "$GB/out.txt"; then
+    echo "PASS: stub recognized, no copied-hook nudge"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL: stub recognition (got: $(grep 'commit-msg' "$GB/out.txt" | head -2))"
+    FAIL=$((FAIL + 1))
+fi
+TOTAL=$((TOTAL + 1))
+# Linked worktree: hooks live in the shared directory, not the
+# worktree's .git/worktrees/<name>/hooks; doctor must look there.
+( cd "$GB" && git config user.email t@example.com && git config user.name tester \
+    && git add -A && git commit -q --no-verify -m "chore: seed" ) >/dev/null 2>&1
+GW="$WORKDIR/git-boundary-wt"
+git -C "$GB" worktree add -q -b feat/wt "$GW" >/dev/null 2>&1
+cp "$GB/.specify/gates/doctor.sh" "$GW/.specify/gates/" 2>/dev/null || true
+expect "linked worktree with stubs -> exit 0" "$(run_doctor "$GW")" 0
+if grep -q "commit-msg installed as a stub" "$GW/out.txt"; then
+    echo "PASS: doctor finds the shared hooks from a linked worktree"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL: worktree hook lookup (got: $(grep 'commit-msg' "$GW/out.txt" | head -1))"
+    FAIL=$((FAIL + 1))
+fi
+TOTAL=$((TOTAL + 1))
+git -C "$GB" worktree remove --force "$GW" >/dev/null 2>&1 || true
+
+rm "$GB/.specify/gates/hooks/commit-msg"
+expect "stub with missing projected hook -> exit 1" "$(run_doctor "$GB")" 1
+rm -rf "$GB/.specify/gates/hooks"
+
 rm "$GB/.git/hooks/pre-commit" "$GB/.git/hooks/commit-msg"
 expect "hooks never installed -> nudge only, exit 0" "$(run_doctor "$GB")" 0
 if grep -q "pre-commit not installed" "$GB/out.txt"; then

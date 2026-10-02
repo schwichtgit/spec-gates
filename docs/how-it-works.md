@@ -29,6 +29,15 @@ There are exactly three such places in an agentic workflow:
    term (a product or branch name) is allowed exactly via
    `git.ai_branding.allow_phrases`.
 
+   `.git/hooks` holds two copies of a small stub, not the hooks
+   themselves. `.git/hooks` is shared by every branch, while the
+   projected runtime is per branch, so the stub runs the checked-out
+   branch's `.specify/gates/hooks/<name>`. The hook version always
+   matches the branch's runtime, and an upgrade needs no hook reinstall.
+   A branch from before gates was adopted has no runtime and is skipped.
+   A branch that has a runtime but deleted its hooks is refused, so
+   removing the hooks cannot quietly turn enforcement off.
+
    Protected files get different treatment at the two local boundaries.
    The agent may never edit them. At the git boundary a human is the
    committer, so an approved amendment has a path through: every staged
