@@ -14,8 +14,10 @@ set -uo pipefail
 # v1 canary set:
 #   format  -- prettier-dirty file    -> verify.sh format gate     (exit 2)
 #   shell   -- SC2086-class script    -> verify.sh shellcheck gate (exit 2)
-#   bash    -- `rm -rf /` tool call   -> validate-bash.sh hook     (exit 2)
-#   protect -- `.env` edit tool call  -> protect-files.sh hook     (exit 2)
+#   bash    -- `rm -rf /` tool call, with and without jq on PATH
+#                                     -> validate-bash.sh hook     (exit 2)
+#   protect -- `.env` edit tool call, with and without jq on PATH
+#                                     -> protect-files.sh hook     (exit 2)
 #   prhook  -- clean PR allowed AND AI-ism PR body AND unreadable
 #              --body-file refused
 #                                     -> validate-pr.sh hook
@@ -257,10 +259,25 @@ run_hook_canary() { # <id> <script-name> <payload> <gate-label>
     fi
     local rc=0
     printf '%s' "$payload" | CLAUDE_PROJECT_DIR="$d" "$script" >/dev/null 2>&1 || rc=$?
-    if [[ "$rc" -eq 2 ]]; then
-        record "$id" blocked "$label blocked the probe" 0
-    else
+    if [[ "$rc" -ne 2 ]]; then
         record "$id" accepted "$script_name exit $rc on a known-bad tool call — the $label did not block" 1
+        return 0
+    fi
+    # The same probe without jq on PATH (issue #83): the hook must still
+    # block in raw mode instead of allowing everything.
+    local nojq="$WORKDIR/path-nojq" t p
+    if [[ ! -d "$nojq" ]]; then
+        mkdir -p "$nojq" || setup_fail "no-jq PATH"
+        for t in cat grep sed tr head tail basename dirname git awk; do
+            p="$(type -P "$t" 2>/dev/null)" && ln -s "$p" "$nojq/$t"
+        done
+    fi
+    rc=0
+    printf '%s' "$payload" | PATH="$nojq" CLAUDE_PROJECT_DIR="$d" "$script" >/dev/null 2>&1 || rc=$?
+    if [[ "$rc" -eq 2 ]]; then
+        record "$id" blocked "$label blocked the probe, with and without jq" 0
+    else
+        record "$id" accepted "$script_name exit $rc on a known-bad tool call without jq — the $label did not block in raw mode" 1
     fi
 }
 

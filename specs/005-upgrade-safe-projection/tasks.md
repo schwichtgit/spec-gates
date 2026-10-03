@@ -28,7 +28,7 @@ They are enforced once Status flips to `Complete` (last task).
 
 **Purpose**: land the design and the projection plumbing every story uses.
 
-- [ ] T001 Commit `specs/005-upgrade-safe-projection/` (spec, plan, research, data-model, contracts, quickstart, checklist, tasks) and `.specify/feature.json` on branch `005-upgrade-safe-projection`; open the docs PR (`docs: specify 0.4.0 upgrade-safe projection`) after `pr-check.sh` passes
+- [x] T001 Commit `specs/005-upgrade-safe-projection/` (spec, plan, research, data-model, contracts, quickstart, checklist, tasks) and `.specify/feature.json` on branch `005-upgrade-safe-projection`; open the docs PR (`docs: specify 0.4.0 upgrade-safe projection`) after `pr-check.sh` passes
 - [ ] T002 [P] Add `.specify/gates/project.sh` to the projected-runtime list in `.gitignore`, to both `cp` lines in `.github/workflows/ci.yml`, and to the package probes in `.github/workflows/release.yml` (`gates/runtime/project.sh`, `gates/ci/steps.tsv`, `gates/runtime/lib/known-releases.sha256`)
 - [ ] T003 [P] Create `tests/lib/fixture.sh` with shared helpers: `fx_project` (mktemp git repo + a vendored copy of `extension/` under `.specify/extensions/gates/` + a `.registry` entry at the extension's version), `fx_nojq_path` (shim dir with bash, grep, sed, awk, cat, basename, dirname, git, printf and no jq), `fx_cleanup`; bash 3.2 only
 
@@ -57,12 +57,12 @@ R10, contracts/hooks.md).
 destructive commands and sensitive files are still blocked, benign calls
 pass with a doctor warning, unevaluable edits return "ask".
 
-- [ ] T007 [US7] Rework `extension/runtime/hooks/claude/validate-bash.sh`: replace `trap 'exit 0' ERR` with a trap that emits the static "ask" JSON (naming the line) and exits 0; without jq or on unparseable JSON enter raw mode (unescape `\"` and `\\` in the raw payload, run the same block patterns over it); keep the patterns in one function shared by both modes; raw-mode allow prints a doctor warning on stderr
-- [ ] T008 [US7] Rework `extension/runtime/hooks/claude/protect-files.sh` the same way: ERR trap → ask; raw mode extracts `file_path` with a POSIX sed expression (unextractable → ask), applies the built-in name rules (block), and returns ask when `policy.json` declares a non-empty `protected_files.extra` (detected with grep, since jq is absent); a present `lib/policy.sh` that fails to source → ask; absent field → allow
-- [ ] T009 [P] [US7] Add a shared `gates_hook_ask <reason>` printf helper used by both hooks (inline in each hook, since hooks must not depend on `lib/` being loadable); output exactly the shape in research R14
-- [ ] T010 [US7] Extend `tests/test-hooks.sh`: every block-pattern payload of the existing jq cases also blocks in raw mode (`fx_nojq_path`), raw mode never misses a pattern the jq path blocks (loop over a shared case list), benign command allowed with warning, `.env`/key/cert blocked without jq, extra-declared policy → ask, no extra → allow, malformed JSON → raw mode, forced internal error → ask JSON parses with jq, absent field → allow; mutation-check against `main`
-- [ ] T011 [US7] Extend `extension/runtime/canary.sh`: `bash` and `protect` canaries each gain a no-jq variant (PATH shim built inside the sandbox) that must block `rm -rf /` and an `.env` edit; update the header comment and `tests/test-canary.sh` counts
-- [ ] T012 [US7] Update `extension/runtime/doctor.sh` wording for missing jq: name the degraded raw mode and the install command; update `CHANGELOG.md` [Unreleased] (Fixed: #83)
+- [x] T007 [US7] Rework `extension/runtime/hooks/claude/validate-bash.sh`: replace `trap 'exit 0' ERR` with a trap that emits the static "ask" JSON (naming the line) and exits 0; without jq or on unparseable JSON enter raw mode (unescape `\"` and `\\` in the raw payload, run the same block patterns over it); keep the patterns in one function shared by both modes; raw-mode allow prints a doctor warning on stderr
+- [x] T008 [US7] Rework `extension/runtime/hooks/claude/protect-files.sh` the same way: ERR trap → ask; raw mode extracts `file_path` with a POSIX sed expression (unextractable → ask), applies the built-in name rules (block), and returns ask when `policy.json` declares a non-empty `protected_files.extra` (detected with grep, since jq is absent); a present `lib/policy.sh` that fails to source → ask; absent field → allow
+- [x] T009 [P] [US7] Add an `ask <reason>` printf helper to both hooks (inline in each hook, since hooks must not depend on `lib/` being loadable); output exactly the shape in research R14
+- [x] T010 [US7] Extend `tests/test-hooks.sh`: every block-pattern payload of the existing jq cases also blocks in raw mode (`fx_nojq_path`), raw mode never misses a pattern the jq path blocks (loop over a shared case list), benign command allowed with warning, `.env`/key/cert blocked without jq, extra-declared policy → ask, no extra → allow, malformed JSON → raw mode, forced internal error → ask JSON parses with jq, absent field → allow; mutation-check against `main`
+- [x] T011 [US7] Extend `extension/runtime/canary.sh`: `bash` and `protect` canaries each gain a no-jq variant (PATH shim built inside the sandbox) that must block `rm -rf /` and an `.env` edit; update the header comment and `tests/test-canary.sh` counts
+- [x] T012 [US7] Update `extension/runtime/doctor.sh` wording for missing jq: name the degraded raw mode and the install command; update `CHANGELOG.md` [Unreleased] (Fixed: #83)
 
   ```accept
   # verifies: FR-028

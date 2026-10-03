@@ -3,18 +3,74 @@ set -euo pipefail
 
 # PreToolUse hook for Bash commands.
 # Reads JSON from stdin, parses the command field, blocks destructive patterns.
-# Exit 0 = allow, Exit 1 = block.
+# Exit 2 = block. Exit 0 = allow, or (with the JSON below on stdout) ask.
+#
+# Never a silent allow (issue #83): without jq, or when the input is not
+# valid JSON, the command is read in raw mode (see raw_field) and every
+# block rule still applies. A state the hook cannot judge -- an internal
+# error, a command it cannot decode -- returns a PreToolUse "ask" decision,
+# so a human confirms the call instead of the hook guessing either way.
 
-trap 'exit 0' ERR
-
-if ! command -v jq >/dev/null 2>&1; then
-    echo "gates: jq not found, skipping hook" \
-        "(run /speckit.gates.doctor)" >&2
+# ask <reason>: hand the decision to the human (PreToolUse "ask"). Static
+# printf, no jq: this must work in exactly the states where jq is missing.
+ask() {
+    local r="${1//\\/\\\\}"
+    r="${r//\"/\\\"}"
+    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"%s"}}\n' "gates: $r"
     exit 0
-fi
+}
+
+trap 'ask "validate-bash.sh failed unexpectedly (line $LINENO); run /speckit.gates.doctor"' ERR
+
+# raw_field <name>: print the decoded value of the JSON string field <name>
+# from $INPUT without jq. A JSON string is a regular language, so the sed
+# match is exact for it; escapes are decoded below. Returns 1 when the
+# field is absent and 2 when the value uses an escape this decoder does not
+# handle (\uXXXX could spell a blocked word), which the caller turns into
+# "ask".
+raw_field() {
+    local v
+    # The leading "=" tells an empty value ("") apart from no match.
+    v="$(printf '%s' "$INPUT" | tr '\n' ' ' \
+        | sed -nE 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)".*/=\1/p')"
+    if [[ -z "$v" ]]; then
+        # The key is there but its value is not a plain string: undecidable.
+        printf '%s' "$INPUT" | grep -qE '"'"$1"'"[[:space:]]*:' && return 2
+        return 1
+    fi
+    v="${v#=}"
+    [[ "$v" == *'\u'* ]] && return 2
+    v="${v//\\\\/$'\001'}"
+    v="${v//\\\"/\"}"
+    v="${v//\\\//\/}"
+    v="${v//\\n/$'\n'}"
+    v="${v//\\t/$'\t'}"
+    v="${v//\\r/}"
+    v="${v//$'\001'/\\}"
+    printf '%s' "$v"
+}
+
+# Every rule below is an `if ... | grep` test: without grep each one is
+# silently false, which would turn the hook into an allow-all.
+for _tool in grep sed tr; do
+    command -v "$_tool" >/dev/null 2>&1 \
+        || ask "$_tool not found, so validate-bash cannot check this command; run /speckit.gates.doctor"
+done
 
 INPUT=$(cat /dev/stdin)
-COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null || echo "")
+DEGRADED=""
+if command -v jq >/dev/null 2>&1 && printf '%s' "$INPUT" | jq -e . >/dev/null 2>&1; then
+    COMMAND=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty')
+else
+    if command -v jq >/dev/null 2>&1; then
+        DEGRADED="the hook input is not valid JSON"
+    else
+        DEGRADED="jq not found"
+    fi
+    rc=0
+    COMMAND="$(raw_field command)" || rc=$?
+    [[ "$rc" -eq 2 ]] && ask "cannot decode the command without jq ($DEGRADED); confirm it is safe"
+fi
 
 if [[ -z "$COMMAND" ]]; then
     exit 0
@@ -110,4 +166,7 @@ if [[ -n "$BLOCKED" ]]; then
     exit 2
 fi
 
+if [[ -n "$DEGRADED" ]]; then
+    echo "gates: validate-bash checked in raw mode ($DEGRADED); run /speckit.gates.doctor" >&2
+fi
 exit 0
