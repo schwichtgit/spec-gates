@@ -479,9 +479,10 @@ runs `verify.sh --boundary ci` (attestations and the parity gate included)
 plus the canary suite on every PR, alongside the tests. Every PR gets a
 **unit test results** check (per-test table) and one sticky comment with
 the per-suite counts and the coverage headline. A separate `coverage` job
-runs the suite under kcov and puts the runtime's line coverage per file in
-its job summary and artifact; it reports and never blocks. Locally
-(Linux, with kcov installed): `bash scripts/coverage.sh`. See the pull
+runs the suite under bashcov and puts the runtime's line coverage per file
+in its job summary and artifact; it reports and never blocks. Locally,
+as root in a Linux container with bashcov installed:
+`bash scripts/coverage.sh`. See the pull
 request template for the contribution checklist.
 
 ## License

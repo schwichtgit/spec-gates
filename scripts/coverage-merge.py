@@ -1,19 +1,25 @@
 #!/usr/bin/env python3
-"""Line coverage of the shipped runtime from a kcov cobertura report (#98).
+"""Line coverage of the shipped runtime from a coverage report (#98).
 
-Most tests run the runtime from sandbox copies (a projected
+The report is bashcov's SimpleCov .resultset.json (what CI produces) or a
+kcov cobertura.xml. Most tests run the runtime from sandbox copies (a projected
 .specify/gates/, a vendored .specify/extensions/gates/runtime/,
-.claude/hooks/gates/, hooks installed in .git/hooks), so kcov reports the
+.claude/hooks/gates/, hooks installed in .git/hooks), so the report has the
 same script under many paths. Each path is mapped back to its source file
 under extension/runtime/ and the covered lines are unioned. A copy counts
-only when kcov found the same executable lines in it as in the source:
-tests that run an older release's files (from the v0.3.x tags) would
-otherwise add hits on unrelated line numbers. A shipped script that never
+only when it is the same file as the source: tests that run an older
+release's files (from the v0.3.x tags) would otherwise add hits on
+unrelated line numbers. For bashcov, "the same file" means a line array
+that ends within a few lines of the source's end (bashcov trims trailing
+lines that hold no code); its executable-line set varies with what ran, so
+it cannot identify a copy, and executable lines are the union over the
+copies. For kcov, "the same file" means the same executable-line set. A shipped script that never
 ran counts as 0% of its non-blank, non-comment lines.
 
-Usage: coverage-merge.py <cobertura.xml> <repo-root> [--markdown]
+Usage: coverage-merge.py <.resultset.json|cobertura.xml> <repo-root> [--markdown]
 """
 import collections
+import json
 import re
 import subprocess
 import sys
@@ -42,17 +48,32 @@ def sources(filename):
     return [], False
 
 
+def load(report):
+    """Yield (filename, {line: hits}, total-lines or None) per reported file."""
+    if report.endswith(".json"):
+        with open(report) as fh:
+            data = json.load(fh)
+        for run in data.values():
+            for filename, cov in run.get("coverage", {}).items():
+                hits = cov["lines"] if isinstance(cov, dict) else cov
+                yield filename, {i + 1: h for i, h in enumerate(hits) if h is not None}, len(hits)
+    else:
+        for cls in ET.parse(report).getroot().iter("class"):
+            yield cls.get("filename"), {
+                int(l.get("number")): int(l.get("hits")) for l in cls.find("lines")
+            }, None
+
+
 def main():
     if len(sys.argv) < 3:
         sys.exit(__doc__)
-    xml_path, repo = sys.argv[1], sys.argv[2]
+    report, repo = sys.argv[1], sys.argv[2]
     markdown = "--markdown" in sys.argv[3:]
     entries = collections.defaultdict(list)
-    for cls in ET.parse(xml_path).getroot().iter("class"):
-        rels, is_source = sources(cls.get("filename"))
-        lines = {int(l.get("number")): int(l.get("hits")) for l in cls.find("lines")}
+    for filename, lines, length in load(report):
+        rels, is_source = sources(filename)
         for rel in rels:
-            entries[rel].append((is_source, lines))
+            entries[rel].append((is_source, lines, length))
 
     shipped = subprocess.run(
         ["git", "-C", repo, "ls-files", "extension/runtime"],
@@ -66,20 +87,28 @@ def main():
 
     rows, total, hit = [], 0, 0
     for rel in shipped:
+        with open(f"{repo}/extension/runtime/{rel}") as fh:
+            text = fh.read()
+        n_lines = len(text.splitlines())
         es = entries.get(rel, [])
-        ref = next((set(l) for src, l in es if src), None)
-        if ref is None and es:
-            ref = set(collections.Counter(frozenset(l) for _, l in es).most_common(1)[0][0])
+        ref, covered = None, set()
+        if es and es[0][2] is not None:
+            same = [l for _, l, length in es if n_lines - 8 <= length <= n_lines]
+            if same:
+                ref = set().union(*(set(l) for l in same))
+                covered = set().union(*({k for k, v in l.items() if v > 0} for l in same))
+        else:
+            ref = next((set(l) for src, l, _ in es if src), None)
+            if ref is None and es:
+                ref = set(collections.Counter(frozenset(l) for _, l, _ in es).most_common(1)[0][0])
+            for _, l, _ in es:
+                if ref is not None and set(l) == ref:
+                    covered |= {k for k, v in l.items() if v > 0}
         if ref is None:
-            with open(f"{repo}/extension/runtime/{rel}") as fh:
-                n = sum(1 for x in fh if x.strip() and not x.strip().startswith("#"))
+            n = sum(1 for x in text.splitlines() if x.strip() and not x.strip().startswith("#"))
             rows.append((rel, n, 0, "never run"))
             total += n
             continue
-        covered = set()
-        for _, l in es:
-            if set(l) == ref:
-                covered |= {k for k, v in l.items() if v > 0}
         rows.append((rel, len(ref), len(covered), ""))
         total += len(ref)
         hit += len(covered)
@@ -97,7 +126,7 @@ def main():
             extra = f" ({note})" if note else ""
             print(f"| {pct(h, n):.1f}% | {h}/{n} | `{rel}`{extra} |")
         print("\nReport only (#98): this job never fails on the number. "
-              "`hooks/git/stub.sh` is /bin/sh, which kcov's bash mode cannot trace.")
+              "`hooks/git/stub.sh` is /bin/sh, which bash tracing cannot follow.")
     else:
         for rel, n, h, note in rows:
             print(f"{pct(h, n):6.1f}%  {h:5d}/{n:<5d} {rel} {note}".rstrip())

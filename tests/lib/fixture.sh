@@ -37,6 +37,9 @@ fx_registry() { # <dir> <version>
 }
 
 fx_cleanup() { # <dir>
+    # A coverage run keeps sandboxes: bashcov reports a traced script only
+    # if the file still exists when the run ends (#98).
+    [[ -n "${GATES_KEEP_TMP:-}" ]] && return 0
     [[ -n "${1:-}" && -d "$1" ]] && rm -rf "$1"
     return 0
 }

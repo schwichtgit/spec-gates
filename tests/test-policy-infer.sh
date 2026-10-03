@@ -26,7 +26,7 @@ eq() { # <name> <expected> <actual>
 }
 
 W="$(mktemp -d 2>/dev/null || mktemp -d -t gates-infer-test)"
-trap 'rm -rf "$W"' EXIT
+trap '[[ -n "${GATES_KEEP_TMP:-}" ]] || rm -rf "$W"' EXIT
 
 # Run the CLI the way init does: bash <lib>/policy-infer.sh <dir> <out>.
 infer() { # <project-dir> <out> -> exit code; stderr in $W/err

@@ -145,11 +145,11 @@ jobs:
           export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
           /bin/bash .specify/gates/canary.sh --only bash,protect,prhook,secret,credential,protected,branding,pr
 
-  # Line coverage of the shipped runtime (#98). Report only: the job never
-  # fails on the number (continue-on-error also keeps a suite failure under
-  # tracing from blocking the merge; the gates job is the one that gates).
-  # kcov comes from Debian, so this runs in the same node:26-slim image the
-  # container matrix uses. The per-file table lands in the job summary.
+  # Line coverage of the shipped runtime (#98), measured with bashcov. Report
+  # only: the job never fails on the number, and the gates job (untraced) is
+  # the one that gates. It runs as root in the node:26-slim container
+  # because bashcov's root is / (the tests' sandboxes live in /tmp). The
+  # per-file table lands in the job summary and the artifact.
   coverage:
     runs-on: ubuntu-latest
     container: node:26-slim
@@ -159,7 +159,8 @@ jobs:
       - name: Install tooling (git before checkout, so tags come along)
         run: |
           apt-get update -q
-          apt-get install -y -q git jq python3 shellcheck kcov
+          apt-get install -y -q git jq python3 shellcheck ruby
+          gem install --no-document bashcov -v 4.0.0
 
       - uses: actions/checkout@v7
         with:
@@ -178,11 +179,11 @@ jobs:
           cp extension/runtime/lib/*.sh .specify/gates/lib/
           cp extension/runtime/policy.schema.json .specify/gates/
 
-      - name: Run the suite under kcov and report coverage
+      - name: Run the suite under bashcov and report coverage
         run: bash scripts/coverage.sh coverage
 
-      # The full kcov output (cobertura XML, HTML report, run log), for
-      # reading the per-line report and for diagnosing the merge.
+      # The full report (SimpleCov JSON and HTML, the run log), for reading
+      # covered lines and for checking the merge.
       - name: Upload the coverage report
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

@@ -42,7 +42,7 @@ eq() { # <name> <expected> <actual>
 }
 
 W="$(mktemp -d 2>/dev/null || mktemp -d -t gates-manifest)"
-trap 'rm -rf "$W"' EXIT
+trap '[[ -n "${GATES_KEEP_TMP:-}" ]] || rm -rf "$W"' EXIT
 
 echo "=== hashing and versions ==="
 printf 'abc' >"$W/f"
