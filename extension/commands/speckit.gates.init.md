@@ -59,51 +59,46 @@ files must survive the extension being removed.
   with `bash "$RUNTIME_SRC/lib/policy.sh" validate .specify/gates/policy.json`.
   On failure, show the error, fix interactively, re-validate.
 
-### 3. Project the runtime
+### 3. Project the runtime and wire the boundaries (one step)
 
-Copy from `RUNTIME_SRC` into the project:
+`RUNTIME_SRC/project.sh` does the whole projection in one invocation:
+it copies the runtime into `.specify/gates/` and `.claude/hooks/gates/`,
+sets every execute bit (including the installed extension's git hooks,
+which zip extraction leaves non-executable), records
+`.specify/gates/.runtime-version`, adds `attestations.jsonl` to
+`.specify/gates/.gitignore`, merges the agent hooks into
+`.claude/settings.json` (append-only: existing entries are never removed
+or reordered, and a command path already wired is skipped), installs the
+git hook stub as `pre-commit` and `commit-msg` in the hooks directory git
+reads, writes `.specify/gates/.projected.sha256`, and runs the canary
+suite. It never writes `policy.json` and refuses to run without one.
 
-| Source                 | Destination                                        |
-| ---------------------- | -------------------------------------------------- |
-| `verify.sh`            | `.specify/gates/verify.sh`                         |
-| `doctor.sh`            | `.specify/gates/doctor.sh`                         |
-| `canary.sh`            | `.specify/gates/canary.sh`                         |
-| `contract.sh`          | `.specify/gates/contract.sh`                       |
-| `constitution.sh`      | `.specify/gates/constitution.sh`                   |
-| `pr-check.sh`          | `.specify/gates/pr-check.sh`                       |
-| `lib/*.sh`             | `.specify/gates/lib/`                              |
-| `policy.schema.json`   | `.specify/gates/policy.schema.json`                |
-| `hooks/claude/*.sh`    | `.claude/hooks/gates/` (unless `--no-agent-hooks`) |
-| `hooks/git/pre-commit` | `.specify/gates/hooks/pre-commit`                  |
-| `hooks/git/commit-msg` | `.specify/gates/hooks/commit-msg`                  |
-| `hooks/git/stub.sh`    | `.specify/gates/hooks/stub.sh`                     |
+1. Plan it and show the user the complete output:
+   `bash "$RUNTIME_SRC/project.sh" --dry-run` (pass `--no-agent-hooks` /
+   `--no-git-hooks` through from the user's arguments).
+2. On approval, run it once with the same flags:
+   `bash "$RUNTIME_SRC/project.sh"`.
 
-Then EXPLICITLY set execute bits — do not rely on the source having them
-(zip-based installs extract without file modes, so the installed
-extension's scripts are usually mode 644):
+Never copy runtime files or `chmod` them by hand: one reviewed command
+replaces the per-file writes that permission classifiers refuse.
 
-```sh
-chmod +x .specify/gates/*.sh .specify/gates/lib/*.sh \
-         .specify/gates/hooks/pre-commit .specify/gates/hooks/commit-msg \
-         .specify/gates/hooks/stub.sh
-[ -d .claude/hooks/gates ] && chmod +x .claude/hooks/gates/*.sh
-```
+Read the exit code:
 
-Record the projected runtime version in
-`.specify/gates/.runtime-version` (read it from the extension's
-`extension.yml`).
+- `0`: projected, and every canary blocked.
+- `1`: a canary was accepted (a broken gate: report it and point at
+  `/speckit.gates.doctor`), or another tool owns a git hook. In that case
+  `project.sh` leaves the hook alone and prints the one call-through line
+  to add to it. Give the user that line and where it goes (for husky,
+  `.husky/<hook>`; for lefthook, a `run:` entry in `lefthook.yml`; never
+  the generated files in `.husky/_/` or `.git/hooks`).
+- `2`: refused before writing; its message says why (no policy, an
+  interrupted install, a corrupt `.projected.sha256`).
+- `3`: files projected earlier were changed locally. Treat it as
+  `/speckit.gates.upgrade` step 6.
 
-Ensure `.specify/gates/.gitignore` lists `attestations.jsonl`: create the
-file with that line, or append the line if the file exists without it.
-The attestation log is disposable run evidence, and writing the entry now
-puts it in the same commit as the projected runtime. Otherwise the first
-gate run, which happens during that commit's pre-commit hook, creates the
-file afterwards and leaves the tree dirty.
-
-```sh
-grep -qxF attestations.jsonl .specify/gates/.gitignore 2>/dev/null \
-  || echo attestations.jsonl >>.specify/gates/.gitignore
-```
+If the project is not a git work tree yet (greenfield), `project.sh` says
+the git boundary is not wired: tell the user to run it again after
+`git init`, because a later `git init` does not pick the hooks up.
 
 ### 3b. Seed the pinned linter toolchain
 
@@ -180,65 +175,21 @@ Show the diff, apply only on approval, and if the user declines say
 plainly that their repo-wide lint runs will flag our vendored files and
 that the gate itself is unaffected either way.
 
-### 4. Wire the agent boundary (Claude Code)
+### 4. Self-test (mandatory — the user must SEE enforcement work)
 
-Unless `--no-agent-hooks`:
+`project.sh` already ran the full canary suite. Run these as well and
+show the results, so the user sees each boundary refuse something:
 
-- Read `.claude/settings.json` (create `{}` if absent).
-- Merge the hook entries from `"$RUNTIME_SRC/hooks/claude/settings.fragment.json"`
-  into the `hooks` key. Merge semantics: append our entries; NEVER remove
-  or reorder existing user entries; if an identical command path already
-  exists, skip it (idempotent re-run).
-- Show the user the resulting diff of settings.json before writing.
-
-### 5. Wire the git boundary
-
-Unless `--no-git-hooks` and if the project is inside a git work tree
-(`git rev-parse --is-inside-work-tree`). Resolve the hooks directory with
-`git rev-parse --git-path hooks`, never a literal `.git/hooks`: in a linked
-worktree `.git` is a file and the hooks live in the shared directory, and
-the command also honors `core.hooksPath`. `.git/hooks` below means that
-resolved directory.
-
-- Install `.specify/gates/hooks/stub.sh` into `.git/hooks/` TWICE, as
-  `pre-commit` and as `commit-msg`, then `chmod +x` both — a hook without
-  the execute bit is SILENTLY skipped by git, which is enforcement loss
-  with no error. Install the stub, never a copy of the hook itself:
-  `.git/hooks` is shared by every branch, while `.specify/gates/` is per
-  branch. The stub runs the checked-out branch's
-  `.specify/gates/hooks/<name>`, so the hook always matches that
-  branch's runtime and later upgrades need no reinstall.
-
-  ```sh
-  HOOKS="$(git rev-parse --git-path hooks)" && mkdir -p "$HOOKS"
-  for h in pre-commit commit-msg; do
-    cp .specify/gates/hooks/stub.sh "$HOOKS/$h" && chmod +x "$HOOKS/$h"
-  done
-  ```
-
-- If a non-gates hook already exists there, do NOT clobber it: append a
-  call-through line that runs the branch's gates hook, and tell the user
-  what was done:
-  `bash "$(git rev-parse --show-toplevel)/.specify/gates/hooks/<name>" "$@" || exit $?`
-- If `git config core.hooksPath` is set (husky, lefthook, …), `.git/hooks`
-  is not consulted: tell the user, and wire the call-through into the
-  configured path instead (never unset their hooksPath).
-- If the project is not a git work tree yet (greenfield), say explicitly
-  that the git boundary is NOT wired and must be re-wired after
-  `git init` — a later `git init` does not pick these hooks up by itself.
-
-### 6. Self-test (mandatory — the user must SEE enforcement work)
-
-Run these and show the results:
-
-1. `bash .specify/gates/verify.sh --boundary agent --dry-run` — confirms
-   the entrypoint resolves policy and enumerates checks.
-2. Simulate a protected-file edit:
-   `echo '{"tool_input":{"file_path":".env"}}' | bash .claude/hooks/gates/protect-files.sh`
-   — expect a non-zero exit and a block message.
-3. Simulate a blocked bash call through `validate-bash.sh` the same way.
-4. Prove the git boundary is live (this is the check that catches lost
-   execute bits and hook-manager overrides):
+1. `bash .specify/gates/verify.sh --boundary agent --dry-run`: the
+   entrypoint resolves the policy and enumerates checks.
+2. `bash .specify/gates/canary.sh --only bash,protect`: the projected
+   agent hooks refuse `rm -rf /` and an `.env` edit, with and without jq.
+   The canaries build those tool calls internally, so the live
+   validate-bash hook in this session never sees a dangerous command
+   line (writing the probe into the command line itself gets the probe
+   refused by the very hook it tests).
+3. Prove the git boundary is live (this catches lost execute bits and
+   hook-manager overrides):
 
    ```sh
    HOOKS="$(git rev-parse --git-path hooks)"
@@ -254,7 +205,7 @@ Run these and show the results:
 If any self-test does not behave as expected, report it as a failure and
 point the user at `/speckit.gates.doctor`. Do not declare success.
 
-### 6b. Constitution enforcement (FR-014, offer only)
+### 4b. Constitution enforcement (FR-014, offer only)
 
 Run `bash .specify/gates/constitution.sh detect`. It prints one word:
 
@@ -268,10 +219,10 @@ Run `bash .specify/gates/constitution.sh detect`. It prints one word:
 Whatever the answer, init proceeds. This step reads only; it never writes the
 constitution itself (that is the session's job, on explicit approval).
 
-### 7. Report
+### 5. Report
 
 Summarize: policy path, boundaries wired, self-test results, the constitution
-state from step 6b (`filled` / `absent` / `placeholder`, and whether the
+state from step 4b (`filled` / `absent` / `placeholder`, and whether the
 session was offered), and the two follow-ups — `/speckit.gates.ci <platform>`
 to project CI enforcement, and the note that `/speckit.implement` will now
 offer to run gates on completion (via the extension's `after_implement` hook).
@@ -279,7 +230,8 @@ offer to run gates on completion (via the extension's `after_implement` hook).
 ## Important Rules
 
 - policy.json is USER-OWNED. init seeds it; upgrade never overwrites it.
-- All projection is copy, not symlink.
-- Every write to `.claude/settings.json` is shown as a diff first.
+- All projection is copy, not symlink, and all of it goes through
+  `project.sh`: its `--dry-run` plan (including the `.claude/settings.json`
+  merge) is shown and approved before the one real run.
 - Fail closed on self-test: a gate that does not demonstrably block is
   reported as broken, not glossed over.

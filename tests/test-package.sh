@@ -56,6 +56,15 @@ expect "nested markdownlint config ships at the extension root" \
 expect "constitution corpus ships (issue #31 regression)" \
     "$(present "$STAGE/constitution/manifest.yml")" "yes"
 
+# Spec Kit's zip extraction keeps the execute bit only on *.sh files that
+# carry it in the zip, which carries the git modes. A shipped script that is
+# 100644 in git arrives 644, and project.sh then flips it to 755 inside the
+# consumer's vendored copy: a mode diff in every repo that commits
+# .specify/extensions/. So every shipped script is 100755 in git.
+NOT_EXEC="$(cd "$REPO_ROOT" && git ls-files -s extension/runtime \
+    | awk '$1 != "100755" && $4 !~ /\.json$/ { print $4 }' | tr '\n' ' ')"
+expect "every shipped runtime script is 100755 in git" "$NOT_EXEC" ""
+
 echo ""
 echo "=== a consumer's repo-wide lint sweep over the installed extension ==="
 

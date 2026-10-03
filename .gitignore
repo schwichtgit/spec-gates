@@ -27,6 +27,7 @@ node_modules/
 .specify/gates/contract.sh
 .specify/gates/constitution.sh
 .specify/gates/pr-check.sh
+.specify/gates/project.sh
 .specify/gates/lib/
 .specify/gates/policy.schema.json
 
