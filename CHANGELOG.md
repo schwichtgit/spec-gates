@@ -10,6 +10,36 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
 
 ## [Unreleased]
 
+### Added
+
+- **One-command projection: `project.sh`** (#72). `bash
+.specify/extensions/gates/runtime/project.sh` does what init and upgrade
+  used to do file by file: copy the runtime, set execute bits (including
+  the installed extension's git hooks, which zip extraction leaves
+  non-executable), merge the agent hook settings, install the git hook
+  stubs, and run the canary suite. `--dry-run` shows the plan first, and a
+  second run changes nothing. It never writes `policy.json`.
+- **Local edits survive upgrades** (#72, #70). `project.sh` records a hash
+  of every projected file in `.specify/gates/.projected.sha256`. A file
+  changed since then stops the run (exit 3) until you pass
+  `--keep-local <path>`, which holds it in `.specify/gates/.upgrade-holds`,
+  or `--take-upstream <path>`.
+- **A half-done upgrade is detected.** If `specify extension remove` ran
+  but `add` did not, `bash .specify/gates/project.sh --check` says so and
+  prints the command that finishes it.
+
+### Changed
+
+- **One documented upgrade path** (README "Upgrade", `/speckit.gates.upgrade`):
+  verify the versioned zip (checksum and cosign), remove and add the
+  extension, diff the install against the verified zip, then run
+  `project.sh`. `specify extension add --from` verifies neither.
+- **The init self-test uses the canaries** for the agent hooks, so the
+  live command hook no longer refuses the self-test's own probe.
+- **Git hooks owned by another tool are left alone.** When
+  `core.hooksPath` is set or a non-gates hook exists, `project.sh` prints
+  the call-through line to add instead of editing that tool's files.
+
 ### Fixed
 
 - **The file and command hooks never silently allow** (#83). Without jq,

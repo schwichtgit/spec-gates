@@ -300,8 +300,13 @@ Three reasons: enforcement must survive the extension being removed;
 collaborators who clone the repo get enforcement without installing
 anything; and CI can run the entrypoint from the checkout with no
 network access. The cost — projected copies can drift from the extension
-version — is exactly what `/speckit.gates.doctor` and
-`/speckit.gates.upgrade` exist to manage, via `.runtime-version`.
+version, or be edited locally — is what `project.sh`, doctor and
+`/speckit.gates.upgrade` manage. `project.sh` does every write in one
+reviewable command and records a hash of each projected file in
+`.specify/gates/.projected.sha256` with the version that wrote it. On the
+next upgrade a file that no longer matches its recorded hash is a local
+edit: it is reported and left alone until the maintainer keeps it (a
+hold in `.specify/gates/.upgrade-holds`) or takes the new version.
 
 Parity has an analogous requirement on the toolchain itself: a linter's
 findings depend on its version, so "the same policy at every boundary"
