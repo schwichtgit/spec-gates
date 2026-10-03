@@ -13,6 +13,11 @@ on:
 jobs:
   gates:
     runs-on: ubuntu-latest
+    # checks: write lets the JUnit step publish the "unit test results"
+    # check run.
+    permissions:
+      contents: read
+      checks: write
     steps:
       - uses: actions/checkout@v7
         with:
@@ -66,7 +71,37 @@ jobs:
         run: bash .specify/gates/pr-check.sh
 
       - name: Run the test suites
-        run: bash tests/run.sh
+        run: |
+          mkdir -p test-results
+          bash tests/run.sh 2>&1 | tee test-results/run.log
+
+      # The suites print one PASS:/FAIL:/SKIP: line per case;
+      # scripts/test-report.py turns the log into JUnit, which becomes the
+      # "unit test results" check (per-test table) and the job summary. The
+      # report job below posts the PR comment.
+      - name: Build the JUnit report
+        if: always()
+        run: python3 scripts/test-report.py test-results/run.log --junit test-results/junit.xml
+
+      - name: Publish unit test results (check run + job summary)
+        if: always()
+        uses: mikepenz/action-junit-report@a9170d5795813c01ab4901ffb045b52bab4ab09d # v6.5.0
+        with:
+          report_paths: test-results/junit.xml
+          check_name: unit test results
+          detailed_summary: true
+          include_passed: true
+          comment: false
+          job_summary: true
+
+      - name: Upload the test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-results
+          path: test-results/
+          retention-days: 14
+          if-no-files-found: warn
 
   # Hooks run through their shebang (#!/bin/bash): on macOS that is the
   # stock bash 3.2 with BSD userland, which the ubuntu job above never
@@ -145,3 +180,50 @@ jobs:
 
       - name: Run the suite under kcov and report coverage
         run: bash scripts/coverage.sh coverage
+
+      # The full kcov output (cobertura XML, HTML report, run log), for
+      # reading the per-line report and for diagnosing the merge.
+      - name: Upload the coverage report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 14
+          if-no-files-found: warn
+
+  # One sticky PR comment with the test table and the coverage headline,
+  # updated in place on every push. Runs after both jobs, even when one
+  # failed, so a red run is reported too. Same-repository PRs only: a fork's
+  # token cannot comment.
+  report:
+    needs: [gates, coverage]
+    if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Fetch the test and coverage results
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: results
+
+      - name: Build the PR comment
+        run: |
+          if [ ! -f results/test-results/run.log ]; then
+            printf '### unit test results: FAIL\n\nThe gates job produced no test log; see the workflow run.\n' >pr-comment.md
+          else
+            python3 scripts/test-report.py results/test-results/run.log \
+              --comment pr-comment.md --coverage results/coverage/summary.txt
+          fi
+
+      - name: Post or update the sticky comment
+        uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
+        with:
+          header: unit-test-results
+          path: pr-comment.md
