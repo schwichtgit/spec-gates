@@ -113,18 +113,25 @@ gates_const_manifest_tier() { # <manifest> <tier>
 # --- Annotation parser (contracts/annotation-format.md) ----------------------
 
 # Parse a constitution into principles and their enforcement markers. A
-# principle is an `### ` (h3) heading; markers bind to the principle they fall
-# under (up to the next h2/h3). Emits TAB-separated protocol lines:
+# principle is an `### ` (h3) heading inside the `## Core Principles` section
+# (#82): sub-headings under other sections (Additional Constraints,
+# Governance, ...) are prose, not principles. Markers bind to the principle
+# they fall under (up to the next h2/h3). Emits TAB-separated protocol lines:
 #
 #   PRINCIPLE<TAB><heading-line><TAB><name><TAB><surface><TAB><ref><TAB><expect>
 #       an empty <surface> means the principle is unannotated (legal, FR-013).
 #   MALFORMED<TAB><line><TAB><name-or-dash><TAB><message>
 #       a fail-closed marker error; callers name constitution.md:<line>.
+#   NOCORE
+#       the file has no `## Core Principles` section, so no principles.
 #
 # Marker grammar rules (annotation-format.md): exactly one `gates:enforce`
 # per principle (a second is MALFORMED); `surface=` required from the fixed
 # set; `ref=` required unless `surface=prose`; unknown keys or `=`-less tokens
-# are MALFORMED; a marker before any principle is MALFORMED with name "-".
+# are MALFORMED; a marker before any principle is MALFORMED with name "-";
+# a marker under a heading outside Core Principles is MALFORMED (an
+# enforcement claim that is never checked is the silent no-op this gate
+# exists to catch).
 # HTML comments without `gates:enforce` (e.g. the Sync Impact Report) are
 # ignored (grammar rule 1).
 gates_const_parse() { # <constitution>
@@ -141,17 +148,21 @@ gates_const_parse() { # <constitution>
                 pline, pname, psurface, pref, pexpect
         }
     }
-    BEGIN { pline = 0; pname = ""; psurface = ""; pref = ""; pexpect = ""; have = 0 }
+    BEGIN { pline = 0; pname = ""; psurface = ""; pref = ""; pexpect = ""; have = 0
+            incore = 0; sawcore = 0; outname = "" }
     /^###[ \t]/ {
         flush()
-        pline = NR
         h = $0; sub(/^###[ \t]+/, "", h); gsub(/[ \t]+$/, "", h)
-        pname = h; psurface = ""; pref = ""; pexpect = ""; have = 0
+        psurface = ""; pref = ""; pexpect = ""; have = 0
+        if (incore) { pline = NR; pname = h; outname = "" }
+        else { pline = 0; pname = ""; outname = h }
         next
     }
     /^##[ \t]/ {
         flush()
-        pline = 0; pname = ""; psurface = ""; pref = ""; pexpect = ""; have = 0
+        pline = 0; pname = ""; psurface = ""; pref = ""; pexpect = ""; have = 0; outname = ""
+        incore = (tolower($0) ~ /^##[ \t]+core principles/) ? 1 : 0
+        if (incore) sawcore = 1
         next
     }
     (index($0, "gates:enforce") > 0 && index($0, "<!--") > 0) {
@@ -167,6 +178,10 @@ gates_const_parse() { # <constitution>
             next
         }
         have = 1
+        if (pline == 0 && outname != "") {
+            printf "MALFORMED\t%d\t%s\tgates:enforce marker outside Core Principles (move the principle under ## Core Principles)\n", NR, outname
+            next
+        }
         if (pline == 0) {
             printf "MALFORMED\t%d\t%s\tgates:enforce marker before any principle heading\n", NR, name
             next
@@ -189,7 +204,7 @@ gates_const_parse() { # <constitution>
         psurface = surface; pref = ref; pexpect = expect
         next
     }
-    END { flush() }
+    END { flush(); if (!sawcore) print "NOCORE" }
     ' "$file"
 }
 
@@ -464,7 +479,7 @@ the boundary that proves it."
     gates_const_parse "$augment" \
         | awk -F'\t' '$1 == "PRINCIPLE" && $4 != "" { print $3 }' >"$annotated_tmp"
     local existing_count
-    existing_count="$(grep -c '^### ' "$augment" || true)"
+    existing_count="$(gates_const_parse "$augment" | grep -c '^PRINCIPLE' || true)"
 
     local markers_file newblock_file
     markers_file="$(mktemp 2>/dev/null || mktemp -t gates-mk)" || return 1
@@ -776,6 +791,7 @@ gates_const_check_raw() { # <root> <constitution> [<policy>]
                 printf 'MALFORMED\t%s\t%s\n' "$line" "$surface"
                 rc=1
                 ;;
+            NOCORE) printf 'NOCORE\n' ;;
             PRINCIPLE)
                 if [[ -z "$surface" ]]; then
                     unann=$((unann + 1))
@@ -815,6 +831,7 @@ gates_const_check() { # <root> <constitution> [<policy>] [<label>]
             PROSE) echo "  prose-only: $a" ;;
             GAP) echo "  gap: $a — $b ref=$c not wired ($d)" ;;
             MALFORMED) echo "  $label:$a: malformed marker: $b" ;;
+            NOCORE) echo "  $label has no '## Core Principles' section, so it declares no principles" ;;
             UNANNOTATED)
                 [[ "$a" -gt 0 ]] && echo "  $a principle(s) unannotated (informational)"
                 ;;

@@ -180,8 +180,8 @@ split (research R7–R9).
 
 **Independent Test**: quickstart US4.
 
-- [ ] T034 [US4] Scope `gates_const_parse` in `extension/runtime/lib/constitution.sh`: track the current `##` heading; `###` opens a principle only under `## Core Principles`; a `gates:enforce` marker elsewhere → `MALFORMED` "gates:enforce marker outside Core Principles"; no Core Principles section → zero principles plus a notice from `constitution.sh check`
-- [ ] T035 [US4] Tests in `tests/test-constitution.sh`: `###` under Additional Constraints not counted; marker there → MALFORMED with the line; missing section notice; this repo's constitution still yields its 5 principles; mutation-check
+- [x] T034 [US4] Scope `gates_const_parse` in `extension/runtime/lib/constitution.sh`: track the current `##` heading; `###` opens a principle only under `## Core Principles`; a `gates:enforce` marker elsewhere → `MALFORMED` "gates:enforce marker outside Core Principles"; no Core Principles section → zero principles plus a notice from `constitution.sh check`
+- [x] T035 [US4] Tests in `tests/test-constitution.sh`: `###` under Additional Constraints not counted; marker there → MALFORMED with the line; missing section notice; this repo's constitution still yields its 5 principles; mutation-check
 
   ```accept
   # verifies: FR-016

@@ -597,6 +597,16 @@ has "a --no-agent-hooks projection is checked as one" "$U" "[ok]  projection mat
 fx_cleanup "$U"
 
 echo ""
+echo "=== constitution outside Core Principles (#82) ==="
+DK="$WORKDIR/const82"
+project "$DK" '{ "hooks": {} }' no
+mkdir -p "$DK/.specify/memory"
+printf '# C\n\n## Governance\n\n### Amendments\n<!-- gates:enforce surface=prose -->\n' >"$DK/.specify/memory/constitution.md"
+run_doctor "$DK" >/dev/null
+has "a marker outside Core Principles fails" "$DK" "[MISSING] constitution.md:6: malformed marker: gates:enforce marker outside Core Principles"
+has "a missing Core Principles section is named" "$DK" "has no '## Core Principles' section"
+
+echo ""
 [[ "$SKIPPED" -gt 0 ]] && echo "$SKIPPED healthy-fixture case(s) skipped: this host lacks tools doctor requires."
 echo "$PASS of $TOTAL tests passed."
 [[ "$FAIL" -gt 0 ]] && exit 1

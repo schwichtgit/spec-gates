@@ -77,6 +77,13 @@ add` forms at the agent boundary. `project.sh` lists new settings like
 
 ### Fixed
 
+- **Only `###` headings under `## Core Principles` are principles** (#82).
+  Sub-headings under Additional Constraints, Governance and other sections
+  are no longer reported as unannotated principles. A `gates:enforce`
+  marker outside Core Principles is now malformed (doctor and
+  `constitution.sh check` fail and name the line), and a constitution
+  without the section is reported as declaring no principles.
+
 - **The file and command hooks never silently allow** (#83). Without jq,
   or for input that isn't valid JSON, `protect-files.sh` and
   `validate-bash.sh` read the path or command in raw mode, and every
