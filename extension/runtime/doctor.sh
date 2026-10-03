@@ -39,6 +39,8 @@ GATES_LIB_DIR="$PROJECT_ROOT/.specify/gates/lib"
 [[ -f "$GATES_LIB_DIR/contract.sh" ]] && source "$GATES_LIB_DIR/contract.sh"
 # shellcheck source=/dev/null disable=SC1091
 [[ -f "$GATES_LIB_DIR/constitution.sh" ]] && source "$GATES_LIB_DIR/constitution.sh"
+# shellcheck source=/dev/null disable=SC1091
+[[ -f "$GATES_LIB_DIR/manifest.sh" ]] && source "$GATES_LIB_DIR/manifest.sh"
 
 MISSING=0
 OK="  [ok]  "
@@ -143,6 +145,88 @@ if [[ -f "$EXT_MANIFEST" ]]; then
         echo "${OK}constitution corpus present"
     else
         echo "${REC}constitution corpus not found under the installed extension — /speckit.gates.constitution needs it (re-install from a release that ships gates/constitution/)"
+    fi
+fi
+
+# Upgrade safety (#70): what an upgrade would do, the holds, and CI drift.
+# The installed extension's project.sh --check is the single judge of the
+# projection (same classification an upgrade uses); a project that opted
+# out of the agent hooks is recognized from its manifest, which then lists
+# no .claude/hooks/gates/ entries.
+if declare -f gates_ci_missing >/dev/null 2>&1 && [[ -d "$PROJECT_ROOT/.specify/gates" ]]; then
+    echo ""
+    echo "Upgrade safety (projection, holds, CI):"
+    VEND_RT="$PROJECT_ROOT/.specify/extensions/gates/runtime"
+    if [[ -f "$VEND_RT/project.sh" ]]; then
+        PFLAGS=""
+        MAN_FILE="$PROJECT_ROOT/.specify/gates/.projected.sha256"
+        if [[ -f "$MAN_FILE" ]] && ! grep -q '  \.claude/hooks/gates/' "$MAN_FILE"; then
+            PFLAGS="--no-agent-hooks"
+        fi
+        prc=0
+        # shellcheck disable=SC2086  # PFLAGS is empty or one flag
+        POUT="$(cd "$PROJECT_ROOT" && bash "$VEND_RT/project.sh" --check $PFLAGS 2>&1)" || prc=$?
+        case "$prc" in
+            0) echo "${OK}projection matches the installed extension" ;;
+            1)
+                echo "${BAD}the projection is not current — run: bash .specify/extensions/gates/runtime/project.sh"
+                MISSING=$((MISSING + 1))
+                ;;
+            3)
+                echo "${BAD}projected files were edited locally and are not held — the next upgrade stops on them (keep with --keep-local, or take upstream)"
+                MISSING=$((MISSING + 1))
+                ;;
+            *)
+                echo "${BAD}project.sh --check refused (exit $prc):"
+                MISSING=$((MISSING + 1))
+                ;;
+        esac
+        [[ "$prc" -ne 0 ]] && printf '%s\n' "$POUT" | grep -v '^project: *$' | sed 's/^/        /'
+    else
+        echo "${SKIP}no installed extension with project.sh — projection check skipped"
+    fi
+
+    gates_holds_load "$PROJECT_ROOT"
+    if [[ -n "$GATES_HOLDS" ]]; then
+        HTABLE=""
+        [[ -d "$VEND_RT" ]] && HTABLE="$(gates_projection_table "$VEND_RT" 1)"
+        while IFS= read -r hp; do
+            case "$hp" in
+                "$GATES_LOCAL_REL"/*)
+                    echo "${REC}hold $hp is redundant: hooks.local.d is never touched by upgrades"
+                    continue
+                    ;;
+            esac
+            hsrc="$(printf '%s\n' "$HTABLE" | awk -F '\t' -v p="$hp" '$2 == p { print $1; exit }')"
+            if [[ -z "$HTABLE" ]]; then
+                echo "${OK}held: $hp"
+            elif [[ -z "$hsrc" ]]; then
+                echo "${REC}hold $hp names a file projection does not own (remove the line)"
+            elif cmp -s "$VEND_RT/$hsrc" "$PROJECT_ROOT/$hp"; then
+                echo "${BAD}stale hold: $hp now equals the installed extension's copy — remove it from $GATES_HOLDS_REL so upgrades update it again"
+                MISSING=$((MISSING + 1))
+            else
+                echo "${OK}held: $hp (differs from the installed extension, kept on purpose)"
+            fi
+        done <<<"$GATES_HOLDS"
+    fi
+
+    if CI_FILES="$(gates_ci_files "$PROJECT_ROOT")"; then
+        CI_MISSING="$(gates_ci_missing "$PROJECT_ROOT")"
+        CI_ACKS="$(gates_holds_ci "$PROJECT_ROOT")"
+        if [[ -z "$CI_MISSING" ]]; then
+            echo "${OK}CI pipeline ($(printf '%s' "$CI_FILES" | tr '\n' ' ' | sed 's/ $//')) has every template step"
+        else
+            while IFS= read -r cid; do
+                echo "${BAD}CI pipeline lacks the '$cid' step from the template — add it from .specify/extensions/gates/ci/, or record a deliberate omission as 'ci:$cid' in $GATES_HOLDS_REL"
+                MISSING=$((MISSING + 1))
+            done <<<"$CI_MISSING"
+        fi
+        [[ -n "$CI_ACKS" ]] && printf '%s\n' "$CI_ACKS" | while IFS= read -r cid; do
+            echo "${OK}CI step '$cid' omitted on purpose (ci:$cid in $GATES_HOLDS_REL)"
+        done
+    else
+        echo "${REC}no CI pipeline runs verify.sh --boundary ci — project one with /speckit.gates.ci"
     fi
 fi
 

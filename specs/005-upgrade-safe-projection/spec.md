@@ -369,6 +369,12 @@ library that fails to load) returns an "ask" decision.
   `#!/bin/bash` resolves to on macOS.
 - No network during the documented upgrade: the checksum and signature
   steps fail closed; the path never continues with an unverified zip.
+- No cosign on the maintainer's machine (locked down): the checksum check
+  stays required; the signature is checked on another machine and tied
+  to the local zip by its sha256, or skipped only on the maintainer's
+  explicit, informed choice (the checksum then proves integrity, not
+  origin). The path never blocks outright and never skips the signature
+  by default.
 - A probe run outside Claude Code: the canned probe still runs the git and
   CI boundary probes and reports the agent probe as skipped, not passed.
 

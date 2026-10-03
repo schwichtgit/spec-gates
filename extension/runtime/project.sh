@@ -124,6 +124,8 @@ if [[ "$GATES_MANIFEST_STATUS" == "ok" && "$DOWNGRADE" -eq 0 \
         "Install the newer extension, or pass --allow-downgrade."
 fi
 gates_holds_load "$ROOT"
+# shellcheck disable=SC2034  # read by gates_classify in lib/manifest.sh
+GATES_KNOWN_FILE="$SRC/lib/known-releases.sha256"
 
 # --- Plan --------------------------------------------------------------------
 [[ "$STATE" == "dev" ]] && say "warning: this is a --dev install. Its skills are symlinks into .specify/extensions/gates/.specify-dev/, which do not exist in other clones; install from a release zip instead."
@@ -134,14 +136,23 @@ for p in $TAKE $KEEP; do
     inlist "$targets" "$p" || refuse "$p is not a projected file"
 done
 
-WRITES="" CONFLICTS="" HELD="" KEPT="" NEWMAN="" CHANGES=""
+WRITES="" CONFLICTS="" HELD="" STALE="" KEPT="" NEWMAN="" CHANGES=""
 while IFS=$'\t' read -r s r; do
     [[ -n "$s" ]] || continue
     st="$(gates_classify "$ROOT" "$SRC/$s" "$r")" || refuse "cannot hash $r"
+    # --keep-local is honored for any existing file, edited or not: the
+    # maintainer asked for a hold.
+    if inlist "$KEEP" "$r" && [[ "$st" != "held" ]]; then
+        [[ "$st" == "absent" ]] && refuse "--keep-local $r: there is no local file to keep"
+        st=edited
+    fi
     case "$st" in
         upstream) ;;
         absent | pristine) WRITES="$(addline "$WRITES" "$s"$'\t'"$r")" ;;
-        held) HELD="$(addline "$HELD" "$r")" ;;
+        held)
+            HELD="$(addline "$HELD" "$r")"
+            cmp -s "$SRC/$s" "$ROOT/$r" && STALE="$(addline "$STALE" "$r")"
+            ;;
         edited)
             if inlist "$TAKE" "$r"; then
                 WRITES="$(addline "$WRITES" "$s"$'\t'"$r")"
@@ -266,6 +277,17 @@ report_side() {
         say "held (never overwritten, see $GATES_HOLDS_REL):"
         printf '%s\n' "$HELD" | sed 's/^/project:   /'
     fi
+    if [[ -n "$STALE" ]]; then
+        say "stale holds (the held file now equals $VERSION; remove the line from $GATES_HOLDS_REL):"
+        printf '%s\n' "$STALE" | sed 's/^/project:   /'
+    fi
+    local missing
+    missing="$(gates_ci_missing "$ROOT")"
+    if [[ -n "$missing" ]]; then
+        say "the CI pipeline ($(gates_ci_files "$ROOT" | tr '\n' ' ')) lacks these template steps:"
+        printf '%s\n' "$missing" | sed 's/^/project:   /'
+        say "  add them from .specify/extensions/gates/ci/, or record a deliberate omission as ci:<step> in $GATES_HOLDS_REL"
+    fi
     [[ -n "$GITNOTE" ]] && say "$GITNOTE"
     if [[ -n "$FOREIGN" ]]; then
         say "another tool owns these git hooks, so they were not touched:"
@@ -287,7 +309,8 @@ if [[ "$DRY" -eq 1 ]]; then
         printf '%s\n' "$CHANGES" | sed 's/^/project:   /'
     fi
     report_side
-    if [[ "$CHECK" -eq 1 && -n "$CHANGES" ]]; then exit 1; fi
+    # An unwired git hook is pending work too, even when no file changes.
+    if [[ "$CHECK" -eq 1 ]] && [[ -n "$CHANGES" || -n "$FOREIGN" ]]; then exit 1; fi
     exit 0
 fi
 

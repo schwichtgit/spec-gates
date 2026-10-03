@@ -256,7 +256,7 @@ V=X.Y.Z   # the release to install
 U=https://github.com/schwichtgit/spec-gates/releases/download/v$V
 cp -R .specify/gates /tmp/gates-backup-$(date +%Y%m%d%H%M%S)   # 1. back up
 
-# 2. Download and verify the release (stop if either check fails).
+# 2. Download and verify the release (stop if a check fails; no cosign here? see below).
 curl -fsSLO "$U/gates-$V.zip" -O "$U/gates-$V.zip.sha256" -O "$U/gates-$V.zip.sigstore.json"
 sha256sum -c "gates-$V.zip.sha256"     # behind Artifactory: sha256sum -c --ignore-missing SHA256SUMS
 cosign verify-blob --bundle "gates-$V.zip.sigstore.json" \
@@ -277,17 +277,34 @@ bash .specify/extensions/gates/runtime/project.sh
 
 `specify extension add --from` checks neither the checksum nor the
 signature, and it downloads the zip itself, so steps 2 and 4 are what tie
-the installed files to a verified release. Steps 3 are two commands, not
+the installed files to a verified release. Step 3 is two commands, not
 one transaction: if the `add` fails, the projected runtime keeps working,
 and `bash .specify/gates/project.sh --check` prints the command that
 finishes the upgrade.
+
+**No cosign on this machine** (a locked-down workstation, say): the
+checksum check is still required, and the signature can be checked
+elsewhere. Run the `cosign verify-blob` command on any machine that has
+cosign (a CI job or another workstation), note the zip's
+`sha256sum` there, and on this machine confirm that
+`sha256sum gates-$V.zip` prints the same value. That gives the same
+assurance as running cosign locally. Skipping the signature entirely is
+a deliberate choice for the maintainer to make, never a default: the
+`.sha256` file and `SHA256SUMS` come from the same release page as the
+zip, so they prove the download arrived intact, not who published it.
 
 `project.sh` never writes `.specify/gates/policy.json`. It records a hash
 of every file it projects in `.specify/gates/.projected.sha256`, so a file
 you changed locally is reported (exit 3) instead of overwritten: re-run
 with `--keep-local <path>` (it is added to `.specify/gates/.upgrade-holds`
-and left alone from then on) or `--take-upstream <path>`. It ends by
-running the canary suite and fails if any gate no longer blocks.
+and left alone from then on) or `--take-upstream <path>`. A project
+projected by 0.3.x has no such record yet; there `project.sh` compares
+against the hashes of what the 0.3.x releases shipped, so only real
+edits stop it. It ends by running the canary suite and fails if any gate
+no longer blocks. `/speckit.gates.doctor` reports the same state between
+upgrades: local edits that are not held, stale holds, and CI pipelines
+missing a template step (a `ci:<step>` line in `.upgrade-holds` records a
+deliberate omission).
 `/speckit.gates.upgrade` walks through the same steps in Claude Code.
 
 ## Commands

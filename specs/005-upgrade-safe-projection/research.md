@@ -70,10 +70,13 @@ written after every successful projection. Hashing uses `sha256sum`, else
 For projects with no manifest (every 0.3.x consumer), ship
 `runtime/lib/known-releases.sha256` (`<version>\t<sha256>\t<projected
 path>`), generated from the release tags v0.3.0..v0.3.6 by
-`scripts/known-releases.sh`. With `.runtime-version` as the key, a file
-matching its known hash is pristine (safe to replace). Only a real
-deviation is a conflict. A test fails when a release tag ≥ v0.3.0 is
-missing from the table, so a release can't forget it.
+`scripts/known-releases.sh`. A file whose content any of those releases
+shipped at that path is pristine (safe to replace); matching any version,
+not only `.runtime-version`, answers the real question (was it edited?)
+and also covers a missing or stale marker. Only a real deviation is a
+conflict. The table covers v0.3.x only: 0.4.0 and later always write a
+manifest, so releases never need adding. A test rebuilds the table from
+the tags and fails if the committed copy differs.
 
 Per-file classification: `absent` → write; `pristine` (matches manifest
 or known hash) → replace; `upstream` (already equal) → no-op; `edited` →
@@ -97,12 +100,14 @@ acknowledges a deliberately omitted CI step (R6). A hold inside
 
 ## R6. CI-template drift (#70, FR-010)
 
-**Decision**: detect by command signature, not by YAML structure. A
-shipped `ci/steps.tsv` lists `<step-id>\t<regex>`: `gates` →
-`verify\.sh --boundary ci`, `canary` → `canary\.sh`, `pr` → `pr-check\.sh`.
-For the detected pipeline (`.github/workflows/*.yml` containing a gates
-step, `.gitlab-ci.yml`, `Jenkinsfile`), each signature missing from the
-file is reported. Doctor **fails** on a missing step unless `.upgrade-holds`
+**Decision**: detect by command signature, not by YAML structure.
+`gates_ci_steps` in `lib/manifest.sh` lists `<step-id>\t<regex>`:
+`gates` → `verify\.sh --boundary ci`, `canary` → `canary\.sh`, `pr` →
+`pr-check\.sh`. It lives in the projected library, not a `ci/` data file,
+so the projected doctor can judge drift without the installed extension.
+The pipeline is every file among `.github/workflows/*.y*ml`,
+`.gitlab-ci.yml`, `*.gitlab-ci.yml` and `Jenkinsfile*` that runs the
+`gates` step; each other signature missing from their union is reported. Doctor **fails** on a missing step unless `.upgrade-holds`
 has `ci:<step-id>`. No pipeline at all is informational.
 
 **Rationale**: a missing PR-check step is an enforcement gap (principle
