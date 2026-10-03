@@ -85,6 +85,12 @@
           "default": true,
           "description": "Let a staged protected_files.extra path through the git boundary only when the commit message carries a 'Protected-Change: <path>' trailer for every staged protected path plus 'Approved-By: <name>' (checked in commit-msg). false restores the unconditional pre-commit refusal. The agent boundary refuses protected edits either way."
         },
+        "block_bulk_staging": {
+          "type": "boolean",
+          "default": false,
+          "x-since": "0.4.0",
+          "description": "Refuse bulk staging at the agent boundary: git add -A / --all / . / :/ / *, or a directory argument. Explicit file paths, -u and -p stay allowed. The git boundary cannot tell how the index was filled, so this rule is agent-boundary only."
+        },
         "ai_branding": {
           "type": "object",
           "additionalProperties": false,

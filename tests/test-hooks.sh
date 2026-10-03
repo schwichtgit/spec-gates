@@ -642,6 +642,91 @@ else
     echo "SKIP: auto-format hook checks (run npm ci to install pinned prettier)"
 fi
 
+# ===========================================================================
+# Part F: local rules, bulk staging, and the protect-files split (#71)
+# ===========================================================================
+echo ""
+echo "=== protect-files: block on strong evidence, ask on a name alone (#71) ==="
+for f in tests/test_no_secret_leak.py src/token_parser.ts docs/password-policy.md lib/keystore_util.go; do
+    askcheck "name alone asks: $f" "$(jq -nc --arg f "$f" '{tool_input:{file_path:$f}}')" protect-files.sh CLAUDE_PROJECT_DIR="$WORKDIR/none"
+done
+for f in .env config/.env.prod id_ed25519 server.pem app.keystore release.jks credentials credentials.json .netrc .pypirc aws-credentials service-account-x.json; do
+    check "strong evidence blocks: $f" 2 bash -c "jq -nc --arg f '$f' '{tool_input:{file_path:\$f}}' | CLAUDE_PROJECT_DIR='$WORKDIR/none' '$HOOKS/protect-files.sh'"
+done
+check "a plain file is allowed" 0 bash -c "printf '%s' '{\"tool_input\":{\"file_path\":\"src/app.ts\"}}' | CLAUDE_PROJECT_DIR='$WORKDIR/none' '$HOOKS/protect-files.sh'"
+
+echo ""
+echo "=== bulk staging (git.block_bulk_staging, #71) ==="
+BK="$WORKDIR/bulk"
+mkdir -p "$BK/.specify/gates" "$BK/src"
+touch "$BK/a.txt"
+BK_ON='{ "hooks": {}, "git": { "block_bulk_staging": true } }'
+bulk() { # <name> <expect> <command> [policy-json]
+    printf '%s' "${4:-$BK_ON}" >"$BK/.specify/gates/policy.json"
+    check "$1" "$2" bash -c "jq -nc --arg c \"\$1\" --arg d '$BK' '{cwd:\$d,tool_input:{command:\$c}}' | CLAUDE_PROJECT_DIR='$BK' '$HOOKS/validate-bash.sh'" _ "$3"
+}
+for c in 'git add -A' 'git add --all' 'git add .' 'git add :/' 'git add src/' 'git add src' 'git add "src"' \
+    'git commit -m x && git add . && git push' 'git -C sub add .'; do
+    bulk "knob on blocks: $c" 2 "$c"
+done
+for c in 'git add a.txt' 'git add -u' 'git add -p a.txt' 'echo git add .' 'git status'; do
+    bulk "knob on allows: $c" 0 "$c"
+done
+bulk "knob off allows git add -A" 0 'git add -A' '{ "hooks": {} }'
+printf '%s' "$BK_ON" >"$BK/.specify/gates/policy.json"
+check "raw mode: knob read without jq" 2 bash -c "jq -nc --arg d '$BK' '{cwd:\$d,tool_input:{command:\"git add .\"}}' >'$WORKDIR/bk.json' && PATH='$NOJQ' CLAUDE_PROJECT_DIR='$BK' '$HOOKS/validate-bash.sh' <'$WORKDIR/bk.json'"
+printf '{ "hooks": ' >"$BK/.specify/gates/policy.json"
+askcheck "unreadable policy + bulk add asks" "$(jq -nc --arg d "$BK" '{cwd:$d,tool_input:{command:"git add -A"}}')" validate-bash.sh CLAUDE_PROJECT_DIR="$BK"
+
+echo ""
+echo "=== local rules in hooks.local.d (#71) ==="
+LR="$WORKDIR/localrules"
+project_runtime "$LR" "true"
+printf '%s' '{ "hooks": {}, "git": { "block_main_commits": false } }' >"$LR/.specify/gates/policy.json"
+rule() { # <hook> <name> <body>
+    mkdir -p "$LR/.specify/gates/hooks.local.d/$1"
+    printf '%s\n' "$3" >"$LR/.specify/gates/hooks.local.d/$1/$2"
+}
+rule validate-bash 10-no-forbidden.sh 'if grep -q "touch /tmp/forbidden"; then echo "no forbidden marker here" >&2; exit 1; fi'
+check "validate-bash local rule refuses its command" 0 bash -c "out=\$(printf '%s' '{\"tool_input\":{\"command\":\"touch /tmp/forbidden\"}}' | CLAUDE_PROJECT_DIR='$LR' '$HOOKS/validate-bash.sh' 2>&1); rc=\$?; [[ \$rc -eq 2 ]] && grep -q 'gates(local validate-bash/10-no-forbidden.sh): no forbidden marker here' <<<\"\$out\""
+check "validate-bash local rule lets others pass" 0 bash -c "printf '%s' '{\"tool_input\":{\"command\":\"ls\"}}' | CLAUDE_PROJECT_DIR='$LR' '$HOOKS/validate-bash.sh'"
+rule validate-bash 05-allow-all.sh 'exit 0'
+check "a local rule cannot lift a shipped block" 2 bash -c "printf '%s' '{\"tool_input\":{\"command\":\"rm -rf /\"}}' | CLAUDE_PROJECT_DIR='$LR' '$HOOKS/validate-bash.sh'"
+mkdir -p "$LR/.specify/gates/hooks.local.d/validate-bash/20-unreadable.sh"
+check "an unreadable rule refuses" 2 bash -c "printf '%s' '{\"tool_input\":{\"command\":\"ls\"}}' | CLAUDE_PROJECT_DIR='$LR' '$HOOKS/validate-bash.sh'"
+rmdir "$LR/.specify/gates/hooks.local.d/validate-bash/20-unreadable.sh"
+rule protect-files 10-no-vendor.sh 'if grep -q "\"vendor/"; then echo "vendor/ is generated" >&2; exit 1; fi'
+check "protect-files local rule refuses" 2 bash -c "printf '%s' '{\"tool_input\":{\"file_path\":\"vendor/x.go\"}}' | CLAUDE_PROJECT_DIR='$LR' '$HOOKS/protect-files.sh'"
+check "protect-files local rule refuses before an ask" 2 bash -c "printf '%s' '{\"tool_input\":{\"file_path\":\"vendor/secret_util.go\"}}' | CLAUDE_PROJECT_DIR='$LR' '$HOOKS/protect-files.sh'"
+check "protect-files local rule lets others pass" 0 bash -c "printf '%s' '{\"tool_input\":{\"file_path\":\"src/a.go\"}}' | CLAUDE_PROJECT_DIR='$LR' '$HOOKS/protect-files.sh'"
+if [[ "$PR_OK" -eq 0 ]]; then
+    rule validate-pr 10-ticket.sh 'if ! grep -q "TICKET-"; then echo "PR text needs a TICKET- reference" >&2; exit 1; fi'
+    check "validate-pr local rule refuses" 2 bash -c "printf '%s' '{\"tool_input\":{\"command\":\"gh pr create --title \\\"feat: x\\\" --body \\\"Adds a parser.\\\"\"}}' | CLAUDE_PROJECT_DIR='$LR' '$HOOKS/validate-pr.sh'"
+    check "validate-pr local rule passes a compliant PR" 0 bash -c "printf '%s' '{\"tool_input\":{\"command\":\"gh pr create --title \\\"feat: x\\\" --body \\\"Adds a parser. TICKET-7\\\"\"}}' | CLAUDE_PROJECT_DIR='$LR' '$HOOKS/validate-pr.sh'"
+fi
+# shellcheck disable=SC2016  # $1 belongs to the rule script
+rule commit-msg 10-ticket.sh 'grep -q "TICKET-" "$1" || { echo "commit needs a TICKET- reference" >&2; exit 1; }'
+printf 'feat: add a thing\n' >"$MSGF"
+check "commit-msg local rule refuses (gets the message file)" 0 bash -c "cd '$LR' && out=\$('$CM' '$MSGF' 2>&1); rc=\$?; [[ \$rc -eq 1 ]] && grep -q 'gates(local commit-msg/10-ticket.sh)' <<<\"\$out\""
+printf 'feat: add a thing\n\nRefs TICKET-7.\n' >"$MSGF"
+check "commit-msg local rule passes a compliant message" 0 bash -c "cd '$LR' && '$CM' '$MSGF'"
+mv "$LR/.specify/gates/lib/local-hooks.sh" "$LR/.specify/gates/lib/local-hooks.sh.off"
+check "commit-msg: rules present but library missing -> refused" 1 bash -c "cd '$LR' && '$CM' '$MSGF'"
+askcheck "validate-bash: rules present but library missing asks" '{"tool_input":{"command":"ls"}}' validate-bash.sh CLAUDE_PROJECT_DIR="$LR"
+mv "$LR/.specify/gates/lib/local-hooks.sh.off" "$LR/.specify/gates/lib/local-hooks.sh"
+PCL="$WORKDIR/pclocal"
+project_runtime "$PCL" "true"
+printf '%s' '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error", "custom_command": "true" } }, "git": { "block_main_commits": false } }' \
+    >"$PCL/.specify/gates/policy.json"
+(cd "$PCL" && git init -q . && git config user.email t@example.invalid && git config user.name t \
+    && printf 'x\n' >notes.txt && git add notes.txt)
+mkdir -p "$PCL/.specify/gates/hooks.local.d/pre-commit"
+printf '%s\n' 'if git diff --cached --name-only | grep -q "^notes.txt$"; then echo "notes.txt stays untracked" >&2; exit 1; fi' \
+    >"$PCL/.specify/gates/hooks.local.d/pre-commit/10-untracked.sh"
+check "pre-commit local rule refuses" 0 bash -c "cd '$PCL' && out=\$('$GITHOOKS/pre-commit' 2>&1); rc=\$?; [[ \$rc -eq 1 ]] && grep -q 'gates(local pre-commit/10-untracked.sh): notes.txt stays untracked' <<<\"\$out\""
+rm -f "$PCL/.specify/gates/hooks.local.d/pre-commit/10-untracked.sh"
+check "pre-commit passes without the rule" 0 bash -c "cd '$PCL' && '$GITHOOKS/pre-commit'"
+
 # --- Summary ---
 echo ""
 echo "$PASS of $TOTAL tests passed."

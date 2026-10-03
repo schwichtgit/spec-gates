@@ -35,11 +35,25 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   step (`verify.sh --boundary ci`, `canary.sh`, `pr-check.sh`). Record a
   deliberate omission as `ci:<step>` in `.specify/gates/.upgrade-holds`.
   `project.sh` reports the same holds and CI drift.
+- **Project rules that survive upgrades** (#71):
+  `.specify/gates/hooks.local.d/<hook>/*.sh` for `protect-files`,
+  `validate-bash`, `validate-pr`, `pre-commit` and `commit-msg`. They run
+  after the shipped checks and can only add refusals.
+- **`git.block_bulk_staging`** (default `false`, #71): refuses bulk `git
+add` forms at the agent boundary. `project.sh` lists new settings like
+  this one on the first upgrade that ships them and never writes
+  `policy.json`.
 - **A half-done upgrade is detected.** If `specify extension remove` ran
   but `add` did not, `bash .specify/gates/project.sh --check` says so and
   prints the command that finishes it.
 
 ### Changed
+
+- **The file hook asks instead of blocking on a name alone** (#71). A
+  sensitive word in a file name (`secret`, `token`, `password`,
+  `credentials`, `keystore`) now asks for confirmation; exact credential
+  names, keys, certificates (now including `*.jks` and `*.keystore`) and
+  `.env` files still block.
 
 - **One documented upgrade path** (README "Upgrade", `/speckit.gates.upgrade`):
   verify the versioned zip (checksum and cosign), remove and add the

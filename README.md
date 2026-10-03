@@ -307,6 +307,37 @@ missing a template step (a `ci:<step>` line in `.upgrade-holds` records a
 deliberate omission).
 `/speckit.gates.upgrade` walks through the same steps in Claude Code.
 
+## Project rules that survive upgrades
+
+Upgrades replace every projected file, so project-specific hardening goes
+in `.specify/gates/hooks.local.d/<hook>/*.sh`, which projection, upgrades
+and the manifest never touch. `<hook>` is `protect-files`,
+`validate-bash`, `validate-pr`, `pre-commit`, or `commit-msg`. Each rule
+runs after the shipped checks, so it can add a refusal but never remove
+one. It reads the tool call JSON on stdin (agent hooks) or gets the hook's
+arguments (`commit-msg` gets the message file as `$1`). Exit 0 allows;
+any other exit refuses, with the rule's stderr as the message.
+
+```bash
+# .specify/gates/hooks.local.d/validate-bash/10-no-vendor-edits.sh
+if grep -q 'vendor/'; then echo "vendor/ is generated; run make vendor" >&2; exit 1; fi
+```
+
+Two settings in `.specify/gates/policy.json` cover the most common cases:
+
+- `git.block_bulk_staging: true` refuses `git add -A`, `--all`, `.`,
+  `:/`, `*` and directory arguments at the agent boundary, so an
+  untracked directory cannot be swept into a commit. Explicit files, `-u`
+  and `-p` stay allowed. The git boundary cannot tell how files were
+  staged, so this is an agent-boundary rule.
+- The file hook blocks only on strong evidence: `.env` files, keys and
+  certificates (`*.pem`, `*.key`, `*.p12`, `*.jks`, `*.keystore`, …),
+  exact credential file names (`credentials.json`, `.netrc`, `.pypirc`,
+  cloud service-account files), sensitive directories, lock files, and
+  `protected_files.extra`. A file whose name merely contains a word like
+  `secret` or `token` (`test_no_secret_leak.py`) gets an "ask" instead,
+  so you confirm the edit.
+
 ## Commands
 
 | Command                       | Purpose                                                                                                                                                 |

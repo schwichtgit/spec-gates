@@ -21,6 +21,11 @@ set -uo pipefail
 #   prhook  -- clean PR allowed AND AI-ism PR body AND unreadable
 #              --body-file refused
 #                                     -> validate-pr.sh hook
+#   bulk    -- `git add -A` with git.block_bulk_staging on
+#                                     -> validate-bash hook        (exit 2)
+#   local   -- a project rule in hooks.local.d refuses its marker command,
+#              and a plain command still passes
+#                                     -> validate-bash local rules (exit 2)
 #   secret  -- staged AWS-key string  -> pre-commit secret scan    (blocked)
 #   credential -- staged `token: '...'` assignment
 #                                     -> pre-commit generic scan   (blocked)
@@ -63,7 +68,7 @@ done
 CANARY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 
-CANARY_SET="format shell bash protect prhook secret credential protected branding pr spec contract"
+CANARY_SET="format shell bash protect prhook bulk local secret credential protected branding pr spec contract"
 
 if [[ -n "$ONLY" ]]; then
     IFS=',' read -r -a _only_ids <<<"$ONLY"
@@ -327,6 +332,53 @@ run_prhook_canary() {
     fi
 }
 
+# Bulk-staging canary (#71): with the policy knob on in a sandbox, the
+# command hook must refuse `git add -A`, and refuse it for that reason.
+run_bulk_canary() {
+    local script
+    if ! script="$(claude_hook validate-bash.sh)"; then
+        record bulk skipped "validate-bash.sh not found — agent boundary not projected (bulk staging)" 1
+        return 0
+    fi
+    local d="$WORKDIR/bulkenv" rc=0 out
+    mkdir -p "$d/.specify/gates" || setup_fail "bulk sandbox"
+    printf '%s' '{ "hooks": {}, "git": { "block_bulk_staging": true } }' >"$d/.specify/gates/policy.json" \
+        || setup_fail "bulk policy"
+    out="$(printf '{"cwd":"%s","tool_input":{"command":"git add -A"}}' "$d" \
+        | CLAUDE_PROJECT_DIR="$d" "$script" 2>&1 >/dev/null)" || rc=$?
+    if [[ "$rc" -eq 2 ]] && printf '%s' "$out" | grep -q 'block_bulk_staging'; then
+        record bulk blocked "validate-bash refused git add -A under git.block_bulk_staging" 0
+    else
+        record bulk accepted "validate-bash.sh exit $rc on git add -A with git.block_bulk_staging on — bulk staging was not refused" 1
+    fi
+}
+
+# Local-rule canary (#71): a project rule in hooks.local.d must refuse the
+# command it targets, and must not refuse anything else.
+run_local_canary() {
+    local script
+    if ! script="$(claude_hook validate-bash.sh)"; then
+        record local skipped "validate-bash.sh not found — agent boundary not projected (local rules)" 1
+        return 0
+    fi
+    local d="$WORKDIR/localenv" rc_hit=0 rc_ok=0 out
+    mkdir -p "$d/.specify/gates/lib" "$d/.specify/gates/hooks.local.d/validate-bash" || setup_fail "local sandbox"
+    cp "$CANARY_DIR/lib/local-hooks.sh" "$d/.specify/gates/lib/" 2>/dev/null \
+        || { record local accepted "lib/local-hooks.sh is missing — project rules in hooks.local.d would never run" 1; return 0; }
+    printf '%s\n' 'if grep -q gates-local-canary; then echo "canary rule refused" >&2; exit 1; fi' \
+        >"$d/.specify/gates/hooks.local.d/validate-bash/10-canary.sh" || setup_fail "local rule"
+    out="$(printf '%s' '{"tool_input":{"command":"echo gates-local-canary"}}' \
+        | CLAUDE_PROJECT_DIR="$d" "$script" 2>&1 >/dev/null)" || rc_hit=$?
+    printf '%s' '{"tool_input":{"command":"ls"}}' | CLAUDE_PROJECT_DIR="$d" "$script" >/dev/null 2>&1 || rc_ok=$?
+    if [[ "$rc_hit" -ne 2 ]] || ! printf '%s' "$out" | grep -q 'gates(local validate-bash/10-canary.sh)'; then
+        record local accepted "validate-bash.sh exit $rc_hit on a command a local rule refuses — hooks.local.d rules do not run" 1
+    elif [[ "$rc_ok" -ne 0 ]]; then
+        record local accepted "validate-bash.sh exit $rc_ok on a plain command with a local rule present — the local rule plumbing blocks everything" 1
+    else
+        record local blocked "a hooks.local.d rule refused its command, and a plain command passed" 0
+    fi
+}
+
 # ---------------------------------------------------------------------------
 # Secret canary: a real `git commit` in a sandbox repo with the pre-commit
 # hook installed must be refused, and refused BY THE SECRET SCAN (a commit
@@ -578,6 +630,8 @@ for id in $CANARY_SET; do
         bash) run_bash_canary ;;
         protect) run_protect_canary ;;
         prhook) run_prhook_canary ;;
+        bulk) run_bulk_canary ;;
+        local) run_local_canary ;;
         secret) run_secret_canary ;;
         credential) run_credential_canary ;;
         protected) run_protected_canary ;;

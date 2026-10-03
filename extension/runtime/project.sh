@@ -187,6 +187,32 @@ fi
 
 # Planned side changes beyond file copies.
 RTV_FILE="$ROOT/.specify/gates/.runtime-version"
+
+# Policy settings added since the version that projected this project
+# (#71): listed, never written -- policy.json belongs to the project. A
+# schema property marked "x-since" newer than that version and absent from
+# the policy is new to this project. A fresh install has no previous
+# version and gets no notices.
+PREV=""
+if [[ "$GATES_MANIFEST_STATUS" == "ok" ]]; then
+    PREV="$GATES_MANIFEST_VERSION"
+else
+    PREV="$(head -n 1 "$RTV_FILE" 2>/dev/null || true)"
+fi
+NEWKEYS=""
+if [[ -n "$PREV" && -f "$SRC/policy.schema.json" ]]; then
+    while IFS=$'\t' read -r key since dflt; do
+        [[ -n "$key" ]] || continue
+        [[ "$(gates_version_cmp "$since" "$PREV")" == "1" ]] || continue
+        [[ "$(gates_version_cmp "$since" "$VERSION")" == "1" ]] && continue
+        jq -e --arg k "$key" 'getpath($k | split(".")) != null' "$ROOT/.specify/gates/policy.json" >/dev/null 2>&1 \
+            && continue
+        NEWKEYS="$(addline "$NEWKEYS" "$key (since $since, default $dflt)")"
+    done < <(jq -r 'paths(objects | has("x-since")) as $p
+        | getpath($p) as $o
+        | [($p | map(select(. != "properties")) | join(".")), $o["x-since"], ($o.default | tostring)]
+        | @tsv' "$SRC/policy.schema.json" 2>/dev/null)
+fi
 NEED_RTV=0
 [[ "$(head -n 1 "$RTV_FILE" 2>/dev/null || true)" == "$VERSION" ]] || NEED_RTV=1
 GI="$ROOT/.specify/gates/.gitignore"
@@ -273,6 +299,11 @@ fi
 [[ "$NEED_MAN" -eq 1 ]] && CHANGES="$(addline "$CHANGES" "write $GATES_MANIFEST_REL")"
 
 report_side() {
+    if [[ -n "$NEWKEYS" ]]; then
+        say "new policy settings since $PREV (policy.json is yours, so nothing was changed):"
+        printf '%s\n' "$NEWKEYS" | sed 's/^/project:   /'
+        say "  adopt one in a reviewed change to .specify/gates/policy.json, or upstream with /speckit.gates.propose"
+    fi
     if [[ -n "$HELD" ]]; then
         say "held (never overwritten, see $GATES_HOLDS_REL):"
         printf '%s\n' "$HELD" | sed 's/^/project:   /'

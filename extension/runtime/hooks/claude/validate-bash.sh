@@ -75,6 +75,7 @@ fi
 if [[ -z "$COMMAND" ]]; then
     exit 0
 fi
+LROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 
 BLOCKED=""
 
@@ -160,10 +161,93 @@ if echo "$COMMAND" | grep -qE '(curl|wget)\s.*\|\s*(sh|bash)'; then
     BLOCKED="Pipe remote content to shell"
 fi
 
+# Bulk staging (#71): with policy git.block_bulk_staging on, refuse a
+# `git add` that stages everything or a whole directory, so an untracked
+# directory cannot be swept into a commit. Explicit files, -u and -p stay
+# allowed. Agent boundary only: pre-commit sees the index, not how it was
+# filled. bulk_staging_on: 0 on, 1 off, 2 the policy cannot be read.
+bulk_staging_on() {
+    local pf="$LROOT/.specify/gates/policy.json" v
+    [[ -f "$pf" ]] || return 1
+    if [[ -z "$DEGRADED" ]]; then
+        v="$(jq -r '.git.block_bulk_staging // false' "$pf" 2>/dev/null)" || return 2
+        [[ "$v" == "true" ]] && return 0
+        return 1
+    fi
+    tr '\n' ' ' <"$pf" | grep -qE '"block_bulk_staging"[[:space:]]*:[[:space:]]*true' && return 0
+    return 1
+}
+# bulk_add_arg: print the first argument of a `git add` segment that stages
+# in bulk; nothing when every argument is an explicit file or a flag.
+bulk_add_arg() {
+    local cwd seg a
+    if [[ -z "$DEGRADED" ]]; then
+        cwd="$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null || true)"
+    else
+        cwd="$(raw_field cwd || true)"
+    fi
+    [[ -n "$cwd" ]] || cwd="$LROOT"
+    while IFS= read -r seg; do
+        printf '%s' "$seg" | grep -qE '^[[:space:]]*(sudo[[:space:]]+)?git([[:space:]]+-[Cc][[:space:]]+[^[:space:]]+)*[[:space:]]+add([[:space:]]|$)' \
+            || continue
+        set -f # word split the arguments without glob expansion
+        # shellcheck disable=SC2086  # deliberate word split of the arguments
+        for a in ${seg#*add}; do
+            a="${a#[\"\']}"
+            a="${a%[\"\']}"
+            case "$a" in
+                -A | --all | --no-ignore-removal | . | ./ | :/ | ':/*' | '*' | '.*' | */)
+                    printf '%s\n' "$a"
+                    set +f
+                    return 0
+                    ;;
+                -*) ;;
+                *)
+                    if [[ "$a" == /* && -d "$a" ]] || [[ "$a" != /* && -d "$cwd/$a" ]]; then
+                        printf '%s\n' "$a"
+                        set +f
+                        return 0
+                    fi
+                    ;;
+            esac
+        done
+        set +f
+    done < <(printf '%s\n' "$COMMAND" | awk '{ gsub(/&&|\|\||;|\||&/, "\n"); print }')
+    return 0
+}
+if [[ -z "$BLOCKED" ]]; then
+    BULK="$(bulk_add_arg)"
+    if [[ -n "$BULK" ]]; then
+        rc=0
+        bulk_staging_on || rc=$?
+        if [[ "$rc" -eq 0 ]]; then
+            BLOCKED="Bulk staging (git add $BULK) refused by policy git.block_bulk_staging; stage explicit paths"
+        elif [[ "$rc" -eq 2 ]]; then
+            ask "git add $BULK stages in bulk, and .specify/gates/policy.json cannot be read to check git.block_bulk_staging; run /speckit.gates.doctor"
+        fi
+    fi
+fi
+
 if [[ -n "$BLOCKED" ]]; then
     echo "BLOCKED: $BLOCKED" >&2
     echo "Command: $COMMAND" >&2
     exit 2
+fi
+
+# Project-owned rules (#71) run once every shipped rule allowed, so they
+# can add a refusal but never remove one.
+if compgen -G "$LROOT/.specify/gates/hooks.local.d/validate-bash/*.sh" >/dev/null; then
+    LLIB="$LROOT/.specify/gates/lib/local-hooks.sh"
+    if [[ ! -f "$LLIB" ]] || ! bash -n "$LLIB" 2>/dev/null; then
+        ask "local rules exist in hooks.local.d/validate-bash, but lib/local-hooks.sh cannot load; run /speckit.gates.doctor"
+    fi
+    # shellcheck source=/dev/null disable=SC1090
+    source "$LLIB"
+    if ! GATES_LOCAL_STDIN="$INPUT" gates_run_local "$LROOT" validate-bash; then
+        echo "BLOCKED: $GATES_LOCAL_MSG" >&2
+        echo "Command: $COMMAND" >&2
+        exit 2
+    fi
 fi
 
 if [[ -n "$DEGRADED" ]]; then

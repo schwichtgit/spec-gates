@@ -132,7 +132,22 @@ if [[ -n "$BODY_FILE" ]]; then
     BODY="$(cat "$RESOLVED")"
 fi
 
+# Project-owned rules (#71) run once every shipped check allowed, so they
+# can add a refusal but never remove one.
+run_local_rules() {
+    compgen -G "$PROJECT_ROOT/.specify/gates/hooks.local.d/validate-pr/*.sh" >/dev/null || return 0
+    local llib="$PROJECT_ROOT/.specify/gates/lib/local-hooks.sh"
+    if [[ ! -f "$llib" ]] || ! bash -n "$llib" 2>/dev/null; then
+        refuse "ERROR: local rules exist in hooks.local.d/validate-pr, but lib/local-hooks.sh cannot load." \
+            "  Run /speckit.gates.doctor."
+    fi
+    # shellcheck source=/dev/null disable=SC1090
+    source "$llib"
+    GATES_LOCAL_STDIN="$INPUT" gates_run_local "$PROJECT_ROOT" validate-pr || refuse "$GATES_LOCAL_MSG"
+}
+
 if [[ -z "$TITLE" && -z "$BODY" ]]; then
+    run_local_rules
     exit 0
 fi
 
@@ -142,4 +157,5 @@ if ! VIOLATIONS=$(gates_message_check pr "$TITLE"$'\n\n'"$BODY" 2>&1); then
     exit 2
 fi
 
+run_local_rules
 exit 0
