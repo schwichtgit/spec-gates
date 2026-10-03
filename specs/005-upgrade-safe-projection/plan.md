@@ -89,7 +89,6 @@ extension/
 │   ├── lib/constitution.sh             # parser scope (US4)
 │   ├── policy.schema.json, policy-template.json   # block_bulk_staging (US3)
 │   └── hooks/{claude,git}/*            # fail closed, ask, local rules, GATES_PROBE
-├── ci/steps.tsv                        # NEW: CI step signatures (US2)
 └── commands/speckit.gates.{init,upgrade,doctor}.md   # call project.sh; one upgrade path
 scripts/known-releases.sh               # NEW: generates the table from tags
 tests/test-project.sh                   # NEW suite (registered in tests/run.sh)

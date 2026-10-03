@@ -24,6 +24,17 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   changed since then stops the run (exit 3) until you pass
   `--keep-local <path>`, which holds it in `.specify/gates/.upgrade-holds`,
   or `--take-upstream <path>`.
+- **Upgrading a 0.3.x projection reports only real edits** (#70). Those
+  projections have no manifest yet, so `project.sh` compares each file
+  against what the 0.3.x releases shipped
+  (`runtime/lib/known-releases.sha256`); a file one of them shipped
+  unchanged is updated without asking.
+- **Doctor checks upgrade safety** (#70): whether the projection is
+  current, local edits that are not held, holds that went stale (the held
+  file now equals the installed copy), and CI pipelines missing a template
+  step (`verify.sh --boundary ci`, `canary.sh`, `pr-check.sh`). Record a
+  deliberate omission as `ci:<step>` in `.specify/gates/.upgrade-holds`.
+  `project.sh` reports the same holds and CI drift.
 - **A half-done upgrade is detected.** If `specify extension remove` ran
   but `add` did not, `bash .specify/gates/project.sh --check` says so and
   prints the command that finishes it.
@@ -33,7 +44,10 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
 - **One documented upgrade path** (README "Upgrade", `/speckit.gates.upgrade`):
   verify the versioned zip (checksum and cosign), remove and add the
   extension, diff the install against the verified zip, then run
-  `project.sh`. `specify extension add --from` verifies neither.
+  `project.sh`. `specify extension add --from` verifies neither. Without
+  cosign on the machine, the signature can be checked on another machine
+  and tied to the local zip by its sha256; skipping it is only ever the
+  maintainer's explicit choice.
 - **The init self-test uses the canaries** for the agent hooks, so the
   live command hook no longer refuses the self-test's own probe.
 - **Git hooks owned by another tool are left alone.** When

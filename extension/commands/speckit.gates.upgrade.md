@@ -29,9 +29,22 @@ through it in order and STOP at the first failure.
    `.sigstore.json`. Run `sha256sum -c gates-X.Y.Z.zip.sha256` (behind a
    proxy that rewrites `.sha256` URLs, `sha256sum -c --ignore-missing
 SHA256SUMS`) and `cosign verify-blob` with the identity and issuer
-   from the README. Either check failing ends the upgrade. If cosign is
-   not installed, stop and have the user install it: the upgrade never
-   continues with a release whose signature was not checked.
+   from the README. Either check failing ends the upgrade.
+
+   If cosign is not installed, do not stop the user cold and do not skip
+   the signature on your own. The checksum check stays required. Offer,
+   in this order:
+   1. install cosign here;
+   2. verify on another machine: the user runs the same
+      `cosign verify-blob` command wherever cosign is available (a CI job,
+      another workstation) and gives you the zip's sha256 from there;
+      continue only if `sha256sum gates-X.Y.Z.zip` here prints the same
+      value;
+   3. checksum only, if the user explicitly chooses it after you say
+      plainly that the `.sha256` file and `SHA256SUMS` come from the same
+      release page as the zip, so they prove the download is intact, not
+      who published it. Repeat that choice in the final report.
+
 3. **Swap the extension**:
    `specify extension remove gates --keep-config --force`, then
    `specify extension add gates --from <the same versioned URL>`. These

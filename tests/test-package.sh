@@ -62,7 +62,7 @@ expect "constitution corpus ships (issue #31 regression)" \
 # consumer's vendored copy: a mode diff in every repo that commits
 # .specify/extensions/. So every shipped script is 100755 in git.
 NOT_EXEC="$(cd "$REPO_ROOT" && git ls-files -s extension/runtime \
-    | awk '$1 != "100755" && $4 !~ /\.json$/ { print $4 }' | tr '\n' ' ')"
+    | awk '$1 != "100755" && ($4 ~ /\.sh$/ || $4 ~ /\/hooks\/git\//) { print $4 }' | tr '\n' ' ')"
 expect "every shipped runtime script is 100755 in git" "$NOT_EXEC" ""
 
 echo ""

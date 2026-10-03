@@ -159,6 +159,64 @@ rc_is "deleted projected file -> exit 3" 3 "$D" --skip-canary
 rc_is "a path outside the table is refused" 2 "$D" --skip-canary --take-upstream src/app.ts
 
 echo ""
+echo "=== upgrading a 0.3.x projection (no manifest) ==="
+# Project v0.3.6's files the way 0.3.6 did (no manifest), then upgrade:
+# the known-release table must recognize every untouched file (#70).
+old036() { # <dir>: lay down v0.3.6's projected files and its version marker
+    local x="$1/.old036" s t
+    mkdir -p "$x"
+    git -C "$REPO_ROOT" archive v0.3.6 extension/runtime | tar -x -C "$x"
+    while IFS=$'\t' read -r s t; do
+        mkdir -p "$(dirname "$1/$t")"
+        cp "$x/extension/runtime/$s" "$1/$t"
+    done < <(gates_projection_table "$x/extension/runtime" 1)
+    rm -rf "$x"
+    printf '0.3.6\n' >"$1/.specify/gates/.runtime-version"
+}
+# shellcheck source=/dev/null
+source "$REPO_ROOT/extension/runtime/lib/manifest.sh"
+if git -C "$REPO_ROOT" rev-parse -q --verify v0.3.6 >/dev/null; then
+    fixture
+    old036 "$D"
+    rc_is "untouched 0.3.6 projection upgrades without conflicts" 0 "$D" --skip-canary
+    ok "upgraded files equal the new release" cmp -s "$D/.specify/extensions/gates/runtime/doctor.sh" "$D/.specify/gates/doctor.sh"
+    ok "manifest written by the upgrade" test -f "$D/.specify/gates/.projected.sha256"
+    fixture
+    old036 "$D"
+    printf '# local hardening\n' >>"$D/.specify/gates/hooks/pre-commit"
+    rc_is "one edited 0.3.6 file -> exit 3" 3 "$D" --skip-canary
+    ok "only the edited file is listed" test "$(grep -c '^project:   \.' <<<"$OUT")" -eq 1
+    ok "the edited file is the one listed" grep -q '^project:   .specify/gates/hooks/pre-commit$' <<<"$OUT"
+else
+    TOTAL=$((TOTAL + 1)); FAIL=$((FAIL + 1))
+    echo "FAIL: tag v0.3.6 not present (fetch tags: git fetch --tags)"
+fi
+
+echo ""
+echo "=== holds and CI drift ==="
+fixture
+rc_is "initial projection" 0 "$D" --skip-canary
+rc_is "--keep-local on an unedited file holds it" 0 "$D" --skip-canary --keep-local .specify/gates/doctor.sh
+ok "hold recorded" grep -qxF .specify/gates/doctor.sh "$D/.specify/gates/.upgrade-holds"
+rc_is "a hold equal to upstream is reported stale" 0 "$D" --skip-canary
+ok "stale hold named" bash -c "grep -A1 'stale holds' <<<\"\$1\" | grep -q '.specify/gates/doctor.sh'" _ "$OUT"
+rc_is "--keep-local on a missing file is refused" 2 "$D" --skip-canary --keep-local .specify/gates/nope.sh
+mkdir -p "$D/.github/workflows"
+printf 'jobs:\n  g:\n    steps:\n      - run: bash .specify/gates/verify.sh --boundary ci\n      - run: bash .specify/gates/canary.sh\n' \
+    >"$D/.github/workflows/gates.yml"
+rc_is "CI drift is reported" 0 "$D" --skip-canary
+ok "the missing pr step is named" grep -q '^project:   pr$' <<<"$OUT"
+printf 'ci:pr  # no PRs in this repo\n' >>"$D/.specify/gates/.upgrade-holds"
+rc_is "an acknowledged omission is not reported" 0 "$D" --skip-canary
+ok "no drift reported after ci:pr" bash -c "! grep -q 'lacks these template steps' <<<\"\$1\"" _ "$OUT"
+fixture
+printf '#!/bin/sh\necho mine\n' >"$D/.git/hooks/pre-commit"
+chmod +x "$D/.git/hooks/pre-commit"
+rc_is "projection with a foreign hook" 1 "$D" --skip-canary
+OUT="$(cd "$D" && bash "$P" --check 2>&1)" && rc=0 || rc=$?
+ok "--check exits 1 while a git hook is unwired" test "$rc" -eq 1
+
+echo ""
 echo "=== refusals before writing ==="
 fixture
 rm -f "$D/.specify/gates/policy.json"

@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2034  # GATES_* globals set here are read by the library
 set -euo pipefail
 
 # Unit tests for lib/manifest.sh and lib/install-state.sh (feature 005):
@@ -49,8 +50,8 @@ eq "sha256 of 'abc'" "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f2
 mkdir "$W/nosha"
 for t in cat sed awk head; do ln -s "$(type -P "$t")" "$W/nosha/$t"; done
 rc=0
-PATH="$W/nosha" gates_sha256 "$W/f" >/dev/null || rc=$?
-eq "no sha tool -> return 2" 2 "$rc"
+PATH="$W/nosha" gates_sha256 "$W/f" >/dev/null 2>&1 || rc=$?
+ok "no sha tool -> fails" test "$rc" -ne 0
 eq "0.3.6 < 0.4.0" -1 "$(gates_version_cmp 0.3.6 0.4.0)"
 eq "0.10.0 > 0.9.9" 1 "$(gates_version_cmp 0.10.0 0.9.9)"
 eq "0.4.0 == 0.4.0" 0 "$(gates_version_cmp 0.4.0 0.4.0)"
@@ -123,6 +124,67 @@ printf '.specify/gates/a.sh\n' >"$R/$GATES_HOLDS_REL"
 gates_holds_load "$R"
 eq "held wins over edited" held "$(gates_classify "$R" "$S/a.sh" .specify/gates/a.sh)"
 eq "hooks.local.d is never classified" local "$(gates_classify "$R" "$S/a.sh" .specify/gates/hooks.local.d/x/1.sh)"
+
+echo ""
+echo "=== known-release table ==="
+# Fresh from the tags (it is generated) and covering every manifest-less
+# release (v0.3.x; 0.4.0 and later write .projected.sha256).
+if git -C "$REPO_ROOT" rev-parse -q --verify v0.3.0 >/dev/null; then
+    ok "table matches a fresh build from the release tags" bash "$REPO_ROOT/scripts/known-releases.sh" --check
+else
+    eq "release tags present (git fetch --tags)" yes no
+fi
+KN="$RT/lib/known-releases.sha256"
+for v in $(git -C "$REPO_ROOT" tag -l 'v0.3.*' | sed 's/^v//'); do
+    ok "table covers $v" grep -q "^$v"$'\t' "$KN"
+done
+GATES_KNOWN_FILE="$KN"
+h036="$(awk -F '\t' '$1 == "0.3.6" && $3 == ".specify/gates/verify.sh" { print $2; exit }' "$KN")"
+ok "a released hash matches" gates_known_match .specify/gates/verify.sh "$h036"
+ok "the same hash under another path does not" bash -c "source '$RT/lib/manifest.sh'; GATES_KNOWN_FILE='$KN'; ! gates_known_match .specify/gates/doctor.sh '$h036'"
+gates_manifest_load "$W/empty-root"
+mkdir -p "$W/k/.specify/gates" "$W/ksrc"
+printf 'new\n' >"$W/ksrc/verify.sh"
+git -C "$REPO_ROOT" show v0.3.6:extension/runtime/verify.sh >"$W/k/.specify/gates/verify.sh"
+GATES_HOLDS=""
+eq "no manifest, released content -> pristine" pristine "$(gates_classify "$W/k" "$W/ksrc/verify.sh" .specify/gates/verify.sh)"
+printf '# edit\n' >>"$W/k/.specify/gates/verify.sh"
+eq "no manifest, edited content -> edited" edited "$(gates_classify "$W/k" "$W/ksrc/verify.sh" .specify/gates/verify.sh)"
+GATES_KNOWN_FILE=""
+
+echo ""
+echo "=== CI drift ==="
+C="$W/ci"
+mkdir -p "$C/.github/workflows" "$C/.specify/gates"
+rc=0; gates_ci_files "$C" >/dev/null || rc=$?
+eq "no pipeline -> gates_ci_files returns 1" 1 "$rc"
+printf 'on: push\njobs:\n  lint:\n    steps:\n      - run: npm test\n' >"$C/.github/workflows/other.yml"
+rc=0; gates_ci_files "$C" >/dev/null || rc=$?
+eq "a pipeline without the gates step does not count" 1 "$rc"
+printf 'steps:\n  - run: bash .specify/gates/verify.sh  --boundary ci\n' >"$C/.github/workflows/gates.yml"
+eq "gates pipeline found" ".github/workflows/gates.yml" "$(gates_ci_files "$C")"
+eq "missing steps listed" "canary pr" "$(gates_ci_missing "$C" | tr '\n' ' ' | sed 's/ $//')"
+printf '  - run: bash .specify/gates/canary.sh\n' >>"$C/.github/workflows/other.yml"
+printf '  - run: bash .specify/gates/verify.sh --boundary ci\n' >>"$C/.github/workflows/other.yml"
+eq "steps are judged over every gates pipeline" "pr" "$(gates_ci_missing "$C")"
+printf 'ci:pr\n' >"$C/$GATES_HOLDS_REL"
+eq "ci:<id> acknowledges an omission" "" "$(gates_ci_missing "$C")"
+rm -rf "$C/.github"
+printf 'gates:\n  script:\n    - bash .specify/gates/verify.sh --boundary ci\n    - bash .specify/gates/pr-check.sh\n' >"$C/.gitlab-ci.yml"
+rm -f "$C/$GATES_HOLDS_REL"
+eq "GitLab pipeline" "canary" "$(gates_ci_missing "$C")"
+rm -f "$C/.gitlab-ci.yml"
+printf "stage('Gates') { sh 'bash .specify/gates/verify.sh --boundary ci'; sh 'bash .specify/gates/canary.sh'; sh 'bash .specify/gates/pr-check.sh' }\n" >"$C/Jenkinsfile"
+eq "Jenkins pipeline with every step" "" "$(gates_ci_missing "$C")"
+for tpl in github/gates.yml gitlab/gates.gitlab-ci.yml jenkins/Jenkinsfile.gates; do
+    rm -rf "$C/.github" "$C/.gitlab-ci.yml" "$C/Jenkinsfile"
+    case "$tpl" in
+        github/*) mkdir -p "$C/.github/workflows" && cp "$REPO_ROOT/extension/ci/$tpl" "$C/.github/workflows/gates.yml" ;;
+        gitlab/*) cp "$REPO_ROOT/extension/ci/$tpl" "$C/.gitlab-ci.yml" ;;
+        jenkins/*) cp "$REPO_ROOT/extension/ci/$tpl" "$C/Jenkinsfile" ;;
+    esac
+    eq "shipped template $tpl has no drift" "" "$(gates_ci_missing "$C")"
+done
 
 echo ""
 echo "=== install states ==="

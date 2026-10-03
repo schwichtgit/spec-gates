@@ -520,6 +520,59 @@ else
 fi
 TOTAL=$((TOTAL + 1))
 
+# ===========================================================================
+# Upgrade safety (#70): projection check, holds, CI drift. Line-level
+# assertions: the fixture's overall exit also depends on host tooling.
+# ===========================================================================
+echo ""
+echo "=== upgrade safety section (#70) ==="
+# shellcheck source=/dev/null
+source "$REPO_ROOT/tests/lib/fixture.sh"
+has() { # <name> <dir> <fixed-string>: doctor output contains the line
+    TOTAL=$((TOTAL + 1))
+    if grep -qF -- "$3" "$2/out.txt"; then
+        echo "PASS: $1"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL: $1 (no line containing: $3)"
+        sed -n '/Upgrade safety/,/^$/p' "$2/out.txt" | sed 's/^/      /'
+        FAIL=$((FAIL + 1))
+    fi
+}
+U="$(fx_project)"
+(cd "$U" && GATES_TEST=1 bash .specify/extensions/gates/runtime/project.sh --skip-canary >/dev/null 2>&1)
+run_doctor "$U" >/dev/null
+has "current projection reported" "$U" "[ok]  projection matches the installed extension"
+has "no pipeline -> nudge" "$U" "no CI pipeline runs verify.sh --boundary ci"
+printf '# local\n' >>"$U/.specify/gates/canary.sh"
+run_doctor "$U" >/dev/null
+has "an unheld local edit fails" "$U" "[MISSING] projected files were edited locally and are not held"
+(cd "$U" && GATES_TEST=1 bash .specify/extensions/gates/runtime/project.sh --skip-canary --keep-local .specify/gates/canary.sh >/dev/null 2>&1)
+run_doctor "$U" >/dev/null
+has "a held edit is reported as kept" "$U" "[ok]  held: .specify/gates/canary.sh (differs from the installed extension, kept on purpose)"
+has "and the projection is current again" "$U" "[ok]  projection matches the installed extension"
+cp "$U/.specify/extensions/gates/runtime/canary.sh" "$U/.specify/gates/canary.sh"
+run_doctor "$U" >/dev/null
+has "a hold equal to upstream is stale and fails" "$U" "[MISSING] stale hold: .specify/gates/canary.sh"
+printf '.specify/gates/hooks.local.d/x/1.sh\n' >"$U/.specify/gates/.upgrade-holds"
+run_doctor "$U" >/dev/null
+has "a hold inside hooks.local.d is redundant" "$U" "hooks.local.d is never touched by upgrades"
+rm -f "$U/.specify/gates/.upgrade-holds"
+mkdir -p "$U/.github/workflows"
+printf 'steps:\n  - run: bash .specify/gates/verify.sh --boundary ci\n  - run: bash .specify/gates/canary.sh\n' >"$U/.github/workflows/gates.yml"
+run_doctor "$U" >/dev/null
+has "a missing CI step fails" "$U" "[MISSING] CI pipeline lacks the 'pr' step from the template"
+printf 'ci:pr\n' >"$U/.specify/gates/.upgrade-holds"
+run_doctor "$U" >/dev/null
+has "an acknowledged omission passes" "$U" "[ok]  CI step 'pr' omitted on purpose"
+has "and the pipeline is otherwise complete" "$U" "[ok]  CI pipeline (.github/workflows/gates.yml) has every template step"
+fx_cleanup "$U"
+U="$(fx_project)"
+(cd "$U" && GATES_TEST=1 bash .specify/extensions/gates/runtime/project.sh --skip-canary --no-agent-hooks >/dev/null 2>&1)
+run_doctor "$U" >/dev/null
+has "a --no-agent-hooks projection is checked as one" "$U" "[ok]  projection matches the installed extension"
+fx_cleanup "$U"
+
 echo ""
 echo "$PASS of $TOTAL tests passed."
 [[ "$FAIL" -gt 0 ]] && exit 1

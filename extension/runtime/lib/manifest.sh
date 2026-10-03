@@ -2,7 +2,7 @@
 # manifest.sh -- what projection wrote, and what changed since.
 #
 # Usage (sourced; bash 3.2, no associative arrays):
-#   gates_sha256 <file>                    # 64-hex hash; return 2 if no tool
+#   gates_sha256 <file>                    # 64-hex hash (lib/attest.sh); fails if no tool
 #   gates_version_cmp <a> <b>              # prints -1, 0 or 1
 #   gates_projection_table <runtime> <0|1> # "<src-rel>\t<target-rel>" lines
 #   gates_is_exec_target <target-rel>      # 0 if the target needs +x
@@ -11,11 +11,17 @@
 #   gates_manifest_write <root> <version>  # "<hash>  <path>" lines on stdin
 #   gates_holds_load <root>                # sets GATES_HOLDS (paths only)
 #   gates_is_held <target-rel>
+#   gates_known_match <target-rel> <hash>  # 0 if a released version had it
+#   gates_holds_ci <root>                  # acknowledged CI step ids (ci:<id>)
+#   gates_ci_files <root>                  # pipeline files running the gates; 1 if none
+#   gates_ci_missing <root>                # template step ids those files lack
 #   gates_classify <root> <src-abs> <target-rel>
 #       absent | upstream | pristine | edited | held
 #
 # Formats: specs/005-upgrade-safe-projection/data-model.md.
 # GATES_MANIFEST_STATUS is absent, ok, or corrupt (with GATES_MANIFEST_ERROR).
+# GATES_KNOWN_FILE (set by the caller) is lib/known-releases.sha256 of the
+# extension doing the projection; empty or missing means no fallback.
 
 # shellcheck disable=SC2034   # library file; the GATES_* globals are read by callers
 
@@ -23,17 +29,12 @@ GATES_MANIFEST_REL=".specify/gates/.projected.sha256"
 GATES_HOLDS_REL=".specify/gates/.upgrade-holds"
 GATES_LOCAL_REL=".specify/gates/hooks.local.d"
 
-gates_sha256() { # <file>
-    local out
-    if command -v sha256sum >/dev/null 2>&1; then
-        out="$(sha256sum "$1")" || return 1
-    elif command -v shasum >/dev/null 2>&1; then
-        out="$(shasum -a 256 "$1")" || return 1
-    else
-        return 2
-    fi
-    printf '%s\n' "${out%% *}"
-}
+# gates_sha256 comes from lib/attest.sh (one implementation: sha256sum, then
+# shasum -a 256, else fail).
+if ! declare -f gates_sha256 >/dev/null 2>&1; then
+    # shellcheck source=/dev/null disable=SC1091
+    source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/attest.sh"
+fi
 
 gates_version_cmp() { # <a> <b>
     awk -v a="$1" -v b="$2" 'BEGIN {
@@ -159,6 +160,17 @@ gates_is_held() { # <target-rel>
     printf '%s\n' "$GATES_HOLDS" | grep -qxF -- "$1"
 }
 
+GATES_KNOWN_FILE="${GATES_KNOWN_FILE:-}"
+
+# A projected file whose content some released version shipped was never
+# edited locally. This is how a project without a manifest (projected by
+# 0.3.x) upgrades without every changed file reading as a local edit.
+gates_known_match() { # <target-rel> <hash>
+    [[ -n "$GATES_KNOWN_FILE" && -f "$GATES_KNOWN_FILE" ]] || return 1
+    awk -F '\t' -v p="$1" -v h="$2" '$2 == h && $3 == p { found = 1; exit } END { exit !found }' \
+        "$GATES_KNOWN_FILE"
+}
+
 gates_classify() { # <root> <src-abs> <target-rel>
     local root="$1" src="$2" rel="$3" tgt cur rec
     tgt="$root/$rel"
@@ -184,5 +196,63 @@ gates_classify() { # <root> <src-abs> <target-rel>
         echo pristine
         return 0
     fi
+    # No record for this path (no manifest yet, or the path was not
+    # projected last time): a released version's content is pristine too.
+    if [[ -z "$rec" ]] && gates_known_match "$rel" "$cur"; then
+        echo pristine
+        return 0
+    fi
     echo edited
+}
+
+gates_holds_ci() { # <root>
+    local file="$1/$GATES_HOLDS_REL"
+    [[ -f "$file" ]] || return 0
+    sed -e 's/#.*$//' -e 's/[[:space:]]*$//' -e 's/^[[:space:]]*//' "$file" \
+        | sed -n 's/^ci://p'
+}
+
+# CI-template drift (#70, research R6): the shipped templates' steps,
+# identified by the command each runs, so a pipeline adapted by hand on any
+# platform is still recognized. <id>\t<extended regex>.
+gates_ci_steps() {
+    printf 'gates\tverify\\.sh[[:space:]]+--boundary[[:space:]]+ci\n'
+    printf 'canary\tcanary\\.sh\n'
+    printf 'pr\tpr-check\\.sh\n'
+}
+
+# Pipeline files that run the gates (contain the `gates` step). A step may
+# live in any of them, so drift is judged over their union.
+gates_ci_files() { # <root>
+    local root="$1" f found=1 re
+    re="$(gates_ci_steps | awk -F '\t' '$1 == "gates" { print $2 }')"
+    for f in "$root"/.github/workflows/*.yml "$root"/.github/workflows/*.yaml \
+        "$root"/.gitlab-ci.yml "$root"/*.gitlab-ci.yml "$root"/Jenkinsfile*; do
+        [[ -f "$f" ]] || continue
+        if grep -qE "$re" "$f"; then
+            printf '%s\n' "${f#"$root"/}"
+            found=0
+        fi
+    done
+    return "$found"
+}
+
+gates_ci_missing() { # <root>
+    local root="$1" files id re acks body f
+    files="$(gates_ci_files "$root")" || return 0
+    acks="$(gates_holds_ci "$root")"
+    # Read the union once: `cat ... | grep -q` would let grep's early exit
+    # SIGPIPE cat, and under pipefail a present step would read as missing.
+    body=""
+    while IFS= read -r f; do
+        body="$body$(cat "$root/$f")"$'\n'
+    done <<<"$files"
+    while IFS=$'\t' read -r id re; do
+        [[ -n "$id" ]] || continue
+        if ! printf '%s\n' "$body" | grep -E "$re" >/dev/null; then
+            if [[ -z "$acks" ]] || ! printf '%s\n' "$acks" | grep -qxF "$id"; then
+                printf '%s\n' "$id"
+            fi
+        fi
+    done < <(gates_ci_steps)
 }
