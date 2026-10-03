@@ -248,6 +248,26 @@ rc_is "a fresh install lists no settings" 0 "$D" --skip-canary
 ok "no notice on a fresh install" bash -c "! grep -q 'new policy settings' <<<\"\$1\"" _ "$OUT"
 
 echo ""
+echo "=== lint scope (#73) ==="
+fixture
+rc_is "no prettier in the repo: nothing reported" 0 "$D" --skip-canary
+ok "no .prettierignore advice without prettier" bash -c "! grep -q prettierignore <<<\"\$1\"" _ "$OUT"
+fixture
+printf '{ "devDependencies": { "prettier": "3.3.3" } }\n' >"$D/package.json"
+printf 'dist/' >"$D/.prettierignore"
+rc_is "prettier in package.json: missing ignores reported" 0 "$D" --skip-canary
+ok "each vendored path is named" bash -c "grep -q '^project:   .specify/extensions/\$' <<<\"\$1\" && grep -q '^project:   .claude/hooks/gates/\$' <<<\"\$1\"" _ "$OUT"
+ok ".prettierignore untouched without the flag" test "$(cat "$D/.prettierignore")" = "dist/"
+rc_is "--add-lint-ignores appends them" 0 "$D" --skip-canary --add-lint-ignores
+ok "existing entry kept, last line not run together" grep -qx 'dist/' "$D/.prettierignore"
+ok "all three paths added" test "$(grep -cE '^(\.specify/gates/|\.specify/extensions/|\.claude/hooks/gates/)$' "$D/.prettierignore")" -eq 3
+rc_is "next run is quiet" 0 "$D" --skip-canary
+ok "nothing reported once ignored" bash -c "! grep -q prettierignore <<<\"\$1\"" _ "$OUT"
+before="$(cksum <"$D/.prettierignore")"
+rc_is "--add-lint-ignores again changes nothing" 0 "$D" --skip-canary --add-lint-ignores
+ok ".prettierignore unchanged on the second add" test "$before" = "$(cksum <"$D/.prettierignore")"
+
+echo ""
 echo "=== refusals before writing ==="
 fixture
 rm -f "$D/.specify/gates/policy.json"

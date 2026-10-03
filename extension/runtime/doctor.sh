@@ -138,6 +138,62 @@ if [[ -f "$EXT_MANIFEST" ]]; then
             echo "${OK}projected runtime $RTV matches the installed extension"
         fi
     fi
+    # Install hygiene (#73). A `specify extension add --dev` install renders
+    # the gates skills as symlinks into .specify/extensions/gates/.specify-dev/,
+    # which does not exist in another clone or CI checkout: committed, they
+    # dangle there and no /speckit.gates.* command loads. Every registered
+    # gates command must be a regular file (skill or command), so a symlink,
+    # a dangling link, or a missing file FAILS here.
+    REG="$PROJECT_ROOT/.specify/extensions/.registry"
+    if [[ -f "$REG" ]] && have jq; then
+        reg_ok=0
+        while IFS= read -r rcmd; do
+            [[ -n "$rcmd" ]] || continue
+            rsk="$PROJECT_ROOT/.claude/skills/${rcmd//./-}/SKILL.md"
+            rcm="$PROJECT_ROOT/.claude/commands/$rcmd.md"
+            rstate=""
+            for rf in "$rsk" "$rcm"; do
+                if [[ -L "$rf" || -L "$(dirname "$rf")" ]]; then
+                    if [[ -e "$rf" ]]; then rstate="symlink"; else rstate="dangling"; fi
+                    break
+                elif [[ -f "$rf" ]]; then
+                    rstate="ok"
+                    break
+                fi
+            done
+            case "$rstate" in
+                ok) reg_ok=$((reg_ok + 1)) ;;
+                symlink)
+                    echo "${BAD}$rcmd is a symlink (a --dev install); it resolves only on this machine — reinstall from a release zip (README \"Upgrade\")"
+                    MISSING=$((MISSING + 1))
+                    ;;
+                dangling)
+                    echo "${BAD}$rcmd is a dangling symlink — the command does not load; reinstall from a release zip (README \"Upgrade\")"
+                    MISSING=$((MISSING + 1))
+                    ;;
+                *)
+                    echo "${BAD}$rcmd is registered but has no skill or command file — reinstall the extension"
+                    MISSING=$((MISSING + 1))
+                    ;;
+            esac
+        done < <(jq -r '(.extensions.gates.registered_commands.claude // [])[]' "$REG" 2>/dev/null)
+        [[ "$reg_ok" -gt 0 ]] && echo "${OK}$reg_ok registered gates command(s) installed as regular files"
+    fi
+    if [[ -d "$PROJECT_ROOT/.specify/extensions/gates/.specify-dev" ]]; then
+        echo "${REC}this is a --dev install (for developing spec-gates itself); other clones will not have its files — install from a release zip"
+    fi
+    # Zip extraction keeps the execute bit only on *.sh, so the vendored git
+    # hooks arrive 644 and show as mode changes where .specify/extensions/ is
+    # committed. Nothing runs them (the projected copies run), so a nudge.
+    VEXEC_N=0
+    for vf in "$PROJECT_ROOT/.specify/extensions/gates/runtime"/*.sh \
+        "$PROJECT_ROOT/.specify/extensions/gates/runtime/lib"/*.sh \
+        "$PROJECT_ROOT/.specify/extensions/gates/runtime/hooks/git"/* \
+        "$PROJECT_ROOT/.specify/extensions/gates/runtime/hooks/claude"/*.sh; do
+        [[ -f "$vf" && ! -x "$vf" ]] && VEXEC_N=$((VEXEC_N + 1))
+    done
+    [[ "$VEXEC_N" -gt 0 ]] \
+        && echo "${REC}$VEXEC_N installed extension script(s) lack the execute bit (zip extraction) — run bash .specify/extensions/gates/runtime/project.sh"
     # Constitution corpus presence (issue #31): the guided session needs
     # manifest.yml + fragments/ under the installed extension; 0.3.0 shipped
     # without them, which was invisible until the session died mid-flow.

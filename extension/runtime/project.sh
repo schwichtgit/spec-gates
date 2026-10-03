@@ -21,6 +21,7 @@ set -uo pipefail
 #   --no-git-hooks          skip git hook wiring
 #   --take-upstream <path>  replace one locally edited file (repeatable)
 #   --keep-local <path>     keep one locally edited file and hold it (repeatable)
+#   --add-lint-ignores      add the vendored paths to .prettierignore
 #   --allow-downgrade       accept a manifest newer than this version
 #   --skip-canary           tests only (needs GATES_TEST=1)
 #
@@ -38,7 +39,7 @@ inlist() { [[ -n "$1" ]] && printf '%s\n' "$1" | grep -qxF -- "$2"; }
 addline() { if [[ -z "$1" ]]; then printf '%s' "$2"; else printf '%s\n%s' "$1" "$2"; fi; }
 
 ARGS="$*" # for the projected copy's hand-off to the installed one
-DRY=0 CHECK=0 AGENT=1 GITHOOKS=1 DOWNGRADE=0 SKIPCANARY=0
+DRY=0 CHECK=0 AGENT=1 GITHOOKS=1 DOWNGRADE=0 SKIPCANARY=0 LINTIGN=0
 TAKE="" KEEP=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -49,6 +50,7 @@ while [[ $# -gt 0 ]]; do
         --take-upstream) [[ $# -ge 2 ]] || refuse "--take-upstream needs a path"; TAKE="$(addline "$TAKE" "$2")"; shift ;;
         --keep-local) [[ $# -ge 2 ]] || refuse "--keep-local needs a path"; KEEP="$(addline "$KEEP" "$2")"; shift ;;
         --allow-downgrade) DOWNGRADE=1 ;;
+        --add-lint-ignores) LINTIGN=1 ;;
         --skip-canary) SKIPCANARY=1 ;;
         -h | --help) sed -n '5,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) refuse "unknown option: $1 (see --help)" ;;
@@ -274,6 +276,27 @@ if [[ "$GITHOOKS" -eq 1 ]]; then
     fi
 fi
 
+# Lint scope (#73): a repo-wide prettier run reaches the vendored and
+# projected files, which upgrades overwrite, so formatting them locally is
+# lost work. Report the missing .prettierignore entries; add them only on
+# --add-lint-ignores (the file is the project's).
+LINT_MISSING=""
+PIGN="$ROOT/.prettierignore"
+uses_prettier() {
+    [[ -f "$PIGN" ]] && return 0
+    compgen -G "$ROOT/.prettierrc*" >/dev/null && return 0
+    compgen -G "$ROOT/prettier.config.*" >/dev/null && return 0
+    [[ -f "$ROOT/package.json" ]] && grep -q '"prettier"' "$ROOT/package.json" && return 0
+    return 1
+}
+if uses_prettier; then
+    for lp in .specify/gates/ .specify/extensions/ .claude/hooks/gates/; do
+        if [[ ! -f "$PIGN" ]] || ! grep -qxE "/?${lp%/}(/|/\*\*)?" "$PIGN"; then
+            LINT_MISSING="$(addline "$LINT_MISSING" "$lp")"
+        fi
+    done
+fi
+
 NEED_MAN=0
 if [[ "$GATES_MANIFEST_STATUS" != "ok" || "$GATES_MANIFEST_VERSION" != "$VERSION" ]] \
     || [[ "$(printf '%s\n' "$NEWMAN" | sort -k2)" != "$(printf '%s\n' "$GATES_MANIFEST_BODY" | sort -k2)" ]]; then
@@ -297,6 +320,7 @@ fi
 [[ -n "$HOOKPLAN" ]] && CHANGES="$(addline "$CHANGES" "$(printf '%s\n' "$HOOKPLAN" | sed 's/^/install the gates stub as git hook /')")"
 [[ -n "$VEXEC" ]] && CHANGES="$(addline "$CHANGES" "restore execute bits on $(printf '%s\n' "$VEXEC" | wc -l | tr -d ' ') vendored file(s)")"
 [[ "$NEED_MAN" -eq 1 ]] && CHANGES="$(addline "$CHANGES" "write $GATES_MANIFEST_REL")"
+[[ "$LINTIGN" -eq 1 && -n "$LINT_MISSING" ]] && CHANGES="$(addline "$CHANGES" "add $(printf '%s' "$LINT_MISSING" | tr '\n' ' ' | sed 's/ $//') to .prettierignore")"
 
 report_side() {
     if [[ -n "$NEWKEYS" ]]; then
@@ -311,6 +335,11 @@ report_side() {
     if [[ -n "$STALE" ]]; then
         say "stale holds (the held file now equals $VERSION; remove the line from $GATES_HOLDS_REL):"
         printf '%s\n' "$STALE" | sed 's/^/project:   /'
+    fi
+    if [[ -n "$LINT_MISSING" && "$LINTIGN" -eq 0 ]]; then
+        say "this repo runs prettier, and .prettierignore does not exclude (upgrades overwrite these, so local formatting is lost):"
+        printf '%s\n' "$LINT_MISSING" | sed 's/^/project:   /'
+        say "  re-run with --add-lint-ignores to append them"
     fi
     local missing
     missing="$(gates_ci_missing "$ROOT")"
@@ -375,6 +404,15 @@ if [[ -n "$HOOKPLAN" ]]; then
 fi
 if [[ -n "$KEPT" ]]; then
     printf '%s\n' "$KEPT" >>"$ROOT/$GATES_HOLDS_REL" || fail_write "$GATES_HOLDS_REL"
+fi
+if [[ "$LINTIGN" -eq 1 && -n "$LINT_MISSING" ]]; then
+    PIGN_NL=""
+    [[ -s "$PIGN" && -n "$(tail -c 1 "$PIGN")" ]] && PIGN_NL=$'\n'
+    {
+        printf '%s' "$PIGN_NL"
+        echo "# spec-gates: vendored and projected files; upgrades overwrite them."
+        printf '%s\n' "$LINT_MISSING"
+    } >>"$PIGN" || fail_write ".prettierignore"
 fi
 if [[ "$NEED_MAN" -eq 1 ]]; then
     printf '%s\n' "$NEWMAN" | grep -v '^$' | gates_manifest_write "$ROOT" "$VERSION" || fail_write "$GATES_MANIFEST_REL"

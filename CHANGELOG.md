@@ -50,6 +50,11 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
 add` forms at the agent boundary. `project.sh` lists new settings like
   this one on the first upgrade that ships them and never writes
   `policy.json`.
+- **Install hygiene** (#73). Doctor fails when a registered gates command's
+  skill is a symlink (a `--dev` install), dangles, or is missing, and flags
+  a `--dev` install and installed extension scripts without the execute
+  bit. `project.sh` reports vendored paths missing from `.prettierignore`
+  in repos that use prettier, and `--add-lint-ignores` appends them.
 - **A half-done upgrade is detected.** If `specify extension remove` ran
   but `add` did not, `bash .specify/gates/project.sh --check` says so and
   prints the command that finishes it.

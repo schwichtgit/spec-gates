@@ -228,6 +228,11 @@ e.g. `releases/download/vX.Y.Z/gates-X.Y.Z.zip`. Either way the URL must
 point at a release **asset** (a flat package with `extension.yml` at its
 root) — the repository/source archive does not install, because the
 manifest lives in `extension/` inside this repo.
+Don't install with `specify extension add --dev`: it is for developing
+spec-gates itself. It renders the `/speckit.gates.*` skills as symlinks
+into `.specify/extensions/gates/.specify-dev/`, which exists only on that
+machine, so in any other clone or CI checkout the commands do not load.
+`/speckit.gates.doctor` fails on such symlinks.
 Spec Kit's community catalog is discovery-only (`install_allowed: false`),
 so `--from <url>` is the install path even after `gates` is listed there;
 catalog listing buys discoverability, not a bare `specify extension add gates`.

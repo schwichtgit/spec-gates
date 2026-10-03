@@ -203,11 +203,11 @@ split (research R7–R9).
 
 **Independent Test**: quickstart US5.
 
-- [ ] T036 [US5] Extend `extension/runtime/doctor.sh` install section (sourcing `lib/install-state.sh`): for each `registered_commands.claude[]` map `speckit.gates.x` → `.claude/skills/speckit-gates-x/SKILL.md`; symlink or non-file → fail with the reinstall-from-release hint; `dev` state → warn; vendored script or git hook without exec bit → fail
-- [ ] T037 [US5] `project.sh` warns on a `dev` install (FR-018); report missing `.prettierignore`/markdownlint ignores for projected paths and append them only with `--add-lint-ignores`
-- [ ] T038 [P] [US5] `tests/test-package.sh`: the release-shaped tree passes default `prettier --check` (skip with a visible notice only when prettier is absent and not policy-enabled)
-- [ ] T039 [US5] Tests in `tests/test-doctor.sh`: symlinked skill → fail; dangling → fail; regular files → pass; `.specify-dev/` → warning; vendored hook 644 → fail; mutation-check
-- [ ] T040 [P] [US5] README: `--dev` is for developing spec-gates only, with the symptom (dangling skills in fresh clones)
+- [x] T036 [US5] Extend `extension/runtime/doctor.sh` install section (sourcing `lib/install-state.sh`): for each `registered_commands.claude[]` map `speckit.gates.x` → `.claude/skills/speckit-gates-x/SKILL.md`; symlink or non-file → fail with the reinstall-from-release hint (a `.claude/commands/<name>.md` file also counts as installed); `dev` state → warn; vendored script or git hook without exec bit → recommendation (as built: nothing runs the vendored copy and `project.sh` restores the bit)
+- [x] T037 [US5] `project.sh` warns on a `dev` install (FR-018); report missing `.prettierignore`/markdownlint ignores for projected paths and append them only with `--add-lint-ignores`
+- [x] T038 [P] [US5] `tests/test-package.sh`: the release-shaped tree passes default `prettier --check` (as built: this check already existed in `test-package.sh`)
+- [x] T039 [US5] Tests in `tests/test-doctor.sh`: symlinked skill → fail; dangling → fail; regular files → pass; `.specify-dev/` → warning; vendored hook 644 → fail; mutation-check
+- [x] T040 [P] [US5] README: `--dev` is for developing spec-gates only, with the symptom (dangling skills in fresh clones)
 
   ```accept
   # verifies: FR-017
@@ -215,6 +215,8 @@ split (research R7–R9).
   . tests/lib/fixture.sh
   d="$(fx_project)"; trap 'fx_cleanup "$d"' EXIT
   (cd "$d" && GATES_TEST=1 bash .specify/extensions/gates/runtime/project.sh --skip-canary >/dev/null) || true
+  jq '.extensions.gates.registered_commands.claude = ["speckit.gates.doctor"]' "$d/.specify/extensions/.registry" >"$d/r.json"
+  mv "$d/r.json" "$d/.specify/extensions/.registry"
   mkdir -p "$d/.claude/skills/speckit-gates-doctor"
   ln -sf /nonexistent "$d/.claude/skills/speckit-gates-doctor/SKILL.md"
   ! (cd "$d" && bash .specify/extensions/gates/runtime/doctor.sh --installed-only >/dev/null 2>&1)
