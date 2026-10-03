@@ -607,6 +607,33 @@ has "a marker outside Core Principles fails" "$DK" "[MISSING] constitution.md:6:
 has "a missing Core Principles section is named" "$DK" "has no '## Core Principles' section"
 
 echo ""
+echo "=== install hygiene (#73) ==="
+IH="$(fx_project)"
+(cd "$IH" && GATES_TEST=1 bash .specify/extensions/gates/runtime/project.sh --skip-canary >/dev/null 2>&1)
+jq '.extensions.gates.registered_commands.claude = ["speckit.gates.doctor", "speckit.gates.init", "speckit.gates.verify", "speckit.gates.ci"]' \
+    "$IH/.specify/extensions/.registry" >"$IH/reg.tmp" && mv "$IH/reg.tmp" "$IH/.specify/extensions/.registry"
+mkdir -p "$IH/.claude/skills/speckit-gates-doctor" "$IH/.claude/commands" "$IH/elsewhere"
+printf 'skill\n' >"$IH/.claude/skills/speckit-gates-doctor/SKILL.md"
+printf 'command\n' >"$IH/.claude/commands/speckit.gates.init.md"
+printf 'real\n' >"$IH/elsewhere/SKILL.md"
+mkdir -p "$IH/.claude/skills/speckit-gates-verify"
+ln -s "$IH/elsewhere/SKILL.md" "$IH/.claude/skills/speckit-gates-verify/SKILL.md"
+ln -s "$IH/elsewhere/missing-dir" "$IH/.claude/skills/speckit-gates-ci"
+run_doctor "$IH" >/dev/null
+has "regular skill and command files pass" "$IH" "[ok]  2 registered gates command(s) installed as regular files"
+has "a symlinked skill fails" "$IH" "[MISSING] speckit.gates.verify is a symlink"
+has "a dangling skill fails" "$IH" "[MISSING] speckit.gates.ci is a dangling symlink"
+jq '.extensions.gates.registered_commands.claude += ["speckit.gates.sync"]' \
+    "$IH/.specify/extensions/.registry" >"$IH/reg.tmp" && mv "$IH/reg.tmp" "$IH/.specify/extensions/.registry"
+run_doctor "$IH" >/dev/null
+has "a registered command with no file fails" "$IH" "[MISSING] speckit.gates.sync is registered but has no skill or command file"
+mkdir -p "$IH/.specify/extensions/gates/.specify-dev"
+chmod 644 "$IH/.specify/extensions/gates/runtime/hooks/git/pre-commit"
+run_doctor "$IH" >/dev/null
+has "a --dev install is flagged" "$IH" "[rec] this is a --dev install"
+has "vendored scripts without +x are flagged" "$IH" "1 installed extension script(s) lack the execute bit"
+fx_cleanup "$IH"
+echo ""
 [[ "$SKIPPED" -gt 0 ]] && echo "$SKIPPED healthy-fixture case(s) skipped: this host lacks tools doctor requires."
 echo "$PASS of $TOTAL tests passed."
 [[ "$FAIL" -gt 0 ]] && exit 1

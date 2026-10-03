@@ -86,13 +86,13 @@ A `###` heading is a principle only under `## Core Principles`. A
 
 ## doctor additions
 
-| Check                                      | Severity |
-| ------------------------------------------ | -------- |
-| registered gates skill symlinked/missing   | fail     |
-| `.specify-dev/` present                    | warn     |
-| vendored script without exec bit           | fail     |
-| stale hold                                 | fail     |
-| CI step missing, not acknowledged          | fail     |
-| git probe marker absent                    | fail     |
-| install state `removed` / `mismatch`       | fail     |
-| `--installed-only`: skips runtime sections | —        |
+| Check                                      | Severity                                                       |
+| ------------------------------------------ | -------------------------------------------------------------- |
+| registered gates skill symlinked/missing   | fail                                                           |
+| `.specify-dev/` present                    | warn                                                           |
+| vendored script without exec bit           | rec (nothing runs the vendored copy; `project.sh` restores it) |
+| stale hold                                 | fail                                                           |
+| CI step missing, not acknowledged          | fail                                                           |
+| git probe marker absent                    | fail                                                           |
+| install state `removed` / `mismatch`       | fail                                                           |
+| `--installed-only`: skips runtime sections | —                                                              |
