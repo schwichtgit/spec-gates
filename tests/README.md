@@ -53,3 +53,18 @@ the hooks execute under macOS `/bin/bash`.
   unchecked task (SC-002), naming both; timeout and mutation detection
   (never auto-reverted); `severity`/`include`/`exclude`/`enabled` policy
   knobs; the `GATES_SPEC_EXEC` recursion guard.
+- `test-manifest.sh` — the projection libraries: sha256 tool fallback
+  (none available fails closed), version order, the projection table
+  (never lists `policy.json` or `hooks.local.d/`), manifest validation
+  and round trip, holds, per-file classification
+  (absent/upstream/pristine/edited/held), and the install states
+  (installed/dev/dormant/removed/mismatch/absent).
+- `test-project.sh` — `project.sh` end to end in fixture projects: a
+  fresh projection writes every table entry with execute bits, a valid
+  manifest and the git stubs; a second run changes nothing; the settings
+  merge keeps user entries; vendored modes change only for the two git
+  hooks; a local edit stops the run (exit 3) until `--keep-local` or
+  `--take-upstream`; refusals before writing (no policy, registry
+  mismatch, corrupt or newer manifest); the half-done remove+add; foreign
+  and `core.hooksPath` hooks left alone; and the canary proof failing on
+  a broken hook.

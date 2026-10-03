@@ -339,7 +339,7 @@ as they grow hook APIs.
 
 ```bash
 npm ci              # pinned prettier + markdownlint-cli2
-bash tests/run.sh   # 12 suites: parity, gate, hooks, policy, doctor, canary, attest, spec-gate, contract, constitution, package, pr-check
+bash tests/run.sh   # 14 suites: parity, gate, hooks, policy, doctor, canary, attest, spec-gate, contract, constitution, package, pr-check, manifest, project
 ```
 
 The repo gates itself: `.github/workflows/ci.yml` projects the runtime and

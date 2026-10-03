@@ -37,6 +37,7 @@ refuse() { # <message...>: exit 2 before anything is written
 inlist() { [[ -n "$1" ]] && printf '%s\n' "$1" | grep -qxF -- "$2"; }
 addline() { if [[ -z "$1" ]]; then printf '%s' "$2"; else printf '%s\n%s' "$1" "$2"; fi; }
 
+ARGS="$*" # for the projected copy's hand-off to the installed one
 DRY=0 CHECK=0 AGENT=1 GITHOOKS=1 DOWNGRADE=0 SKIPCANARY=0
 TAKE="" KEEP=""
 while [[ $# -gt 0 ]]; do
@@ -62,7 +63,7 @@ SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 [[ -d "$ROOT/.specify" ]] || refuse "$ROOT is not a Spec Kit project (no .specify/); run specify init first"
 VEND="$ROOT/.specify/extensions/gates/runtime"
-REL_ADD='specify extension add gates --from https://github.com/schwichtgit/spec-gates/releases/latest/download/gates.zip'
+REL_ADD='specify extension add gates --from <the versioned release URL you verified> (README "Upgrade")'
 
 for t in jq cmp; do
     command -v "$t" >/dev/null 2>&1 || refuse "$t not found; install it and re-run"
@@ -93,7 +94,9 @@ if [[ "$SRC" -ef "$ROOT/.specify/gates" ]]; then
     esac
     [[ -f "$VEND/project.sh" ]] || refuse "the installed extension has no project.sh (older than 0.4.0?). Upgrade it: $REL_ADD"
     if [[ "$CHECK" -eq 1 ]]; then
-        exec bash "$VEND/project.sh" --check
+        # Same flags, so a --no-agent-hooks project is checked as one.
+        # shellcheck disable=SC2086  # the original options, split as typed
+        exec bash "$VEND/project.sh" $ARGS
     fi
     refuse "run the installed copy, not the projected one: bash .specify/extensions/gates/runtime/project.sh"
 fi

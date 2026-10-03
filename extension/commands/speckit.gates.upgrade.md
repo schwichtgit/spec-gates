@@ -30,8 +30,8 @@ through it in order and STOP at the first failure.
    proxy that rewrites `.sha256` URLs, `sha256sum -c --ignore-missing
 SHA256SUMS`) and `cosign verify-blob` with the identity and issuer
    from the README. Either check failing ends the upgrade. If cosign is
-   not installed, say so and ask whether to continue on the checksum
-   alone; never skip silently.
+   not installed, stop and have the user install it: the upgrade never
+   continues with a release whose signature was not checked.
 3. **Swap the extension**:
    `specify extension remove gates --keep-config --force`, then
    `specify extension add gates --from <the same versioned URL>`. These

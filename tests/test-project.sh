@@ -89,6 +89,19 @@ ok "settings carry the protect-files hook" jq -e '[.hooks.PreToolUse[].hooks[].c
 ok "policy.json untouched" grep -qx '{ "hooks": {} }' "$D/.specify/gates/policy.json"
 
 echo ""
+echo "=== vendored modes ==="
+# The fixture has the modes Spec Kit's extraction produces: every *.sh
+# executable, the two extension-less git hooks not. Projection may fix
+# those two and must change no other mode in the vendored copy.
+fixture
+vmodes() { (cd "$D/.specify/extensions/gates" && find . -type f -print | LC_ALL=C sort \
+    | while IFS= read -r p; do [[ -x "$p" ]] && echo "x $p" || echo "- $p"; done); }
+before="$(vmodes)"
+rc_is "projection for the mode check" 0 "$D" --skip-canary
+changed="$({ diff <(printf '%s\n' "$before") <(vmodes) || true; } | { grep '^>' || true; } | sed 's/^> x //' | LC_ALL=C sort | tr '\n' ' ')"
+ok "only the two git hooks changed mode" test "$changed" = "./runtime/hooks/git/commit-msg ./runtime/hooks/git/pre-commit "
+
+echo ""
 echo "=== idempotence ==="
 before="$(treehash "$D")"
 rc_is "second run exits 0" 0 "$D" --skip-canary
@@ -112,6 +125,9 @@ fixture
 rc_is "--no-agent-hooks" 0 "$D" --skip-canary --no-agent-hooks
 ok "--no-agent-hooks writes no agent hooks" test ! -e "$D/.claude/hooks/gates"
 ok "--no-agent-hooks leaves settings alone" test ! -e "$D/.claude/settings.json"
+
+OUT="$(cd "$D" && bash .specify/gates/project.sh --check --no-agent-hooks 2>&1)" && rc=0 || rc=$?
+ok "projected copy --check keeps the caller's flags" test "$rc" -eq 0
 
 echo ""
 echo "=== local edits ==="
