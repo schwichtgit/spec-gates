@@ -38,3 +38,4 @@ node_modules/
 
 # Coverage reports (scripts/coverage.sh): local run output, never source.
 coverage/
+__pycache__/
