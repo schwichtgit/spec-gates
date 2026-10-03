@@ -93,6 +93,18 @@ Record the projected runtime version in
 `.specify/gates/.runtime-version` (read it from the extension's
 `extension.yml`).
 
+Ensure `.specify/gates/.gitignore` lists `attestations.jsonl`: create the
+file with that line, or append the line if the file exists without it.
+The attestation log is disposable run evidence, and writing the entry now
+puts it in the same commit as the projected runtime. Otherwise the first
+gate run, which happens during that commit's pre-commit hook, creates the
+file afterwards and leaves the tree dirty.
+
+```sh
+grep -qxF attestations.jsonl .specify/gates/.gitignore 2>/dev/null \
+  || echo attestations.jsonl >>.specify/gates/.gitignore
+```
+
 ### 3b. Seed the pinned linter toolchain
 
 If the approved policy enables node-resolved linters (prettier and/or

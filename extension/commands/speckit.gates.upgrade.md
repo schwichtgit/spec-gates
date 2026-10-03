@@ -32,6 +32,11 @@ needed when a policy already exists — this command is the whole bump.
 - After projecting, EXPLICITLY `chmod +x` every projected script and git
   hook (same rule as init: zip-based installs drop execute bits, and git
   silently skips a non-executable hook).
+- Ensure `.specify/gates/.gitignore` lists `attestations.jsonl` (same
+  one-liner as init step 3), so the entry lands in the upgrade commit
+  instead of appearing as an untracked file after it. The runtime writes
+  the entry on its first gate run otherwise, which is during that commit's
+  pre-commit hook.
 - Update `.specify/gates/.runtime-version` and re-run the init self-test
   (step 6 of /speckit.gates.init, including the git-boundary probe) to
   prove enforcement still works.
