@@ -28,7 +28,7 @@ fail() {
 }
 
 WORKDIR=""
-trap '[[ -n "$WORKDIR" && -d "$WORKDIR" ]] && rm -rf "$WORKDIR"' EXIT
+trap '[[ -n "${GATES_KEEP_TMP:-}" ]] || { [[ -n "$WORKDIR" && -d "$WORKDIR" ]] && rm -rf "$WORKDIR"; }' EXIT
 
 WORKDIR="$(mktemp -d 2>/dev/null || mktemp -d -t 'gates-policy')"
 
