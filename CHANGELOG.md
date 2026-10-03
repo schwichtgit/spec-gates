@@ -62,6 +62,14 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   (the gates call-through in `.husky/<hook>`, `lefthook.yml` or
   `.pre-commit-config.yaml`) instead of being run, because running it would
   also run that tool's steps; `--probe-git` runs the full chain on request.
+- **Hook-manager adapters** (#74). With husky, lefthook or the pre-commit
+  framework, `project.sh` adds the gates entry to that tool's own
+  configuration (`.husky/<hook>`, a `lefthook.yml` block, a `repo: local`
+  item in `.pre-commit-config.yaml`) with `--wire-manager`, and only where
+  the append is certainly valid; otherwise it prints the entry. It never
+  edits the files those tools generate. Before 0.4.0, init appended a
+  call-through to whatever file sat in the hooks directory, which the next
+  `husky`, `lefthook install` or `pre-commit install` overwrote.
 - **`doctor --installed-only`** (#74) checks the installed extension alone,
   for an install with nothing projected yet. Doctor also fails on a
   half-done upgrade (extension removed, runtime still projected) and on a

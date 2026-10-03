@@ -70,9 +70,12 @@ SHA256SUMS`) and `cosign verify-blob` with the identity and issuer
    agent hook settings merge, the git hook stubs (an older copied gates
    hook is migrated to the stub), and `.specify/gates/.projected.sha256`.
    It ends by running the canary suite.
-8. **Report** what `project.sh` printed: files written, holds, any git
-   hook another tool owns (print the call-through line it gives you and
-   tell the user to add it there), and the canary result.
+8. **Report** what `project.sh` printed: files written, holds, the
+   canary result, and any git hook another tool owns. For husky,
+   lefthook or the pre-commit framework, offer `--wire-manager` (it
+   appends the gates entry to that tool's own file) as in
+   `/speckit.gates.init` step 3; for any other owner, give the user the
+   call-through line.
 
 ## Rules
 

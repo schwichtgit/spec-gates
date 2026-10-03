@@ -357,6 +357,27 @@ Two settings in `.specify/gates/policy.json` cover the most common cases:
   `secret` or `token` (`test_no_secret_leak.py`) gets an "ask" instead,
   so you confirm the edit.
 
+## Coexisting with other hook managers
+
+When another tool owns the git hooks, gates adds its entry to that tool's
+own configuration, never to the files the tool generates (the next
+`husky`, `lefthook install` or `pre-commit install` would silently drop
+it). `project.sh` prints the entry; `--wire-manager` appends it:
+
+| Owner                                                     | Where the gates entry goes                        | Notes                                                                                                                                                                  |
+| --------------------------------------------------------- | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| husky (`core.hooksPath` under `.husky/`)                  | a line in `.husky/<hook>`                         | The script is created if missing; your existing lines stay first.                                                                                                      |
+| lefthook                                                  | a `<hook>:` block in `lefthook.yml`               | Appended only when that hook has no block yet; otherwise printed for you to merge. Run `lefthook install` if git does not run lefthook for that hook yet.              |
+| pre-commit framework                                      | a `repo: local` item in `.pre-commit-config.yaml` | Appended only when `repos:` is the last top-level key; otherwise printed. Needs pre-commit 3.2+; run `pre-commit install --hook-type commit-msg` for the message hook. |
+| anything else (another `core.hooksPath`, a custom script) | nothing is written                                | `project.sh` prints the call-through line to add.                                                                                                                      |
+
+Doctor checks such hooks statically: it looks for the gates call-through in
+the file the tool reads, and does not run the hook, since that would run
+the tool's own steps too (husky's default is `npm test`).
+`doctor --probe-git` runs the full chain when you want proof. A hook gates
+installs itself (the stub) is always run with a probe signal, because only
+gates code executes there.
+
 ## Commit and PR message rules
 
 `commit-msg` and the PR checks (the agent's PR hook and `pr-check.sh` in

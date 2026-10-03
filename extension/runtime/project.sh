@@ -23,6 +23,9 @@ set -uo pipefail
 #   --keep-local <path>     keep one locally edited file and hold it (repeatable)
 #   --add-lint-ignores      add the vendored paths to .prettierignore
 #   --probe-git             also run git hooks another tool owns in the proof
+#   --wire-manager          add the gates entry to the hook manager's own
+#                           config (.husky/<hook>, lefthook.yml,
+#                           .pre-commit-config.yaml)
 #   --allow-downgrade       accept a manifest newer than this version
 #   --skip-canary           tests only (needs GATES_TEST=1)
 #
@@ -40,7 +43,7 @@ inlist() { [[ -n "$1" ]] && printf '%s\n' "$1" | grep -qxF -- "$2"; }
 addline() { if [[ -z "$1" ]]; then printf '%s' "$2"; else printf '%s\n%s' "$1" "$2"; fi; }
 
 ARGS="$*" # for the projected copy's hand-off to the installed one
-DRY=0 CHECK=0 AGENT=1 GITHOOKS=1 DOWNGRADE=0 SKIPCANARY=0 LINTIGN=0 PROBEGIT=0
+DRY=0 CHECK=0 AGENT=1 GITHOOKS=1 DOWNGRADE=0 SKIPCANARY=0 LINTIGN=0 PROBEGIT=0 WIREMGR=0
 TAKE="" KEEP=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -53,6 +56,7 @@ while [[ $# -gt 0 ]]; do
         --allow-downgrade) DOWNGRADE=1 ;;
         --add-lint-ignores) LINTIGN=1 ;;
         --probe-git) PROBEGIT=1 ;;
+        --wire-manager) WIREMGR=1 ;;
         --skip-canary) SKIPCANARY=1 ;;
         -h | --help) sed -n '5,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) refuse "unknown option: $1 (see --help)" ;;
@@ -248,9 +252,12 @@ if [[ "$AGENT" -eq 1 ]]; then
     fi
 fi
 
-# Git boundary plan: the stub goes into the hooks directory git reads,
-# unless another tool owns it.
-HOOKPLAN="" FOREIGN="" GITNOTE=""
+# Git boundary plan (#74): with no hook manager, the stub goes into the
+# hooks directory git reads. A hook manager (husky, lefthook, the
+# pre-commit framework) gets the gates entry in its own configuration --
+# never in the files it generates -- and only with --wire-manager.
+# Anything else that owns the hooks gets the call-through printed.
+HOOKPLAN="" FOREIGN="" GITNOTE="" MANAGER="" MGRPLAN="" MGRMANUAL="" MGRDONE=""
 STUB="$SRC/hooks/git/stub.sh"
 if [[ "$GITHOOKS" -eq 1 ]]; then
     if ! command -v git >/dev/null 2>&1 || ! git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -258,14 +265,14 @@ if [[ "$GITHOOKS" -eq 1 ]]; then
     else
         HOOKSDIR="$(cd "$ROOT" && git rev-parse --git-path hooks)"
         [[ "$HOOKSDIR" == /* ]] || HOOKSDIR="$ROOT/$HOOKSDIR"
-        HOOKSPATH_SET="$(git -C "$ROOT" config core.hooksPath 2>/dev/null || true)"
+        MANAGER="$(gates_detect_manager "$ROOT")"
         for n in pre-commit commit-msg; do
             f="$HOOKSDIR/$n"
-            if [[ -n "$HOOKSPATH_SET" ]]; then
-                # Another tool configured core.hooksPath; its files are not
-                # ours to write (adapters land with #74).
+            if [[ "$MANAGER" == "husky" || "$MANAGER" == "lefthook" || "$MANAGER" == "pre-commit" ]]; then
+                gates_manager_wired "$ROOT" "$MANAGER" "$n" || MGRPLAN="$(addline "$MGRPLAN" "$n")"
+            elif [[ "$MANAGER" == "unknown" ]]; then
                 if [[ ! -f "$f" ]] || ! grep -qF ".specify/gates/hooks/$n" "$f"; then
-                    FOREIGN="$(addline "$FOREIGN" "$n")"
+                    grep -qs 'spec-gates hook stub' "$f" || FOREIGN="$(addline "$FOREIGN" "$n")"
                 fi
             elif [[ ! -e "$f" ]] || cmp -s "$STUB" "$f"; then
                 { [[ -e "$f" ]] && [[ -x "$f" ]]; } || HOOKPLAN="$(addline "$HOOKPLAN" "$n")"
@@ -322,6 +329,11 @@ fi
 [[ -n "$HOOKPLAN" ]] && CHANGES="$(addline "$CHANGES" "$(printf '%s\n' "$HOOKPLAN" | sed 's/^/install the gates stub as git hook /')")"
 [[ -n "$VEXEC" ]] && CHANGES="$(addline "$CHANGES" "restore execute bits on $(printf '%s\n' "$VEXEC" | wc -l | tr -d ' ') vendored file(s)")"
 [[ "$NEED_MAN" -eq 1 ]] && CHANGES="$(addline "$CHANGES" "write $GATES_MANIFEST_REL")"
+if [[ "$WIREMGR" -eq 1 && -n "$MGRPLAN" ]]; then
+    for n in $MGRPLAN; do
+        CHANGES="$(addline "$CHANGES" "add the gates $n entry to $(gates_manager_file "$ROOT" "$MANAGER" "$n") ($MANAGER)")"
+    done
+fi
 [[ "$LINTIGN" -eq 1 && -n "$LINT_MISSING" ]] && CHANGES="$(addline "$CHANGES" "add $(printf '%s' "$LINT_MISSING" | tr '\n' ' ' | sed 's/ $//') to .prettierignore")"
 
 report_side() {
@@ -351,9 +363,28 @@ report_side() {
         say "  add them from .specify/extensions/gates/ci/, or record a deliberate omission as ci:<step> in $GATES_HOLDS_REL"
     fi
     [[ -n "$GITNOTE" ]] && say "$GITNOTE"
+    local n mf
+    if [[ "$WIREMGR" -eq 0 && -n "$MGRPLAN" ]]; then
+        say "$MANAGER owns the git hooks and does not run gates for: $(printf '%s' "$MGRPLAN" | tr '\n' ' ')"
+        for n in $MGRPLAN; do
+            mf="$(gates_manager_file "$ROOT" "$MANAGER" "$n")"
+            say "  $n: add to $mf (or re-run with --wire-manager to append it):"
+            gates_manager_entry "$MANAGER" "$n" | sed 's/^/project:     /'
+        done
+    fi
+    if [[ -n "$MGRMANUAL" ]]; then
+        for n in $MGRMANUAL; do
+            mf="$(gates_manager_file "$ROOT" "$MANAGER" "$n")"
+            say "  $n: $mf cannot be appended to safely (tabs, an existing $n key, or repos: not the last key); add this by hand:"
+            gates_manager_entry "$MANAGER" "$n" | sed 's/^/project:     /'
+        done
+    fi
+    for n in $MGRDONE; do
+        [[ -e "$HOOKSDIR/$n" ]] && continue
+        say "  $n: added to $(gates_manager_file "$ROOT" "$MANAGER" "$n"); now run \`$(gates_manager_install_hint "$MANAGER" "$n")\` so git runs $MANAGER for $n"
+    done
     if [[ -n "$FOREIGN" ]]; then
         say "another tool owns these git hooks, so they were not touched:"
-        local n
         for n in $FOREIGN; do
             say "  $n: add this line to it to run the gates hook:"
             say "    bash \"\$(git rev-parse --show-toplevel)/.specify/gates/hooks/$n\" \"\$@\" || exit \$?"
@@ -372,7 +403,7 @@ if [[ "$DRY" -eq 1 ]]; then
     fi
     report_side
     # An unwired git hook is pending work too, even when no file changes.
-    if [[ "$CHECK" -eq 1 ]] && [[ -n "$CHANGES" || -n "$FOREIGN" ]]; then exit 1; fi
+    if [[ "$CHECK" -eq 1 ]] && [[ -n "$CHANGES" || -n "$FOREIGN" || -n "$MGRPLAN" ]]; then exit 1; fi
     exit 0
 fi
 
@@ -407,6 +438,15 @@ fi
 if [[ -n "$KEPT" ]]; then
     printf '%s\n' "$KEPT" >>"$ROOT/$GATES_HOLDS_REL" || fail_write "$GATES_HOLDS_REL"
 fi
+if [[ "$WIREMGR" -eq 1 && -n "$MGRPLAN" ]]; then
+    for n in $MGRPLAN; do
+        if gates_manager_apply "$ROOT" "$MANAGER" "$n"; then
+            MGRDONE="$(addline "$MGRDONE" "$n")"
+        else
+            MGRMANUAL="$(addline "$MGRMANUAL" "$n")"
+        fi
+    done
+fi
 if [[ "$LINTIGN" -eq 1 && -n "$LINT_MISSING" ]]; then
     PIGN_NL=""
     [[ -s "$PIGN" && -n "$(tail -c 1 "$PIGN")" ]] && PIGN_NL=$'\n'
@@ -440,7 +480,10 @@ fi
 # The git boundary (#74): a hook gates owns is run with GATES_PROBE=1 and
 # must answer the marker; a hook another tool owns is read, not run (its
 # own steps would run too), unless --probe-git asks for the full chain.
-if [[ "$GITHOOKS" -eq 1 && -z "$GITNOTE" && -z "$FOREIGN" ]]; then
+# Entries not (yet) in the manager's config leave the boundary unwired.
+MGRPENDING="$MGRMANUAL"
+[[ "$WIREMGR" -eq 0 ]] && MGRPENDING="$MGRPLAN"
+if [[ "$GITHOOKS" -eq 1 && -z "$GITNOTE" && -z "$FOREIGN" && -z "$MGRPENDING" ]]; then
     for n in pre-commit commit-msg; do
         if gates_git_check "$ROOT" "$n" "$PROBEGIT"; then
             if [[ "$GATES_CHECK_KIND" == "probe" ]]; then
@@ -454,5 +497,5 @@ if [[ "$GITHOOKS" -eq 1 && -z "$GITNOTE" && -z "$FOREIGN" ]]; then
         fi
     done
 fi
-[[ -n "$FOREIGN" ]] && RC=1
+[[ -n "$FOREIGN" || -n "$MGRPENDING" ]] && RC=1
 exit "$RC"
