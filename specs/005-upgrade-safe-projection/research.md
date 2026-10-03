@@ -229,6 +229,16 @@ hook key is absent, otherwise the snippet is printed and the script exits
 
 1. An unknown manager always gets the printed call-through and exit 1.
 
+**Revised 2026-10-03 (Frank):** running a hook another tool owns runs that
+tool's steps too: husky executes the user script with `sh -e` (its default
+`.husky/pre-commit` is `npm test`, verified in a sandbox), lefthook every
+configured command. That has side effects, and a failing earlier step
+hides the gates line, which reads as "not wired". So the probe runs
+automatically only when gates owns the hook (the stub or a copied gates
+hook, where only gates code runs). A hook another tool owns gets a static
+check (the gates call-through in the hook or the manager's user-owned
+config); `--probe-git` runs the full chain on request.
+
 Probe: the projected `pre-commit` and `commit-msg` honor `GATES_PROBE=1`
 by printing `gates-probe:<name>:<runtime-version>` and exiting 1. This
 happens before any policy read, so the probe works with every rule turned

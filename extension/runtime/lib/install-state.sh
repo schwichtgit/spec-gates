@@ -10,11 +10,17 @@
 #              present, versions agree
 #   dev        installed with `specify extension add --dev` (.specify-dev/)
 #   dormant    installed, but .specify/gates/ has not been projected
-#   removed    .specify/gates/ is projected, but the extension is gone
-#              (`extension remove` without the matching `add`)
+#   removed    .specify/gates/ was projected by init or project.sh, but
+#              the extension is gone (`extension remove` without the
+#              matching `add`)
 #   mismatch   registry and vendored copy disagree, or only one of them
 #              exists
 #   absent     nothing installed, nothing projected
+#
+# "Projected" means a projection marker exists (.runtime-version, written by
+# init and project.sh, or .projected.sha256). A runtime copied in by hand
+# or by CI -- this repository runs its own gates that way -- carries no
+# marker and is not an install, so it never reads as "removed".
 #
 # `installed` and `dev` can coexist with `dormant`; dormant wins only for a
 # regular install, so a dev install is always reported as dev.
@@ -29,7 +35,7 @@ gates_install_state() { # <project-root>
     local vend="$root/.specify/extensions/gates"
     local reg="$root/.specify/extensions/.registry"
     local reg_version="" vend_version="" projected=0
-    [[ -f "$root/.specify/gates/verify.sh" || -f "$root/.specify/gates/.runtime-version" ]] \
+    [[ -f "$root/.specify/gates/.runtime-version" || -f "$root/.specify/gates/.projected.sha256" ]] \
         && projected=1
     if [[ -f "$reg" ]] && command -v jq >/dev/null 2>&1; then
         reg_version="$(jq -r '.extensions.gates.version // empty' "$reg" 2>/dev/null || true)"

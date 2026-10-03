@@ -785,6 +785,21 @@ check "rule commit with the trailers passes" 0 bash -c "cd '$PR95' && git commit
 printf 'chore: drop the rule\n' >"$PTM"
 check "deleting a rule without a trailer is refused" 1 bash -c "cd '$PR95' && git commit -q -F '$PTM'"
 
+# ===========================================================================
+# Part H: the behavioral git probe (#74)
+# ===========================================================================
+echo ""
+echo "=== GATES_PROBE marker in the git hooks (#74) ==="
+GP="$WORKDIR/probe74"
+project_runtime "$GP" "true"
+printf '%s' '{ "hooks": {}, "git": { "block_main_commits": false, "conventional_commits": false, "forbid_ai_isms": false } }' \
+    >"$GP/.specify/gates/policy.json"
+printf '0.4.0\n' >"$GP/.specify/gates/.runtime-version"
+for h in pre-commit commit-msg; do
+    check "$h answers the probe with every rule off" 0 bash -c "cd '$GP' && out=\$(GATES_PROBE=1 '$GITHOOKS/$h' '$MSGF' 2>&1); rc=\$?; [[ \$rc -eq 1 ]] && grep -qx 'gates-probe:$h:0.4.0' <<<\"\$out\""
+done
+check "without GATES_PROBE the hook runs normally" 0 bash -c "cd '$GP' && printf 'anything\n' >'$MSGF' && '$GITHOOKS/commit-msg' '$MSGF'"
+
 # --- Summary ---
 echo ""
 echo "$PASS of $TOTAL tests passed."

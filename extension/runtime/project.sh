@@ -22,6 +22,7 @@ set -uo pipefail
 #   --take-upstream <path>  replace one locally edited file (repeatable)
 #   --keep-local <path>     keep one locally edited file and hold it (repeatable)
 #   --add-lint-ignores      add the vendored paths to .prettierignore
+#   --probe-git             also run git hooks another tool owns in the proof
 #   --allow-downgrade       accept a manifest newer than this version
 #   --skip-canary           tests only (needs GATES_TEST=1)
 #
@@ -39,7 +40,7 @@ inlist() { [[ -n "$1" ]] && printf '%s\n' "$1" | grep -qxF -- "$2"; }
 addline() { if [[ -z "$1" ]]; then printf '%s' "$2"; else printf '%s\n%s' "$1" "$2"; fi; }
 
 ARGS="$*" # for the projected copy's hand-off to the installed one
-DRY=0 CHECK=0 AGENT=1 GITHOOKS=1 DOWNGRADE=0 SKIPCANARY=0 LINTIGN=0
+DRY=0 CHECK=0 AGENT=1 GITHOOKS=1 DOWNGRADE=0 SKIPCANARY=0 LINTIGN=0 PROBEGIT=0
 TAKE="" KEEP=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -51,6 +52,7 @@ while [[ $# -gt 0 ]]; do
         --keep-local) [[ $# -ge 2 ]] || refuse "--keep-local needs a path"; KEEP="$(addline "$KEEP" "$2")"; shift ;;
         --allow-downgrade) DOWNGRADE=1 ;;
         --add-lint-ignores) LINTIGN=1 ;;
+        --probe-git) PROBEGIT=1 ;;
         --skip-canary) SKIPCANARY=1 ;;
         -h | --help) sed -n '5,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) refuse "unknown option: $1 (see --help)" ;;
@@ -70,7 +72,7 @@ REL_ADD='specify extension add gates --from <the versioned release URL you verif
 for t in jq cmp; do
     command -v "$t" >/dev/null 2>&1 || refuse "$t not found; install it and re-run"
 done
-for l in manifest.sh install-state.sh; do
+for l in manifest.sh install-state.sh managers.sh; do
     [[ -f "$SRC/lib/$l" ]] || refuse "runtime library $SRC/lib/$l is missing; reinstall the extension"
     # shellcheck source=/dev/null disable=SC1090,SC1091
     source "$SRC/lib/$l"
@@ -434,6 +436,23 @@ if [[ "$SKIPCANARY" -eq 0 ]]; then
         say "FAILED: a canary was accepted or could not run; see above. Run /speckit.gates.doctor." >&2
         RC=1
     fi
+fi
+# The git boundary (#74): a hook gates owns is run with GATES_PROBE=1 and
+# must answer the marker; a hook another tool owns is read, not run (its
+# own steps would run too), unless --probe-git asks for the full chain.
+if [[ "$GITHOOKS" -eq 1 && -z "$GITNOTE" && -z "$FOREIGN" ]]; then
+    for n in pre-commit commit-msg; do
+        if gates_git_check "$ROOT" "$n" "$PROBEGIT"; then
+            if [[ "$GATES_CHECK_KIND" == "probe" ]]; then
+                say "git probe: $n reaches the gates hook"
+            else
+                say "git check (static): another tool owns $n and calls the gates hook"
+            fi
+        else
+            say "FAILED: git $GATES_CHECK_KIND: $GATES_PROBE_MSG" >&2
+            RC=1
+        fi
+    done
 fi
 [[ -n "$FOREIGN" ]] && RC=1
 exit "$RC"

@@ -55,12 +55,27 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   a `--dev` install and installed extension scripts without the execute
   bit. `project.sh` reports vendored paths missing from `.prettierignore`
   in repos that use prettier, and `--add-lint-ignores` appends them.
+- **The git boundary is proven, not assumed** (#74). The projected git hooks
+  answer `GATES_PROBE=1` with a marker before reading any policy. Doctor and
+  `project.sh` run a gates-owned hook (the stub) with it and fail when the
+  marker does not come back. A hook another tool owns is checked statically
+  (the gates call-through in `.husky/<hook>`, `lefthook.yml` or
+  `.pre-commit-config.yaml`) instead of being run, because running it would
+  also run that tool's steps; `--probe-git` runs the full chain on request.
+- **`doctor --installed-only`** (#74) checks the installed extension alone,
+  for an install with nothing projected yet. Doctor also fails on a
+  half-done upgrade (extension removed, runtime still projected) and on a
+  registry that disagrees with the installed copy.
 - **A half-done upgrade is detected.** If `specify extension remove` ran
   but `add` did not, `bash .specify/gates/project.sh --check` says so and
   prints the command that finishes it.
 
 ### Changed
 
+- **The standalone "Claude" refusal names `git.ai_branding.allow_phrases`**,
+  and the README documents the message rules, the agent attribution
+  setting, and the `allow_phrases` entry for a repo that integrates a
+  provider (#74).
 - **The file hook asks instead of blocking on a name alone** (#71). A
   sensitive word in a file name (`secret`, `token`, `password`,
   `credentials`, `keystore`) now asks for confirmation; exact credential

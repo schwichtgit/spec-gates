@@ -2,6 +2,16 @@
 # shellcheck shell=bash
 set -euo pipefail
 
+# Behavioral probe (#74): doctor and project.sh run the hook git actually
+# runs with GATES_PROBE=1, to prove the call chain reaches this script
+# through whatever hook manager sits in between. It runs before any policy
+# read, so it works with every rule turned off, and it can only refuse.
+if [[ "${GATES_PROBE:-}" == "1" ]]; then
+    _probe_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+    echo "gates-probe:pre-commit:$(head -n 1 "$_probe_root/.specify/gates/.runtime-version" 2>/dev/null || echo unknown)" >&2
+    exit 1
+fi
+
 # Git pre-commit hook -- git boundary.
 #
 # Two responsibilities, deliberately separated:

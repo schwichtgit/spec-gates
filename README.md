@@ -237,6 +237,13 @@ Spec Kit's community catalog is discovery-only (`install_allowed: false`),
 so `--from <url>` is the install path even after `gates` is listed there;
 catalog listing buys discoverability, not a bare `specify extension add gates`.
 
+`specify extension add` registers the `/speckit.gates.*` commands at
+install time, for the agent integration chosen at `specify init` (for
+Claude Code, as skills in `.claude/skills/speckit-gates-*/`). Nothing is
+enforced until the runtime is projected; until then the install is
+dormant, and `bash .specify/extensions/gates/runtime/doctor.sh
+--installed-only` checks it.
+
 Then, in Claude Code:
 
 ```text
@@ -349,6 +356,50 @@ Two settings in `.specify/gates/policy.json` cover the most common cases:
   `protected_files.extra`. A file whose name merely contains a word like
   `secret` or `token` (`test_no_secret_leak.py`) gets an "ask" instead,
   so you confirm the edit.
+
+## Commit and PR message rules
+
+`commit-msg` and the PR checks (the agent's PR hook and `pr-check.sh` in
+CI) apply the same rules, from `lib/message.sh`:
+
+- A Conventional Commits subject, at most 72 characters
+  (`git.conventional_commits`).
+- No AI-isms and no self-referential phrasing (`git.forbid_ai_isms`), no
+  emoji.
+- No AI branding: the terms in `git.ai_branding.terms` (default
+  `Anthropic`, `GPT`, `OpenAI`, `Copilot`), and a standalone `Claude`.
+  `Claude Code`, `CLAUDE.md`, `.claude/` paths and `claude-*`
+  identifiers are allowed.
+- No `Co-Authored-By` trailer, whatever the policy says.
+
+**Agent attribution.** Claude Code adds a `Co-Authored-By: Claude …`
+trailer to commits and a "Generated with Claude Code" line to PRs by
+default, and gates refuses both. Turn them off for the project in
+`.claude/settings.json`:
+
+```json
+{ "attribution": { "commit": "", "pr": "" } }
+```
+
+(`"includeCoAuthoredBy": false` is the older, deprecated form.)
+
+**A repo that integrates a provider** (an SDK client, a model name in a
+changelog) adds the exact phrases to `git.ai_branding.allow_phrases`. They
+are removed before both branding checks, and the refusal message points
+there:
+
+```json
+{
+  "git": {
+    "ai_branding": {
+      "allow_phrases": ["OpenAI API", "Anthropic SDK", "GPT-4o"]
+    }
+  }
+}
+```
+
+`policy.json` is protected, so that change goes through a reviewed commit
+with a `Protected-Change` trailer.
 
 ## Commands
 

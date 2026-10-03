@@ -268,6 +268,18 @@ rc_is "--add-lint-ignores again changes nothing" 0 "$D" --skip-canary --add-lint
 ok ".prettierignore unchanged on the second add" test "$before" = "$(cksum <"$D/.prettierignore")"
 
 echo ""
+echo "=== git probe in the proof (#74) ==="
+fixture
+rc_is "projection proves both git hooks" 0 "$D" --skip-canary
+ok "pre-commit probe reported" grep -q 'git probe: pre-commit reaches the gates hook' <<<"$OUT"
+ok "commit-msg probe reported" grep -q 'git probe: commit-msg reaches the gates hook' <<<"$OUT"
+# A locally edited hook that no longer answers the probe (still valid bash).
+sed 's/GATES_PROBE:-/GATES_PROBE_OFF:-/' "$D/.specify/gates/hooks/commit-msg" >"$D/cm.tmp"
+cp "$D/cm.tmp" "$D/.specify/gates/hooks/commit-msg"
+rc_is "a projected hook that cannot answer fails the proof" 1 "$D" --skip-canary --keep-local .specify/gates/hooks/commit-msg
+ok "the failing hook is named" grep -q 'FAILED: git probe: git runs .git/hooks/commit-msg, but it does not reach the gates commit-msg hook' <<<"$OUT"
+
+echo ""
 echo "=== refusals before writing ==="
 fixture
 rm -f "$D/.specify/gates/policy.json"
@@ -310,7 +322,17 @@ ok "call-through printed" grep -q '.specify/gates/hooks/pre-commit' <<<"$OUT"
 ok "commit-msg still wired" cmp -s "$D/.specify/extensions/gates/runtime/hooks/git/stub.sh" "$D/.git/hooks/commit-msg"
 # shellcheck disable=SC2016  # the call-through line is written literally
 printf 'bash "$(git rev-parse --show-toplevel)/.specify/gates/hooks/pre-commit" "$@" || exit $?\n' >>"$D/.git/hooks/pre-commit"
+# Leave a trace when the hook runs, before the call-through (the probe
+# makes the gates hook exit, so anything after it never runs).
+# shellcheck disable=SC2016  # the hook line is written literally
+{ head -n 1 "$D/.git/hooks/pre-commit"; printf 'touch "$(git rev-parse --show-toplevel)/ran.txt"\n'; tail -n +2 "$D/.git/hooks/pre-commit"; } >"$D/hook.tmp"
+cp "$D/hook.tmp" "$D/.git/hooks/pre-commit"
 rc_is "foreign hook with the call-through -> exit 0" 0 "$D" --skip-canary
+ok "the foreign hook is checked statically" grep -q 'git check (static): another tool owns pre-commit and calls the gates hook' <<<"$OUT"
+ok "projection did not run the foreign hook" test ! -e "$D/ran.txt"
+rc_is "--probe-git runs the full chain" 0 "$D" --skip-canary --probe-git
+ok "--probe-git ran the foreign hook" test -e "$D/ran.txt"
+ok "--probe-git reports the probe" grep -q 'git probe: pre-commit reaches the gates hook' <<<"$OUT"
 fixture
 cp "$D/.specify/extensions/gates/runtime/hooks/git/commit-msg" "$D/.git/hooks/commit-msg"
 rc_is "a copied gates hook is migrated to the stub" 0 "$D" --skip-canary

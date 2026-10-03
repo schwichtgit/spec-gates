@@ -477,8 +477,10 @@ library that fails to load) returns an "ask" decision.
   approved diff; for an unknown framework they MUST exit non-zero and
   print the call-through.
 - **FR-022a**: Doctor and the projection script MUST prove the git
-  boundary behaviorally: a known-bad commit message sent through the
-  hook git actually runs must be refused; otherwise they fail.
+  boundary: a hook gates owns MUST be run with the probe signal and answer
+  it; a hook another tool owns MUST be checked statically for the gates
+  call-through (running it would run that tool's steps), with an opt-in to
+  run the full chain; a failure names the hook git runs.
 - **FR-023**: Doctor MUST support an installed-only mode that checks the
   installed extension without requiring a projected runtime.
 
