@@ -8,6 +8,22 @@ never touches `.specify/gates/policy.json`. New policy keys take the
 defaults stated here until you set them. Releases before 0.3.3 are
 described in their [GitHub release notes](https://github.com/schwichtgit/spec-gates/releases).
 
+## [Unreleased]
+
+### Fixed
+
+- **The file and command hooks never silently allow** (#83). Without jq,
+  or for input that isn't valid JSON, `protect-files.sh` and
+  `validate-bash.sh` read the path or command in raw mode, and every
+  built-in block rule still applies. When a hook can't decide, it returns
+  a PreToolUse "ask", so you confirm the call. That covers
+  `protected_files.extra` without jq, an unparseable `policy.json`, a
+  policy library that won't load, an encoded command, a missing
+  grep/sed/tr, and an internal error. They used to allow everything in
+  those states. A benign command is still allowed without jq, so the
+  agent can install it. Doctor keeps failing until jq is installed, and
+  the `bash` and `protect` canaries now also run without jq.
+
 ## 0.3.6 — 2026-10-02
 
 ### Fixed

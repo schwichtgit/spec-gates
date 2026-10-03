@@ -203,7 +203,9 @@ its enforcement frontmatter — one registry, two consumers.
 
 ## Requirements
 
-- **jq** and **git** — the hooks and `verify.sh` require them.
+- **jq** and **git** — the hooks and `verify.sh` require them. Without
+  jq, the file and command hooks fall back to a raw mode that keeps every
+  built-in block rule and asks you about anything it can't check.
 - **Node** with the linters your policy uses (default: **prettier**,
   **markdownlint-cli2**). Pin them in `package.json` so local and CI agree.
 - **shellcheck** if you lint shell. Its findings change between releases
