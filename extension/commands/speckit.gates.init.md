@@ -22,7 +22,9 @@ $ARGUMENTS
 ```
 
 Optional arguments: `--no-agent-hooks` (skip Claude Code wiring, e.g. when
-another agent is the harness), `--no-git-hooks`, `--policy-only`.
+another agent is the harness), `--no-git-hooks` (both are passed through
+to `project.sh`), and `--policy-only` (run step 2 only: infer and approve
+the policy, then stop without projecting anything).
 
 ## Prerequisites
 
@@ -55,9 +57,15 @@ files must survive the extension being removed.
   by section (one hook entry at a time: include globs, exclude globs,
   orchestrator, severity). Apply requested edits. This is a conversation,
   not a dump — the user must understand what will be enforced.
+- Offer the settings the seed leaves at their defaults, one question each:
+  `git.block_bulk_staging` (refuse `git add -A`, `.`, `:/` and directory
+  arguments at the agent boundary; off by default) and the branding
+  `git.ai_branding.allow_phrases` (phrases a repository that integrates an
+  AI provider legitimately uses, such as an SDK name).
 - On approval, move the seed to `.specify/gates/policy.json`. Re-validate
   with `bash "$RUNTIME_SRC/lib/policy.sh" validate .specify/gates/policy.json`.
   On failure, show the error, fix interactively, re-validate.
+- With `--policy-only`, stop here and report the policy path.
 
 ### 3. Project the runtime and wire the boundaries (one step)
 
@@ -160,22 +168,15 @@ There is no formatting that avoids this: any style we ship fails
 somebody's config. Vendored content belongs out of scope, exactly like
 `node_modules`. So:
 
-- If the repo has a `.prettierignore`, check whether the projected
-  paths are covered. If not, OFFER to append (never rewrite the file,
-  never reorder existing entries):
-
-  ```text
-  # spec-gates: projected/vendored enforcement runtime — upgrade
-  # overwrites these, so formatting them locally is lost work.
-  .specify/gates/
-  .specify/extensions/
-  .claude/hooks/gates/
-  ```
-
-- If the repo has no `.prettierignore` and prettier is enabled, offer to
-  create it with exactly those entries.
-- If the repo already has its own markdownlint config (so the seed in 3b
-  does not apply), offer to add the same three paths to its `ignores`.
+- **prettier**: when the repository uses prettier, `project.sh` (step 3)
+  already reported which of the three paths `.prettierignore` does not
+  exclude. Offer to add them; on approval re-run
+  `bash "$RUNTIME_SRC/project.sh" --add-lint-ignores`, which appends them
+  (creating the file if needed) and never rewrites or reorders existing
+  entries.
+- **markdownlint**: if the repo already has its own markdownlint config
+  (so the seed in 3b does not apply), offer to add the same three paths to
+  its `ignores`; `project.sh` does not edit markdownlint configs.
 
 Show the diff, apply only on approval, and if the user declines say
 plainly that their repo-wide lint runs will flag our vendored files and
@@ -232,6 +233,16 @@ state from step 4b (`filled` / `absent` / `placeholder`, and whether the
 session was offered), and the two follow-ups — `/speckit.gates.ci <platform>`
 to project CI enforcement, and the note that `/speckit.implement` will now
 offer to run gates on completion (via the extension's `after_implement` hook).
+
+## Project rules
+
+Mention that project-specific refusals belong in
+`.specify/gates/hooks.local.d/<hook>/*.sh` (for `protect-files`,
+`validate-bash`, `validate-pr`, `pre-commit`, `commit-msg`): they run after
+the shipped checks, survive upgrades, and are protected like `policy.json`
+(the agent cannot edit them; a commit changing one needs a
+`Protected-Change` trailer). Never write a rule yourself without the user
+asking for that exact rule.
 
 ## Important Rules
 

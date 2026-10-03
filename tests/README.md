@@ -19,7 +19,15 @@ the hooks execute under macOS `/bin/bash`.
   block and allow correctly. Parts B/C: the agent Stop hook and git
   pre-commit correctly delegate to `verify.sh` (green -> allow/pass,
   fail -> block, loop-guard, fail-open when the runtime is not projected,
-  block-main, secret scan).
+  block-main, secret scan). Later parts: the agent hooks never silently
+  allow (block on certainty, ask on uncertainty, raw mode without jq);
+  `protected_files.extra`; commit-msg toggles, Protected-Change trailers
+  and `git.ai_branding`; hook/runtime version skew, hook stubs and linked
+  worktrees; the auto-format hooks really format; local rules in
+  `hooks.local.d`, `git.block_bulk_staging`, and asking on a name alone;
+  project rules and protected files out of the agent's reach (Write
+  blocked, Bash asks, rule changes need a trailer); the `GATES_PROBE`
+  marker.
 - `test-policy.sh` — `policy.sh` loader getters and the schema validator
   (required fields, enum validation, custom_command rules, malformed JSON),
   plus the shipped policy template validating cleanly. Includes the
@@ -30,7 +38,10 @@ the hooks execute under macOS `/bin/bash`.
   is reported as skipped, and the spec-conformance section reports
   discovery counts, fails on parse errors naming `tasks.md:<line>`, and
   nudges a feature whose tasks are all checked but whose Status is not
-  `Complete`.
+  `Complete`. Further sections: git boundary wiring (including linked
+  worktrees), the policy contract, the no-op heuristic, execute bits, the
+  runtime version check, constitution enforcement, upgrade safety, install
+  hygiene, and the git probe with `--installed-only`.
 - `test-canary.sh` — the gate's own proof that it still blocks: a healthy
   fixture gets every canary `blocked`; a no-op formatter dispatch and a
   stubbed accept-block runner are each caught in one run, naming the
@@ -53,6 +64,29 @@ the hooks execute under macOS `/bin/bash`.
   unchecked task (SC-002), naming both; timeout and mutation detection
   (never auto-reverted); `severity`/`include`/`exclude`/`enabled` policy
   knobs; the `GATES_SPEC_EXEC` recursion guard.
+- `test-contract.sh` — the policy contract (feature 003): one `sync`
+  adopts a baseline and materializes the effective policy; verify runs
+  offline afterwards; hand-editing any contract artifact blocks, naming
+  it; deviations are classified and informational; repos without
+  `extends` are untouched; sync failures fail closed with prior state
+  intact; `sync --update` lands only as a reviewable change; `propose`
+  turns deviations into an upstream change request.
+- `test-constitution.sh` — the constitution pipeline (feature 004):
+  fragment filtering and ordering; a byte-deterministic draft with one
+  marker per principle and no placeholders; no materializing without a
+  surface decision; `--augment` keeps every existing line; detect
+  (absent/placeholder/filled); per-surface alignment and overlay targeting;
+  `check` verdicts and exit codes; only `###` headings under
+  `## Core Principles` count as principles.
+- `test-package.sh` — what a consumer's repo sees after install: the
+  package contents mirror the release workflow, shipped markdown is clean
+  under default lint tooling, shipped shell passes the pinned shellcheck,
+  and every shipped script parses under the stock macOS bash 3.2.
+- `test-pr-check.sh` — `pr-check.sh` at the CI boundary: PR/MR text
+  runs through the shared message rules; Protected-Change declarations are
+  enforced per commit from trailers or the description; GitHub, GitLab and
+  Jenkins contexts resolve from their own variables (including a truncated
+  GitLab description); no PR context skips; an unresolvable range exits 2.
 - `test-manifest.sh` — the projection libraries: sha256 tool fallback
   (none available fails closed), version order, the projection table
   (never lists `policy.json` or `hooks.local.d/`), manifest validation

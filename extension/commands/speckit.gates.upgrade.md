@@ -90,8 +90,11 @@ SHA256SUMS`) and `cosign verify-blob` with the identity and issuer
   around: 1 = a canary was accepted or a git hook needs the user,
   2 = refused before writing (read its message), 3 = local edits need a
   decision.
-- Re-check the lint-scope ignores (step 3c of `/speckit.gates.init`): an
-  upgrade can add projected paths.
+- If `project.sh` reports `.prettierignore` entries missing for the
+  vendored paths, offer `--add-lint-ignores` (see `/speckit.gates.init`
+  step 3c); markdownlint `ignores` stay a manual offer.
+- Project rules in `.specify/gates/hooks.local.d/` are never touched by an
+  upgrade; there is nothing to migrate.
 - Tell the user that `.git/hooks` is shared by every branch while the
   projected runtime is per branch. With the stub installed, each branch
   runs its own projected hooks, so an upgrade on one branch does not

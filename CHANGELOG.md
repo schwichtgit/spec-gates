@@ -102,6 +102,10 @@ add` forms at the agent boundary. `project.sh` lists new settings like
 - **Git hooks owned by another tool are left alone.** When
   `core.hooksPath` is set or a non-gates hook exists, `project.sh` prints
   the call-through line to add instead of editing that tool's files.
+- **`extension.yml` declares every tool the runtime needs**: git is now
+  required, and python3 and cmp are listed (doctor already checked them).
+  The internal `MIGRATION-NOTES.md` (the extraction log from the
+  predecessor project) is removed.
 
 ### Fixed
 

@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # Constitution-as-contract tests (feature 004): the deterministic pipeline
-# behind the guided session -- fragments, draft, detect (US1). Alignment and
-# check/doctor cases are added with US2/US3.
+# behind the guided session -- fragments, draft, detect (US1), alignment
+# (US2), check (US3), and Core Principles scoping (#82).
 #
 # Regression guards for the spec's success criteria:
 #   SC-001 -- a guided session yields a byte-deterministic annotated draft

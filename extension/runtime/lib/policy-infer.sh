@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 # shellcheck shell=bash
-# gates-policy-infer.sh -- synthesize .specify/gates/policy.json from host lint configs.
+# policy-infer.sh -- synthesize .specify/gates/policy.json from host lint configs.
 #
-# Used by the alpha.12 migration guide (INFRA-029) as the `infer` answer to
-# the policy-seed prompt. Reads the host's existing `.prettierignore`,
+# init uses this to seed a policy for a project that already has lint
+# configs. Reads the host's existing `.prettierignore`,
 # `.markdownlint-cli2.yaml`, and (optional) `.specify/gates/shellcheck-excludes.txt`
-# and emits a policy whose exclude arrays, when fed through
-# gates-generate-configs.sh, regenerate those files byte-equal for the
-# patterns the policy covers.
+# and emits a policy whose exclude arrays carry the patterns those files
+# list.
 #
 # The include arrays, orchestrator choices, severities, and the verify-
 # quality / format-changed / post-edit stanzas are copied from the bundled
@@ -19,11 +18,11 @@
 # emits a per-field diff summary on stderr.
 #
 # Usage (sourced):
-#   source gates-policy-infer.sh
+#   source policy-infer.sh
 #   gates_policy_infer <project_dir> <output_path>
 #
 # Usage (CLI):
-#   gates-policy-infer.sh <project_dir> <output_path>
+#   policy-infer.sh <project_dir> <output_path>
 #
 # Exit codes:
 #   0  policy synthesized and validated
@@ -57,9 +56,8 @@ _gates_infer_parse_prettierignore() {
 }
 
 # Extract entries from the single `ignores:` YAML block. Each entry is
-# a single-quoted scalar: `  - 'value'`. Intentionally strict (matches
-# the shape emitted by gates-generate-configs.sh) to avoid parsing the
-# wider YAML surface. Uses awk with -v SQ='\''  so the awk body itself
+# a single-quoted scalar: `  - 'value'`. Intentionally strict, to avoid
+# parsing the wider YAML surface. Uses awk with -v SQ='\''  so the awk body itself
 # contains no literal single quotes (avoids shell quoting collisions).
 _gates_infer_parse_markdownlint() {
     local file="$1"

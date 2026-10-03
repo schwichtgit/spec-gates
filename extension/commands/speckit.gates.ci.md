@@ -49,7 +49,14 @@ create`; GitLab: `glab repo create` or the web UI; Jenkins: the SCM
    keep every stricter setting the user already has: SHA-pinned actions,
    `permissions`, `persist-credentials: false`, `concurrency`, timeouts,
    `npm ci` from the lockfile. The template is a floor, not a
-   replacement.
+   replacement. Whatever the merge looks like, the pipeline must still run
+   the template's three commands: `verify.sh --boundary ci` (the `gates`
+   step), `canary.sh` (`canary`) and `pr-check.sh` (`pr`). Doctor and
+   `project.sh` recognize the steps by these commands and fail when one is
+   missing. If the user deliberately leaves one out (for example `pr` in a
+   repository without pull requests), record it as `ci:<step>` in
+   `.specify/gates/.upgrade-holds` so the omission is visible, not
+   silent.
 4. Remind the user of the parity property: this job runs the same
    entrypoint as the Stop hook and pre-commit, so local green == CI green.
 5. Explain the PR/MR step (`pr-check.sh`). It checks the PR/MR title and

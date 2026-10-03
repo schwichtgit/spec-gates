@@ -7,14 +7,14 @@ set -uo pipefail
 # PostToolUse hook for Write/Edit. Auto-formats the edited file using the
 # shared formatter dispatch.
 #
-# INFRA-019:
+# Policy:
 #   - Sources policy.sh so the dispatch consults per-tool exclude lists
 #     (and silently skips when the path is on an exclude).
 #   - Reads its own severity field. severity=error -> tool failure exits 2;
 #     severity=warning (default) -> failure logs a WARNING line and exits 0.
-#   - ADR-006 fallback: missing or unloadable policy emits a one-line stderr
-#     deprecation notice naming v0.2.0 and runs in legacy alpha.11 mode
-#     (no exclude filter, errors swallowed). All fallback branches carry
+#   - Fallback: a missing or unloadable policy emits a one-line stderr
+#     notice and runs in legacy mode (no exclude filter, errors
+#     swallowed). All fallback branches carry
 #     `# REMOVE AT v0.2.0`.
 
 if ! command -v jq >/dev/null 2>&1; then

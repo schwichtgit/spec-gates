@@ -11,7 +11,7 @@ set -euo pipefail
 #
 # The parity property — "if the agent boundary passed, git passes; if git
 # passed, CI passes" — holds because every boundary runs THIS script with
-# THIS policy. tests/test-ci-parity.sh asserts it.
+# THIS policy. tests/test-parity.sh asserts it.
 #
 # Usage:
 #   verify.sh --boundary agent|git|ci [--json] [--dry-run] [--accept <feature|all>]

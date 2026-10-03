@@ -60,14 +60,16 @@ self-evidencing:
   in `--json`: the policy's SHA-256, and per gate the resolved binary,
   detected version, lockfile pin, candidate vs checked file counts,
   result, and duration. Evidence, never file contents.
-- **Canaries** — `canary.sh` plants known violations in disposable
-  sandboxes (a prettier-dirty file, an SC2086 script, an `rm -rf /` tool
-  call, a `.env` edit, a PR the PR hook must allow and one it must
-  refuse, a staged AWS-key-shaped string, a staged token
-  assignment, a protected file staged without its `Protected-Change`
-  trailer, a commit message naming a branded AI term, a PR range with an
-  undeclared protected change) and requires the real gate or hook to
-  reject each one. An accepted probe fails the suite naming the broken
+- **Canaries** — `canary.sh` plants 14 known violations in disposable
+  sandboxes and requires the real gate or hook to reject each one: a
+  prettier-dirty file, an SC2086 script, an `rm -rf /` tool call and a
+  `.env` edit (each with and without jq), a PR the PR hook must allow and
+  one it must refuse, `git add -A` under `git.block_bulk_staging`, a
+  command a `hooks.local.d` rule refuses, a staged AWS-key-shaped string,
+  a staged token assignment, a protected file staged without its
+  `Protected-Change` trailer, a commit message naming a branded AI term,
+  a PR range with an undeclared protected change, a Complete feature with
+  a failing accept block, and a tampered effective policy. An accepted probe fails the suite naming the broken
   gate. CI runs it on every build — a red canary step means a broken
   gate, not a dirty tree. On demand:
   `bash .specify/gates/canary.sh` (or `doctor.sh --canary`).
@@ -203,9 +205,15 @@ its enforcement frontmatter — one registry, two consumers.
 
 ## Requirements
 
-- **jq** and **git** — the hooks and `verify.sh` require them. Without
+- **jq** and **git**: the hooks and `verify.sh` require them. Without
   jq, the file and command hooks fall back to a raw mode that keeps every
   built-in block rule and asks you about anything it can't check.
+- **python3** with the `json` module: the PR hook parses commands with it
+  and refuses every PR command without it. The message rules' emoji check
+  needs python3 or perl. `doctor` fails when either is missing.
+- **Standard POSIX tools** (`awk`, `sed`, `grep`, `cmp`, `sha256sum` or
+  `shasum`): `project.sh` refuses to run without `cmp` and a SHA-256
+  tool.
 - **Node** with the linters your policy uses (default: **prettier**,
   **markdownlint-cli2**). Pin them in `package.json` so local and CI agree.
 - **shellcheck** if you lint shell. Its findings change between releases
@@ -225,9 +233,9 @@ That URL always resolves to the newest release. To pin a specific
 version instead (recommended for fleets), use the versioned asset from
 the [releases page](https://github.com/schwichtgit/spec-gates/releases),
 e.g. `releases/download/vX.Y.Z/gates-X.Y.Z.zip`. Either way the URL must
-point at a release **asset** (a flat package with `extension.yml` at its
-root) — the repository/source archive does not install, because the
-manifest lives in `extension/` inside this repo.
+point at a release **asset** (the zip holds a `gates/` directory with
+`extension.yml` inside it). The repository's source archive does not
+install, because the manifest lives in `extension/` inside this repo.
 Don't install with `specify extension add --dev`: it is for developing
 spec-gates itself. It renders the `/speckit.gates.*` skills as symlinks
 into `.specify/extensions/gates/.specify-dev/`, which exists only on that
@@ -268,8 +276,9 @@ V=X.Y.Z   # the release to install
 U=https://github.com/schwichtgit/spec-gates/releases/download/v$V
 cp -R .specify/gates /tmp/gates-backup-$(date +%Y%m%d%H%M%S)   # 1. back up
 
-# 2. Download and verify the release (stop if a check fails; no cosign here? see below).
-curl -fsSLO "$U/gates-$V.zip" -O "$U/gates-$V.zip.sha256" -O "$U/gates-$V.zip.sigstore.json"
+# 2. Download and verify the release; stop if a check fails (no cosign on
+#    this machine? see "No cosign" below).
+curl -fsSLO "$U/gates-$V.zip" -O "$U/gates-$V.zip.sha256" -O "$U/gates-$V.zip.sigstore.json" -O "$U/SHA256SUMS"
 sha256sum -c "gates-$V.zip.sha256"     # behind Artifactory: sha256sum -c --ignore-missing SHA256SUMS
 cosign verify-blob --bundle "gates-$V.zip.sigstore.json" \
   --certificate-identity-regexp '^https://github.com/schwichtgit/spec-gates/.github/workflows/release.yml@' \
@@ -424,16 +433,16 @@ with a `Protected-Change` trailer.
 
 ## Commands
 
-| Command                       | Purpose                                                                                                                                                 |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/speckit.gates.init`         | Infer policy, project runtime, wire agent + git hooks, self-test                                                                                        |
-| `/speckit.gates.verify`       | Run the full suite on demand (also runs after `implement`)                                                                                              |
-| `/speckit.gates.doctor`       | Health check: hooks wired, policy valid, versions in sync                                                                                               |
-| `/speckit.gates.ci`           | Project CI enforcement (`github` \| `gitlab` \| `jenkins`); `--protect` requires the check + a PR on the default branch                                 |
-| `/speckit.gates.upgrade`      | Re-project runtime after update; never touches policy.json                                                                                              |
-| `/speckit.gates.sync`         | Pin + materialize the `extends` baseline; `--update` moves the pin as a reviewable branch                                                               |
-| `/speckit.gates.propose`      | Package this repo's policy deviations as an upstream change request against the baseline                                                                |
-| `/speckit.gates.constitution` | Guided session: interview to a profile, pick corpus principles, produce an enforcement-annotated constitution, and align each principle to its boundary |
+| Command                       | Purpose                                                                                                                                                                                                                                      |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/speckit.gates.init`         | Infer the policy, then project the runtime and wire the agent and git hooks in one `project.sh` run, and self-test                                                                                                                           |
+| `/speckit.gates.verify`       | Run the full suite on demand (also runs after `implement`)                                                                                                                                                                                   |
+| `/speckit.gates.doctor`       | Health check: tools, hooks wired and proven, versions in sync, upgrade safety (local edits, holds, CI drift), install hygiene, attestations, spec, contract and constitution state; `--installed-only` for an install with nothing projected |
+| `/speckit.gates.ci`           | Project CI enforcement (`github` \| `gitlab` \| `jenkins`); `--protect` requires the check + a PR on the default branch                                                                                                                      |
+| `/speckit.gates.upgrade`      | Verify a release, swap the installed extension, and re-project through `project.sh`; never touches policy.json                                                                                                                               |
+| `/speckit.gates.sync`         | Pin + materialize the `extends` baseline; `--update` moves the pin as a reviewable branch                                                                                                                                                    |
+| `/speckit.gates.propose`      | Package this repo's policy deviations as an upstream change request against the baseline                                                                                                                                                     |
+| `/speckit.gates.constitution` | Guided session: interview to a profile, pick corpus principles, produce an enforcement-annotated constitution, and align each principle to its boundary                                                                                      |
 
 ## Workflow-engine integration
 
@@ -473,6 +482,9 @@ as they grow hook APIs.
 npm ci              # pinned prettier + markdownlint-cli2
 bash tests/run.sh   # 15 suites: parity, gate, hooks, policy, doctor, canary, attest, spec-gate, contract, constitution, package, pr-check, manifest, project, policy-infer
 ```
+
+The gate runs the projected copy in `.specify/gates/`, so re-project after
+editing `extension/runtime/` (steps in [CONTRIBUTING](CONTRIBUTING.md)).
 
 The repo gates itself: `.github/workflows/ci.yml` projects the runtime and
 runs `verify.sh --boundary ci` (attestations and the parity gate included)

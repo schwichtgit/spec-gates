@@ -2,14 +2,15 @@
 # policy.sh -- loader for .specify/gates/policy.json
 #
 # Usage (sourced):
-#   source .claude-plugin/lib/policy.sh
+#   source .specify/gates/lib/policy.sh
 #   gates_policy_get <hook> <field>    # scalar (empty string on missing)
 #   gates_policy_list <hook> <field>   # one line per array element
 #   gates_validate_policy [file]       # returns 0 on pass, nonzero on fail
 #
 # Missing hook, missing field, or missing policy file all yield empty output
 # with exit 0 -- the loader is fail-open. Strict checks happen in
-# gates_validate_policy, which init and upgrade call before writing anything.
+# gates_validate_policy: init validates the policy it seeds, and contract
+# sync validates the baseline, overlay and effective policy before writing.
 #
 # Usage (executable CLI):
 #   policy.sh get <hook> <field>

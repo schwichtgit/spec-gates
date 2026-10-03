@@ -8,10 +8,11 @@ tell you what they want.
 
 ```bash
 npm ci              # pinned prettier + markdownlint-cli2 (the versions CI uses)
-bash tests/run.sh   # 8 suites — all must pass
+bash tests/run.sh   # 15 suites; all must pass
 ```
 
-You will also want `jq`, `git`, and `shellcheck` installed. Everything runs on
+You will also want `jq`, `git`, `python3`, and `shellcheck` (the version in
+`.tool-versions`) installed. Everything runs on
 macOS `/bin/bash` 3.2 and on Linux — runtime shell must stay compatible with
 both (no bash 4 features, no GNU-only awk/sed, no `timeout(1)`).
 
@@ -34,16 +35,29 @@ authoritative version; the short form:
 1. Branch from `main` (it is protected; all changes land via PR).
 2. Every behavior change lands with test coverage in `tests/`; every bug fix
    lands with a regression case that fails on the pre-fix code.
-3. Run the gate locally before pushing — CI runs the identical entrypoint:
+3. Run the gate locally before pushing. CI runs the identical entrypoint.
+   The repository runs its own gates from source, so project the runtime
+   into `.specify/gates/` first (the same copy CI makes; the copies are
+   gitignored), and again after every change under `extension/runtime/`:
 
    ```bash
-   bash .specify/gates/verify.sh --boundary agent
+   mkdir -p .specify/gates/lib
+   cp extension/runtime/*.sh .specify/gates/
+   cp extension/runtime/lib/*.sh .specify/gates/lib/
+   cp extension/runtime/policy.schema.json .specify/gates/
+   bash .specify/gates/verify.sh --boundary ci
+   bash .specify/gates/canary.sh
    bash tests/run.sh
    ```
 
 4. Commits follow Conventional Commits: no emoji, subject ≤ 72 characters.
-5. Fill in the pull request template; CI must be green (gate + canaries +
-   suites) before review.
+5. Fill in the pull request template; CI must be green (gate, canaries,
+   suites, the macOS bash 3.2 job) before review. Each PR also gets a
+   **unit test results** check and a comment with per-suite counts and the
+   runtime's line coverage (measured with bashcov; it reports and never
+   blocks). Check your PR text with
+   `bash .specify/gates/pr-check.sh --title "…" --body-file <file>`
+   before opening it.
 
 Larger enhancements run as numbered spec-kit features (`specs/NNN-*/`)
 through specify → clarify → plan → tasks → implement. A feature's success
