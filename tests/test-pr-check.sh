@@ -27,7 +27,7 @@ expect() { # <name> <actual> <wanted>
 }
 
 WORKDIR="$(mktemp -d 2>/dev/null || mktemp -d -t gates-prcheck)"
-trap '[[ -n "${GATES_KEEP_TMP:-}" ]] || { [[ -n "${WORKDIR:-}" && -d "$WORKDIR" ]] && rm -rf "$WORKDIR"; }' EXIT
+trap '[[ -n "${WORKDIR:-}" && -d "$WORKDIR" ]] && rm -rf "$WORKDIR"' EXIT
 
 # Fixture: a bare origin with main (protected c.md), and a feature branch
 # with one plain commit and one that changes c.md without a trailer.

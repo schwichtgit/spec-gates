@@ -23,7 +23,7 @@ FAIL=0
 TOTAL=0
 
 WORKDIR="$(mktemp -d 2>/dev/null || mktemp -d -t gates-const-test)"
-trap '[[ -n "${GATES_KEEP_TMP:-}" ]] || { [[ -n "${WORKDIR:-}" && -d "$WORKDIR" ]] && rm -rf "$WORKDIR"; }' EXIT
+trap '[[ -n "${WORKDIR:-}" && -d "$WORKDIR" ]] && rm -rf "$WORKDIR"' EXIT
 
 expect() { # <name> <actual> <wanted>
     TOTAL=$((TOTAL + 1))

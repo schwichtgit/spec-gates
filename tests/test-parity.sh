@@ -111,7 +111,7 @@ if ! command -v jq >/dev/null 2>&1; then
     fail "jq required for the behavioural parity check"
 else
     WORKDIR="$(mktemp -d 2>/dev/null || mktemp -d -t gates-parity)"
-    trap '[[ -n "${GATES_KEEP_TMP:-}" ]] || { [[ -n "${WORKDIR:-}" && -d "$WORKDIR" ]] && rm -rf "$WORKDIR"; }' EXIT
+    trap '[[ -n "${WORKDIR:-}" && -d "$WORKDIR" ]] && rm -rf "$WORKDIR"' EXIT
 
     mkdir -p "$WORKDIR/.specify/gates/lib"
     cp "$REPO_ROOT/extension/runtime/verify.sh" "$WORKDIR/.specify/gates/"

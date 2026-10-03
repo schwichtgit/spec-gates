@@ -20,7 +20,7 @@ SKIP=0
 TOTAL=0
 
 WORKDIR="$(mktemp -d 2>/dev/null || mktemp -d -t gates-gate)"
-trap '[[ -n "${GATES_KEEP_TMP:-}" ]] || { [[ -n "${WORKDIR:-}" && -d "$WORKDIR" ]] && rm -rf "$WORKDIR"; }' EXIT
+trap '[[ -n "${WORKDIR:-}" && -d "$WORKDIR" ]] && rm -rf "$WORKDIR"' EXIT
 
 # Project the runtime into <dir> with a caller-supplied policy body. Also link
 # the repo's pinned node_modules so the gate resolves the same prettier /

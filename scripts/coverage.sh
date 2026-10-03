@@ -23,13 +23,6 @@ done
 rm -rf "$OUT/kcov"
 mkdir -p "$OUT"
 
-# Keep the tests' sandboxes until the run ends. kcov reads each traced
-# script's source when it processes the trace, and on a slow runner it can
-# fall behind the suite; a sandbox already cleaned up by then makes kcov drop
-# that copy silently (CI reported project.sh, pr-check.sh and pre-commit as
-# never run while a fast local run covered them). The temp directory goes
-# with the job.
-export GATES_KEEP_TMP=1
 rc=0
 (cd "$REPO" && kcov --exclude-pattern=/usr/,/node_modules/ "$OUT/kcov" tests/run.sh) >"$OUT/run.log" 2>&1 || rc=$?
 tail -n 3 "$OUT/run.log"

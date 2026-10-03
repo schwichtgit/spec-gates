@@ -10,7 +10,7 @@ FAIL=0
 TOTAL=0
 
 WORKDIR="$(mktemp -d 2>/dev/null || mktemp -d -t gates-doctor)"
-trap '[[ -n "${GATES_KEEP_TMP:-}" ]] || { [[ -n "${WORKDIR:-}" && -d "$WORKDIR" ]] && rm -rf "$WORKDIR"; }' EXIT
+trap '[[ -n "${WORKDIR:-}" && -d "$WORKDIR" ]] && rm -rf "$WORKDIR"' EXIT
 
 # Project doctor + runtime into <dir> with a caller-supplied policy, optionally
 # linking the pinned node_modules so the linters resolve.
