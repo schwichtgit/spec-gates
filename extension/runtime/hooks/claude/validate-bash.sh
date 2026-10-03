@@ -234,6 +234,34 @@ if [[ -n "$BLOCKED" ]]; then
     exit 2
 fi
 
+# Protected paths through Bash (#95): Write/Edit to a protected path is
+# refused by protect-files, but `rm`, `mv`, `sed -i`, a redirect or
+# `git rm` reach it through here. Telling a modification from a read by
+# the command text alone is a heuristic, so a command that appears to
+# modify one asks the human instead of blocking; reads stay allowed. The
+# paths: the project's rules (hooks.local.d) plus protected_files.extra
+# (glob entries by their literal prefix; with jq only).
+protected_prefixes() {
+    printf '%s\n' ".specify/gates/hooks.local.d"
+    local pf="$LROOT/.specify/gates/policy.json"
+    [[ -z "$DEGRADED" && -f "$pf" ]] || return 0
+    jq -r '(.protected_files.extra // [])[] | select(type == "string")' "$pf" 2>/dev/null \
+        | sed -e 's/[*?[].*$//' -e 's:/*$::' | awk 'length($0) > 0' || true
+}
+# shellcheck disable=SC2016  # the backtick is a literal command separator
+MUTATE_VERB='(^|[;&|(`[:space:]])(rm|rmdir|unlink|shred|mv|cp|ln|install|truncate|tee|chmod|chown|dd)[[:space:]]'
+# shellcheck disable=SC2016
+MUTATE_EDIT='(^|[;&|(`[:space:]])(sed|perl)[[:space:]]+([^;&|]*[[:space:]])?-[a-zA-Z]*i|(^|[;&|(`[:space:]])git[[:space:]]+(rm|mv|checkout|restore|reset|clean|stash)([[:space:]]|$)'
+while IFS= read -r _pp; do
+    [[ -n "$_pp" ]] || continue
+    printf '%s' "$COMMAND" | grep -qF -- "$_pp" || continue
+    _pre="$(printf '%s' "$_pp" | sed 's/[][\.*^$+?(){}|/]/\\&/g')"
+    if printf '%s' "$COMMAND" | grep -qE "$MUTATE_VERB|$MUTATE_EDIT" \
+        || printf '%s' "$COMMAND" | grep -qE ">>?[[:space:]]*[\"']?[^[:space:];&|]*$_pre"; then
+        ask "this command appears to modify the protected path $_pp; a human or a reviewed change makes that edit"
+    fi
+done < <(protected_prefixes)
+
 # Project-owned rules (#71) run once every shipped rule allowed, so they
 # can add a refusal but never remove one.
 if compgen -G "$LROOT/.specify/gates/hooks.local.d/validate-bash/*.sh" >/dev/null; then

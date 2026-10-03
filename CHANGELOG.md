@@ -39,6 +39,13 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   `.specify/gates/hooks.local.d/<hook>/*.sh` for `protect-files`,
   `validate-bash`, `validate-pr`, `pre-commit` and `commit-msg`. They run
   after the shipped checks and can only add refusals.
+- **Project rules and protected files are out of the agent's reach**
+  (#95). Write/Edit under `hooks.local.d/` is refused, a Bash command that
+  appears to modify a protected path (`rm`, `mv`, `sed -i`, a redirect,
+  `tee`, `git rm`; `hooks.local.d`, `policy.json`, the constitution, any
+  `protected_files.extra` entry) asks first, and committing a rule change
+  needs `Protected-Change` and `Approved-By` trailers, also checked by
+  `pr-check.sh` in CI.
 - **`git.block_bulk_staging`** (default `false`, #71): refuses bulk `git
 add` forms at the agent boundary. `project.sh` lists new settings like
   this one on the first upgrade that ships them and never writes

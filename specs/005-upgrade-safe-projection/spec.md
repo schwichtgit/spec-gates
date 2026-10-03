@@ -430,6 +430,12 @@ library that fails to load) returns an "ask" decision.
   edited.
 - **FR-013**: Local rules MUST only add refusals; they MUST NOT be able to
   disable a shipped check.
+- **FR-013a** (#95): The agent MUST NOT be able to change the local rules
+  unreviewed: Write/Edit under `hooks.local.d/` MUST be refused, a Bash
+  command that appears to modify any protected path (the rules,
+  `protected_files.extra`) MUST ask, and a commit changing a rule MUST
+  carry `Protected-Change` and `Approved-By` trailers at the git boundary
+  and in CI.
 - **FR-014**: A policy knob MUST refuse bulk staging (all-files forms and
   directory arguments) at the agent boundary and at the git boundary
   where detectable; absent the knob, behavior is unchanged.

@@ -127,6 +127,16 @@ if echo "$BASENAME" | grep -qE '^(gcloud-.*\.json|service-account.*\.json|aws-cr
     BLOCKED="Cloud credentials file"
 fi
 
+# The project's own rules (#95): hooks.local.d holds the refusals the
+# project added on top of the shipped ones. The agent must not be able to
+# rewrite or delete them; a human changes them, and a commit that does
+# needs a Protected-Change trailer.
+case "$FILE_PATH" in
+    .specify/gates/hooks.local.d/* | */.specify/gates/hooks.local.d/*)
+        BLOCKED="Project rule in .specify/gates/hooks.local.d/ (a human edits these; the commit needs a Protected-Change trailer)"
+        ;;
+esac
+
 # Lock files
 case "$BASENAME" in
     package-lock.json|yarn.lock|pnpm-lock.yaml|Cargo.lock|poetry.lock)

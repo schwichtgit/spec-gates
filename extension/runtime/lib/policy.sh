@@ -165,15 +165,22 @@ gates_policy_at_rev() { # <rev> <dest>
     mv "$tmp" "$dest"
 }
 
+# Protected by the runtime itself, whatever the policy says: the project's
+# own rules in hooks.local.d (#95). Changing one is a reviewed change with a
+# Protected-Change trailer, like any protected_files.extra entry.
+GATES_BUILTIN_PROTECTED=".specify/gates/hooks.local.d/**"
+
 # protected_files.extra as the UNION of the policies committed at <rev>...,
 # plus the worktree policy when called with no revs (worktree + HEAD). Reading
 # the committed copy means a staged policy.json that drops its own protection
-# is still judged by the protection it removes (issue #47).
+# is still judged by the protection it removes (issue #47). The built-in
+# entries above always come first.
 # shellcheck disable=SC2120  # revs are passed by protected-range.sh
 gates_protected_list() { # [rev...]
     local tmp rev
     local -a revs=("$@")
     {
+        printf '%s\n' "$GATES_BUILTIN_PROTECTED"
         if [[ "${#revs[@]}" -eq 0 ]]; then
             gates_policy_section_list protected_files extra
             revs=(HEAD)

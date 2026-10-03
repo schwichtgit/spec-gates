@@ -727,6 +727,64 @@ check "pre-commit local rule refuses" 0 bash -c "cd '$PCL' && out=\$('$GITHOOKS/
 rm -f "$PCL/.specify/gates/hooks.local.d/pre-commit/10-untracked.sh"
 check "pre-commit passes without the rule" 0 bash -c "cd '$PCL' && '$GITHOOKS/pre-commit'"
 
+# ===========================================================================
+# Part G: the agent cannot change protected paths, rules included (#95)
+# ===========================================================================
+echo ""
+echo "=== protect-files: hooks.local.d is the project's, not the agent's (#95) ==="
+for f in .specify/gates/hooks.local.d/validate-bash/10.sh "$WORKDIR/x/.specify/gates/hooks.local.d/pre-commit/a.sh"; do
+    check "Write/Edit blocked: $f" 2 bash -c "jq -nc --arg f '$f' '{tool_input:{file_path:\$f}}' | CLAUDE_PROJECT_DIR='$WORKDIR/none' '$HOOKS/protect-files.sh'"
+    check "Write/Edit blocked without jq: $f" 2 bash -c "jq -nc --arg f '$f' '{tool_input:{file_path:\$f}}' >'$WORKDIR/pf95.json' && PATH='$NOJQ' CLAUDE_PROJECT_DIR='$WORKDIR/none' '$HOOKS/protect-files.sh' <'$WORKDIR/pf95.json'"
+done
+
+echo ""
+echo "=== validate-bash: modifying a protected path asks (#95) ==="
+PP="$WORKDIR/pp95"
+mkdir -p "$PP/.specify/gates"
+printf '%s' '{ "hooks": {}, "protected_files": { "extra": [".specify/gates/policy.json", "infra/**"] } }' \
+    >"$PP/.specify/gates/policy.json"
+pp_payload() { jq -nc --arg c "$1" '{tool_input:{command:$c}}'; }
+# shellcheck disable=SC2016  # literal command text under test
+for c in 'rm .specify/gates/hooks.local.d/validate-bash/10.sh' 'mv .specify/gates/hooks.local.d/a.sh /tmp/' \
+    'echo "exit 0" > .specify/gates/hooks.local.d/validate-bash/10.sh' \
+    'sed -i "s/exit 1/exit 0/" .specify/gates/hooks.local.d/validate-bash/10.sh' \
+    'git rm -r .specify/gates/hooks.local.d' 'printf x | tee .specify/gates/policy.json' \
+    'jq . .specify/gates/policy.json > /tmp/p && mv /tmp/p .specify/gates/policy.json' 'rm -rf infra/prod'; do
+    askcheck "modification asks: $c" "$(pp_payload "$c")" validate-bash.sh CLAUDE_PROJECT_DIR="$PP"
+done
+for c in 'cat .specify/gates/hooks.local.d/validate-bash/10.sh' 'ls -la .specify/gates/hooks.local.d' \
+    'grep -rn "rm " .specify/gates/hooks.local.d' "jq '.git' .specify/gates/policy.json" \
+    'cat .specify/gates/policy.json 2>/dev/null' 'ls infra/' 'echo hi > notes.txt'; do
+    check "read or unrelated allowed: $c" 0 bash -c "printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$PP' '$HOOKS/validate-bash.sh' | grep -q . && exit 1 || exit 0" _ "$(pp_payload "$c")"
+done
+pp_payload 'rm .specify/gates/hooks.local.d/validate-bash/10.sh' >"$WORKDIR/pp95.json"
+check "raw mode: modifying hooks.local.d still asks" 0 bash -c "PATH='$NOJQ' CLAUDE_PROJECT_DIR='$PP' '$HOOKS/validate-bash.sh' <'$WORKDIR/pp95.json' | grep -q '\"permissionDecision\":\"ask\"'"
+
+echo ""
+echo "=== git boundary: a rule change needs a Protected-Change trailer (#95) ==="
+check "hooks.local.d is protected whatever the policy says" 0 bash -c "cd '$WORKDIR' && source '$REPO_ROOT/extension/runtime/lib/policy.sh' && GATES_POLICY_FILE=/nonexistent gates_protected_list | head -n 1 | grep -qxF '.specify/gates/hooks.local.d/**'"
+PR95="$WORKDIR/pr95"
+mkdir -p "$PR95"
+git -C "$PR95" init -q -b main
+git -C "$PR95" config user.email t@example.com
+git -C "$PR95" config user.name tester
+project_runtime "$PR95" "true"
+cp "$GITHOOKS/pre-commit" "$GITHOOKS/commit-msg" "$PR95/.git/hooks/"
+chmod +x "$PR95/.git/hooks/pre-commit" "$PR95/.git/hooks/commit-msg"
+printf '%s' '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error", "custom_command": "true" } }, "git": { "block_main_commits": false } }' \
+    >"$PR95/.specify/gates/policy.json"
+( cd "$PR95" && git add -A && git commit -q -m "chore: seed" ) >/dev/null 2>&1
+mkdir -p "$PR95/.specify/gates/hooks.local.d/validate-bash"
+printf 'exit 0\n' >"$PR95/.specify/gates/hooks.local.d/validate-bash/10.sh"
+( cd "$PR95" && git add -A ) >/dev/null 2>&1
+printf 'chore: add a rule\n' >"$PTM"
+check "rule commit without a trailer is refused" 1 bash -c "cd '$PR95' && git commit -q -F '$PTM'"
+printf 'chore: add a rule\n\nProtected-Change: .specify/gates/hooks.local.d/validate-bash/10.sh\nApproved-By: Reviewer\n' >"$PTM"
+check "rule commit with the trailers passes" 0 bash -c "cd '$PR95' && git commit -q -F '$PTM'"
+( cd "$PR95" && git rm -q .specify/gates/hooks.local.d/validate-bash/10.sh ) >/dev/null 2>&1
+printf 'chore: drop the rule\n' >"$PTM"
+check "deleting a rule without a trailer is refused" 1 bash -c "cd '$PR95' && git commit -q -F '$PTM'"
+
 # --- Summary ---
 echo ""
 echo "$PASS of $TOTAL tests passed."
