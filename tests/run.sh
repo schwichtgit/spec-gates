@@ -8,7 +8,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
 FAILED=0
-for suite in test-parity test-gate test-hooks test-policy test-doctor test-canary test-attest test-spec-gate test-contract test-constitution test-package test-pr-check test-manifest test-project; do
+for suite in test-parity test-gate test-hooks test-policy test-doctor test-canary test-attest test-spec-gate test-contract test-constitution test-package test-pr-check test-manifest test-project test-policy-infer; do
     echo "======================================================================"
     echo "  $suite"
     echo "======================================================================"

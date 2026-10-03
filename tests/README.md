@@ -68,3 +68,9 @@ the hooks execute under macOS `/bin/bash`.
   mismatch, corrupt or newer manifest); the half-done remove+add; foreign
   and `core.hooksPath` hooks left alone; and the canary proof failing on
   a broken hook.
+- `test-policy-infer.sh` — the policy seed init proposes: excludes
+  inferred from `.prettierignore`, `.markdownlint-cli2.yaml` and
+  `.specify/gates/shellcheck-excludes.txt` (bundled defaults otherwise),
+  the `task` orchestrator when a Taskfile has top-level `lint` and `test`
+  targets (grep and yq paths), and exit 2/3/4 for usage errors, a missing
+  template, and a result that fails validation.
