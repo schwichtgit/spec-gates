@@ -24,8 +24,30 @@ if [[ "${1:-}" == "--canary" ]]; then
     exec bash "$CANARY_SH" "$@"
 fi
 
+INSTALLED_ONLY=0
+PROBE_GIT=0
+for _a in "$@"; do
+    case "$_a" in
+        --installed-only) INSTALLED_ONLY=1 ;;
+        # Run hooks another tool owns too (their own steps run with them).
+        --probe-git) PROBE_GIT=1 ;;
+    esac
+done
+
 PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 GATES_LIB_DIR="$PROJECT_ROOT/.specify/gates/lib"
+# The libraries next to this script: the only ones there are when doctor
+# runs from the installed extension before anything is projected.
+DOCTOR_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
+for _l in install-state.sh managers.sh; do
+    if [[ -f "$GATES_LIB_DIR/$_l" ]]; then
+        # shellcheck source=/dev/null disable=SC1090
+        source "$GATES_LIB_DIR/$_l"
+    elif [[ -f "$DOCTOR_LIB_DIR/$_l" ]]; then
+        # shellcheck source=/dev/null disable=SC1090
+        source "$DOCTOR_LIB_DIR/$_l"
+    fi
+done
 
 # shellcheck source=/dev/null disable=SC1091
 [[ -f "$GATES_LIB_DIR/policy.sh" ]] && source "$GATES_LIB_DIR/policy.sh"
@@ -64,6 +86,109 @@ policy_enables() { # <hook>
     declare -f gates_policy_list >/dev/null 2>&1 || return 1
     [[ -n "$(gates_policy_list "$1" include 2>/dev/null)" ]]
 }
+
+# Install hygiene (#73), shared by the full run and --installed-only.
+install_checks() {
+    # A `specify extension add --dev` install renders
+    # the gates skills as symlinks into .specify/extensions/gates/.specify-dev/,
+    # which does not exist in another clone or CI checkout: committed, they
+    # dangle there and no /speckit.gates.* command loads. Every registered
+    # gates command must be a regular file (skill or command), so a symlink,
+    # a dangling link, or a missing file FAILS here.
+    REG="$PROJECT_ROOT/.specify/extensions/.registry"
+    if [[ -f "$REG" ]] && have jq; then
+        reg_ok=0
+        while IFS= read -r rcmd; do
+            [[ -n "$rcmd" ]] || continue
+            rsk="$PROJECT_ROOT/.claude/skills/${rcmd//./-}/SKILL.md"
+            rcm="$PROJECT_ROOT/.claude/commands/$rcmd.md"
+            rstate=""
+            for rf in "$rsk" "$rcm"; do
+                if [[ -L "$rf" || -L "$(dirname "$rf")" ]]; then
+                    if [[ -e "$rf" ]]; then rstate="symlink"; else rstate="dangling"; fi
+                    break
+                elif [[ -f "$rf" ]]; then
+                    rstate="ok"
+                    break
+                fi
+            done
+            case "$rstate" in
+                ok) reg_ok=$((reg_ok + 1)) ;;
+                symlink)
+                    echo "${BAD}$rcmd is a symlink (a --dev install); it resolves only on this machine — reinstall from a release zip (README \"Upgrade\")"
+                    MISSING=$((MISSING + 1))
+                    ;;
+                dangling)
+                    echo "${BAD}$rcmd is a dangling symlink — the command does not load; reinstall from a release zip (README \"Upgrade\")"
+                    MISSING=$((MISSING + 1))
+                    ;;
+                *)
+                    echo "${BAD}$rcmd is registered but has no skill or command file — reinstall the extension"
+                    MISSING=$((MISSING + 1))
+                    ;;
+            esac
+        done < <(jq -r '(.extensions.gates.registered_commands.claude // [])[]' "$REG" 2>/dev/null)
+        [[ "$reg_ok" -gt 0 ]] && echo "${OK}$reg_ok registered gates command(s) installed as regular files"
+    fi
+    if [[ -d "$PROJECT_ROOT/.specify/extensions/gates/.specify-dev" ]]; then
+        echo "${REC}this is a --dev install (for developing spec-gates itself); other clones will not have its files — install from a release zip"
+    fi
+    # Zip extraction keeps the execute bit only on *.sh, so the vendored git
+    # hooks arrive 644 and show as mode changes where .specify/extensions/ is
+    # committed. Nothing runs them (the projected copies run), so a nudge.
+    VEXEC_N=0
+    for vf in "$PROJECT_ROOT/.specify/extensions/gates/runtime"/*.sh \
+        "$PROJECT_ROOT/.specify/extensions/gates/runtime/lib"/*.sh \
+        "$PROJECT_ROOT/.specify/extensions/gates/runtime/hooks/git"/* \
+        "$PROJECT_ROOT/.specify/extensions/gates/runtime/hooks/claude"/*.sh; do
+        [[ -f "$vf" && ! -x "$vf" ]] && VEXEC_N=$((VEXEC_N + 1))
+    done
+    [[ "$VEXEC_N" -gt 0 ]] \
+        && echo "${REC}$VEXEC_N installed extension script(s) lack the execute bit (zip extraction) — run bash .specify/extensions/gates/runtime/project.sh"
+    return 0
+}
+
+# --installed-only (#74): the installed extension alone -- registry, vendored
+# copy, skills, install mode -- for a dormant install (nothing projected
+# yet) or one without an agent integration. Run it from the installed copy:
+#   bash .specify/extensions/gates/runtime/doctor.sh --installed-only
+if [[ "$INSTALLED_ONLY" -eq 1 ]]; then
+    echo "=== spec-gates doctor (installed extension only) ==="
+    echo "project: $PROJECT_ROOT"
+    echo ""
+    echo "Required:"
+    if have jq; then echo "${OK}jq"; else echo "${BAD}jq"; MISSING=$((MISSING + 1)); fi
+    if have git; then echo "${OK}git"; else echo "${BAD}git"; MISSING=$((MISSING + 1)); fi
+    echo ""
+    echo "Installed extension:"
+    IST="$(gates_install_state "$PROJECT_ROOT")"
+    IVER="$(gates_extension_version "$PROJECT_ROOT/.specify/extensions/gates/extension.yml")"
+    case "$IST" in
+        installed) echo "${OK}gates $IVER installed and projected" ;;
+        dormant) echo "${OK}gates $IVER installed; the runtime is not projected yet (bash .specify/extensions/gates/runtime/project.sh)" ;;
+        dev) echo "${OK}gates $IVER installed" ;;
+        removed)
+            echo "${BAD}the extension is not installed, but .specify/gates/ is projected — a half-done upgrade (bash .specify/gates/project.sh --check prints the finishing command)"
+            MISSING=$((MISSING + 1))
+            ;;
+        mismatch)
+            echo "${BAD}the extension registry and .specify/extensions/gates/ disagree — reinstall the extension"
+            MISSING=$((MISSING + 1))
+            ;;
+        *)
+            echo "${BAD}the gates extension is not installed"
+            MISSING=$((MISSING + 1))
+            ;;
+    esac
+    install_checks
+    echo ""
+    if [[ "$MISSING" -gt 0 ]]; then
+        echo "doctor: $MISSING required item(s) missing."
+        exit 1
+    fi
+    echo "doctor: the installed extension is healthy."
+    exit 0
+fi
 
 echo "=== spec-gates doctor ==="
 echo "project: $PROJECT_ROOT"
@@ -138,62 +263,7 @@ if [[ -f "$EXT_MANIFEST" ]]; then
             echo "${OK}projected runtime $RTV matches the installed extension"
         fi
     fi
-    # Install hygiene (#73). A `specify extension add --dev` install renders
-    # the gates skills as symlinks into .specify/extensions/gates/.specify-dev/,
-    # which does not exist in another clone or CI checkout: committed, they
-    # dangle there and no /speckit.gates.* command loads. Every registered
-    # gates command must be a regular file (skill or command), so a symlink,
-    # a dangling link, or a missing file FAILS here.
-    REG="$PROJECT_ROOT/.specify/extensions/.registry"
-    if [[ -f "$REG" ]] && have jq; then
-        reg_ok=0
-        while IFS= read -r rcmd; do
-            [[ -n "$rcmd" ]] || continue
-            rsk="$PROJECT_ROOT/.claude/skills/${rcmd//./-}/SKILL.md"
-            rcm="$PROJECT_ROOT/.claude/commands/$rcmd.md"
-            rstate=""
-            for rf in "$rsk" "$rcm"; do
-                if [[ -L "$rf" || -L "$(dirname "$rf")" ]]; then
-                    if [[ -e "$rf" ]]; then rstate="symlink"; else rstate="dangling"; fi
-                    break
-                elif [[ -f "$rf" ]]; then
-                    rstate="ok"
-                    break
-                fi
-            done
-            case "$rstate" in
-                ok) reg_ok=$((reg_ok + 1)) ;;
-                symlink)
-                    echo "${BAD}$rcmd is a symlink (a --dev install); it resolves only on this machine — reinstall from a release zip (README \"Upgrade\")"
-                    MISSING=$((MISSING + 1))
-                    ;;
-                dangling)
-                    echo "${BAD}$rcmd is a dangling symlink — the command does not load; reinstall from a release zip (README \"Upgrade\")"
-                    MISSING=$((MISSING + 1))
-                    ;;
-                *)
-                    echo "${BAD}$rcmd is registered but has no skill or command file — reinstall the extension"
-                    MISSING=$((MISSING + 1))
-                    ;;
-            esac
-        done < <(jq -r '(.extensions.gates.registered_commands.claude // [])[]' "$REG" 2>/dev/null)
-        [[ "$reg_ok" -gt 0 ]] && echo "${OK}$reg_ok registered gates command(s) installed as regular files"
-    fi
-    if [[ -d "$PROJECT_ROOT/.specify/extensions/gates/.specify-dev" ]]; then
-        echo "${REC}this is a --dev install (for developing spec-gates itself); other clones will not have its files — install from a release zip"
-    fi
-    # Zip extraction keeps the execute bit only on *.sh, so the vendored git
-    # hooks arrive 644 and show as mode changes where .specify/extensions/ is
-    # committed. Nothing runs them (the projected copies run), so a nudge.
-    VEXEC_N=0
-    for vf in "$PROJECT_ROOT/.specify/extensions/gates/runtime"/*.sh \
-        "$PROJECT_ROOT/.specify/extensions/gates/runtime/lib"/*.sh \
-        "$PROJECT_ROOT/.specify/extensions/gates/runtime/hooks/git"/* \
-        "$PROJECT_ROOT/.specify/extensions/gates/runtime/hooks/claude"/*.sh; do
-        [[ -f "$vf" && ! -x "$vf" ]] && VEXEC_N=$((VEXEC_N + 1))
-    done
-    [[ "$VEXEC_N" -gt 0 ]] \
-        && echo "${REC}$VEXEC_N installed extension script(s) lack the execute bit (zip extraction) — run bash .specify/extensions/gates/runtime/project.sh"
+    install_checks
     # Constitution corpus presence (issue #31): the guided session needs
     # manifest.yml + fragments/ under the installed extension; 0.3.0 shipped
     # without them, which was invisible until the session died mid-flow.
@@ -202,6 +272,24 @@ if [[ -f "$EXT_MANIFEST" ]]; then
     else
         echo "${REC}constitution corpus not found under the installed extension — /speckit.gates.constitution needs it (re-install from a release that ships gates/constitution/)"
     fi
+fi
+
+# Install state (#74): a projected runtime whose extension was removed and
+# not added back is a half-done upgrade, and a registry that disagrees with
+# the vendored copy an interrupted install. Both are failures.
+if declare -f gates_install_state >/dev/null 2>&1 && [[ -d "$PROJECT_ROOT/.specify/gates" ]]; then
+    case "$(gates_install_state "$PROJECT_ROOT")" in
+        removed)
+            echo ""
+            echo "${BAD}the gates extension was removed but not added back (half-done upgrade) — bash .specify/gates/project.sh --check prints the finishing command"
+            MISSING=$((MISSING + 1))
+            ;;
+        mismatch)
+            echo ""
+            echo "${BAD}the extension registry and .specify/extensions/gates/ disagree (interrupted install) — reinstall the extension"
+            MISSING=$((MISSING + 1))
+            ;;
+    esac
 fi
 
 # Upgrade safety (#70): what an upgrade would do, the holds, and CI drift.
@@ -429,6 +517,26 @@ if git -C "$PROJECT_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
             echo "${OK}$h installed, executable, delegates to the gates runtime"
         fi
     done
+    # Proof (#74). When gates owns the hook (the stub), run it the way git
+    # does with GATES_PROBE=1: only gates code runs, and only the gates hook
+    # answers. A hook another tool owns is read, not run -- running it would
+    # run that tool's steps too (husky's default is `npm test`) -- unless
+    # --probe-git asks for the full chain.
+    if declare -f gates_git_check >/dev/null 2>&1; then
+        for h in pre-commit commit-msg; do
+            [[ -x "$HOOK_DIR/$h" ]] || continue
+            if gates_git_check "$PROJECT_ROOT" "$h" "$PROBE_GIT"; then
+                if [[ "$GATES_CHECK_KIND" == "probe" ]]; then
+                    echo "${OK}$h probe: the hook git runs reaches the gates $h hook"
+                else
+                    echo "${OK}$h (static): another tool owns the hook and calls the gates $h hook (doctor --probe-git runs the chain)"
+                fi
+            else
+                echo "${BAD}$h ($GATES_CHECK_KIND): $GATES_PROBE_MSG — the git boundary is not enforced for $h"
+                MISSING=$((MISSING + 1))
+            fi
+        done
+    fi
     # Protected-change path (issue #47): how a staged protected_files.extra
     # entry is treated at this boundary. Informational, never a failure.
     if declare -f gates_protected_trailer_enabled >/dev/null 2>&1; then

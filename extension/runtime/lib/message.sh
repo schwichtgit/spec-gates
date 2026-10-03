@@ -144,6 +144,7 @@ gates_message_check() { # <commit|pr> <text>
             | sed 's/([^)]*)//g')"
         if printf '%s\n' "$cleaned" | grep -qiE '\bClaude\b'; then
             _err "Standalone 'Claude' detected (use 'Claude Code' if needed)."
+            echo "  A legitimate phrase (a product or model name your repo integrates) can be allowed via git.ai_branding.allow_phrases." >&2
         fi
     fi
 

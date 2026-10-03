@@ -428,6 +428,9 @@ RV="$WORKDIR/runtime-version"
 project "$RV" '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } } }' no
 mkdir -p "$RV/.specify/extensions/gates"
 printf 'extension:\n  id: gates\n  version: "9.9.9"\n' >"$RV/.specify/extensions/gates/extension.yml"
+# A real install also registers the extension (otherwise it reads as an
+# interrupted install, #74).
+printf '{"extensions":{"gates":{"version":"9.9.9"}}}\n' >"$RV/.specify/extensions/.registry"
 printf '0.0.1\n' >"$RV/.specify/gates/.runtime-version"
 expect "runtime-version mismatch -> doctor exit 1" "$(run_doctor "$RV")" 1
 if grep -q "projected runtime is 0.0.1 but the installed extension is 9.9.9" "$RV/out.txt"; then
@@ -633,6 +636,58 @@ run_doctor "$IH" >/dev/null
 has "a --dev install is flagged" "$IH" "[rec] this is a --dev install"
 has "vendored scripts without +x are flagged" "$IH" "1 installed extension script(s) lack the execute bit"
 fx_cleanup "$IH"
+echo ""
+echo "=== git probe and --installed-only (#74) ==="
+GPD="$(fx_project)"
+(cd "$GPD" && GATES_TEST=1 bash .specify/extensions/gates/runtime/project.sh --skip-canary >/dev/null 2>&1)
+run_doctor "$GPD" >/dev/null
+has "a wired stub passes the probe (pre-commit)" "$GPD" "[ok]  pre-commit probe: the hook git runs reaches the gates pre-commit hook"
+has "a wired stub passes the probe (commit-msg)" "$GPD" "[ok]  commit-msg probe: the hook git runs reaches the gates commit-msg hook"
+printf '#!/bin/sh\nexit 0\n' >"$GPD/.git/hooks/commit-msg"
+chmod +x "$GPD/.git/hooks/commit-msg"
+run_doctor "$GPD" >/dev/null
+has "another tool's hook without the call-through fails (static)" "$GPD" "[MISSING] commit-msg (static): git runs .git/hooks/commit-msg, owned by another tool, and no file it reads calls .specify/gates/hooks/commit-msg"
+# A foreign hook that leaves a trace when it runs: doctor must not run it.
+# shellcheck disable=SC2016  # the hook body is written literally
+printf '#!/bin/sh\ntouch "$(git rev-parse --show-toplevel)/ran.txt"\nexec bash "$(git rev-parse --show-toplevel)/.specify/gates/hooks/commit-msg" "$@"\n' >"$GPD/.git/hooks/commit-msg"
+run_doctor "$GPD" >/dev/null
+has "a foreign hook with the call-through passes (static)" "$GPD" "[ok]  commit-msg (static): another tool owns the hook and calls the gates commit-msg hook"
+expect "doctor does not run a hook another tool owns" "$([[ -e "$GPD/ran.txt" ]] && echo ran || echo not-run)" "not-run"
+CLAUDE_PROJECT_DIR="$GPD" bash "$GPD/.specify/gates/doctor.sh" --probe-git >"$GPD/out.txt" 2>&1 || true
+has "--probe-git runs the full chain and it reaches gates" "$GPD" "[ok]  commit-msg probe: the hook git runs reaches the gates commit-msg hook"
+expect "--probe-git did run the foreign hook" "$([[ -e "$GPD/ran.txt" ]] && echo ran || echo not-run)" "ran"
+rm -f "$GPD/ran.txt"
+# husky layout: generated shims in .husky/_, the call-through in .husky/<hook>.
+mkdir -p "$GPD/.husky/_"
+printf '#!/bin/sh\ntouch ran.txt\nexit 1\n' >"$GPD/.husky/_/commit-msg"
+chmod +x "$GPD/.husky/_/commit-msg"
+# shellcheck disable=SC2016  # the husky script is written literally
+printf 'npx --no -- commitlint --edit "$1"\nbash .specify/gates/hooks/commit-msg "$@"\n' >"$GPD/.husky/commit-msg"
+git -C "$GPD" config core.hooksPath .husky/_
+run_doctor "$GPD" >/dev/null
+has "husky: the call-through in .husky/<hook> passes (static)" "$GPD" "[ok]  commit-msg (static)"
+expect "husky: doctor did not run the husky chain" "$([[ -e "$GPD/ran.txt" ]] && echo ran || echo not-run)" "not-run"
+git -C "$GPD" config --unset core.hooksPath
+fx_cleanup "$GPD"
+
+DOR="$(fx_project)"
+OUT_IO="$(cd "$DOR" && CLAUDE_PROJECT_DIR="$DOR" bash .specify/extensions/gates/runtime/doctor.sh --installed-only 2>&1)" && rc=0 || rc=$?
+expect "--installed-only on a dormant install exits 0" "$rc" "0"
+expect "--installed-only reports the dormant state" \
+    "$(grep -c 'installed; the runtime is not projected yet' <<<"$OUT_IO")" "1"
+mkdir -p "$DOR/.specify/gates"
+printf '0.3.6\n' >"$DOR/.specify/gates/.runtime-version"
+rm -rf "$DOR/.specify/extensions/gates"
+printf '{"extensions":{}}\n' >"$DOR/.specify/extensions/.registry"
+mkdir -p "$DOR/.specify/gates/lib"
+cp "$REPO_ROOT/extension/runtime/doctor.sh" "$DOR/.specify/gates/"
+cp "$REPO_ROOT/extension/runtime/lib/"*.sh "$DOR/.specify/gates/lib/"
+printf '{ "hooks": {} }\n' >"$DOR/.specify/gates/policy.json"
+OUT_IO="$(CLAUDE_PROJECT_DIR="$DOR" bash "$DOR/.specify/gates/doctor.sh" --installed-only 2>&1)" && rc=0 || rc=$?
+expect "--installed-only on a removed extension exits 1" "$rc" "1"
+run_doctor "$DOR" >/dev/null
+has "the full run names the half-done upgrade" "$DOR" "[MISSING] the gates extension was removed but not added back"
+fx_cleanup "$DOR"
 echo ""
 [[ "$SKIPPED" -gt 0 ]] && echo "$SKIPPED healthy-fixture case(s) skipped: this host lacks tools doctor requires."
 echo "$PASS of $TOTAL tests passed."
