@@ -32,8 +32,10 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
 - **The `rm` guard is narrowed to real root, home and system-path deletes.**
   `echo brainstorm /` and `rm -rf /tmp/<dir>` are no longer blocked. Root
   as a later argument (`rm -rf ./build /`) now is (#68).
-- `.specify/gates/attestations.jsonl` is gitignored, as documented: the
-  runtime writes `.specify/gates/.gitignore` (#69).
+- `.specify/gates/attestations.jsonl` is gitignored, as documented: init
+  and upgrade write `.specify/gates/.gitignore` while projecting, so the
+  entry lands in the upgrade commit, and the runtime adds it on any later
+  run that finds it missing (#69).
 
 ### Added
 
