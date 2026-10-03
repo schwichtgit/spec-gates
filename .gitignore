@@ -15,8 +15,9 @@ node_modules/
 # Claude Mind local memory store (session artifact, not project content)
 # Anchored nowhere: the plugin creates the lock in whatever directory the
 # session is working in, including spec directories.
-**/.claude/mind.mv2
-**/.claude/mind.mv2.lock
+# All of its files: the store, the lock, and the write-ahead log it writes
+# while a session runs (an accept block saw that one change mid-run).
+**/.claude/mind.*
 
 # Projected gate runtime: materialized from extension/runtime/ by CI (and by
 # /speckit.gates.init in real projects). Only .specify/gates/policy.json is
