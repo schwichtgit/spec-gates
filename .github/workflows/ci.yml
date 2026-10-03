@@ -145,3 +145,14 @@ jobs:
 
       - name: Run the suite under kcov and report coverage
         run: bash scripts/coverage.sh coverage
+
+      # The full kcov output (cobertura XML, HTML report, run log), for
+      # reading the per-line report and for diagnosing the merge.
+      - name: Upload the coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 14
+          if-no-files-found: warn
