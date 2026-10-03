@@ -105,7 +105,15 @@ find "$FIX" | sort >"$WORKDIR/listing-before"
 STAMP="$WORKDIR/stamp"
 touch "$STAMP"
 sleep 1
-expect "full suite on healthy fixture -> exit 0" "$(canary "$FIX")" 0
+if python3 -c 'import json, re' >/dev/null 2>&1; then
+    expect "full suite on healthy fixture -> exit 0" "$(canary "$FIX")" 0
+else
+    # Without python3 the PR hook refuses every PR command (#66), so the
+    # prhook canary reports a gap; it must be the only one (#92).
+    expect "no python3: the only gap is the PR hook" \
+        "$(CLAUDE_PROJECT_DIR="$FIX" bash "$FIX/.specify/gates/canary.sh" --json 2>/dev/null \
+            | jq -r '[.canaries[] | select(.status == "accepted") | .id] | join(",")')" prhook
+fi
 find "$FIX" | sort >"$WORKDIR/listing-after"
 expect "no file created or deleted in the project tree" \
     "$(diff "$WORKDIR/listing-before" "$WORKDIR/listing-after" >/dev/null 2>&1 && echo clean || echo dirty)" clean
