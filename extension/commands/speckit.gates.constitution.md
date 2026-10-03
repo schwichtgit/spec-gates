@@ -110,7 +110,8 @@ Build a `selections.json`:
 In **augment** mode, a selection that annotates an existing principle uses
 `"principle": "<exact existing heading text>"` instead of `name`/`body`
 (the body stays as the user wrote it); selections without a `principle` are
-appended as new principles.
+appended as new principles inside `## Core Principles`, numbered after the
+existing ones.
 
 ### 5. Draft and review
 
@@ -195,5 +196,13 @@ the remaining work is explicit). Remind the user that `doctor` and
   guess a profile or a set of decisions (FR-006).
 - **Decline leaves the repo byte-identical.** If the user abandons the
   session before step 6, nothing under `.specify/memory/` changes.
+- **Principles live under `## Core Principles`.** Only `###` headings in that
+  section are principles; sub-headings in other sections (Additional
+  Constraints, Governance) are prose and stay unannotated. A `gates:enforce`
+  marker outside Core Principles is malformed: `check` and doctor fail
+  naming its line, because an enforcement claim that is never checked is
+  worse than none. In augment mode, if the existing constitution has no
+  Core Principles section, say so before drafting: it declares no
+  principles, so there is nothing to annotate in place.
 - **`.specify/memory/constitution.md` is user-owned.** It is written once, on
   explicit approval, showing the full content first.

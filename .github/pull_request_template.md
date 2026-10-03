@@ -11,7 +11,7 @@
 
 - [ ] Agent (Claude hooks: protect-files / validate-bash / verify-quality / …)
 - [ ] Git (pre-commit / commit-msg)
-- [ ] CI (`ci/` templates or `.github/workflows/`)
+- [ ] CI (`extension/ci/` templates or `.github/workflows/`)
 - [ ] Runtime lib / `verify.sh`
 - [ ] Policy schema / template
 - [ ] Docs / tests only

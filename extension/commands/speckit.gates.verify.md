@@ -15,7 +15,14 @@ everywhere.
 $ARGUMENTS
 ```
 
-Optional: `--json` (machine-readable result, for workflow steps).
+Optional:
+
+- `--json`: one machine-readable result object, for workflow steps.
+- `--dry-run`: resolve the policy and list the checks without running
+  them.
+- `--accept <feature|all>`: also run the named incomplete feature's (or
+  every feature's) accept blocks, as information only. Features whose
+  `spec.md` says `**Status**: Complete` are enforced on every run anyway.
 
 ## Steps
 
@@ -29,3 +36,8 @@ Optional: `--json` (machine-readable result, for workflow steps).
    file is protected and policy changes are a human decision.
 4. Report the final state. If invoked by the after_implement hook, keep
    the report to a short summary plus any remaining failures.
+
+## Exit codes
+
+`0` = every gate green, `1` = internal error (a bad argument, an unreadable
+policy), `2` = at least one gate failed.

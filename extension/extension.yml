@@ -19,11 +19,18 @@ requires:
   # v0.12.4). The API still carries an RFC and an "experimental" label, so
   # treat it as evolving, not a frozen contract.
   speckit_version: ">=0.12.0"
+  # Tools the runtime needs (doctor checks each one). python3 needs the
+  # json module: the PR hook parses commands with it and refuses every PR
+  # command without it. project.sh refuses to run without cmp.
   tools:
     - name: jq
       required: true
     - name: git
-      required: false
+      required: true
+    - name: python3
+      required: true
+    - name: cmp
+      required: true
 
 provides:
   commands:
@@ -35,13 +42,13 @@ provides:
       description: "Run the full gate suite on demand (same checks as the Stop hook, pre-commit, and CI)"
     - name: speckit.gates.doctor
       file: commands/speckit.gates.doctor.md
-      description: "Check enforcement health: hooks wired, policy valid, runtime version matches extension"
+      description: "Check enforcement health: tools, hooks wired and proven, runtime current, upgrade safety, install hygiene, and the spec, contract and constitution gates"
     - name: speckit.gates.ci
       file: commands/speckit.gates.ci.md
-      description: "Project CI enforcement for a platform: github | gitlab | jenkins"
+      description: "Project CI enforcement for a platform: github | gitlab | jenkins (optionally --protect the default branch)"
     - name: speckit.gates.upgrade
       file: commands/speckit.gates.upgrade.md
-      description: "Re-project the enforcement runtime after an extension update (never touches policy.json)"
+      description: "Upgrade the extension and re-project the enforcement runtime through one reviewable step (never touches policy.json)"
     - name: speckit.gates.sync
       file: commands/speckit.gates.sync.md
       description: "Sync the policy baseline contract: pin, snapshot, and materialize the effective policy (--update moves the pin as a reviewable change)"

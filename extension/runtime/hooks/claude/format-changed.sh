@@ -9,16 +9,16 @@ set -uo pipefail
 # Stop hook: batch-format all changed files. Runs before verify-quality.sh.
 # Checks stop_hook_active for recursion guard.
 #
-# INFRA-019:
+# Policy:
 #   - Sources policy.sh so the formatter dispatch can consult per-tool
 #     exclude lists; without the loader, dispatch falls through unchanged.
 #   - Reads the hook's own severity field. severity=error -> tool failure
 #     blocks the stop with exit 2; severity=warning (default for this hook)
 #     -> failure logs WARNING and exits 0.
-#   - ADR-006 fallback: missing or unloadable policy emits a one-line stderr
-#     deprecation notice naming v0.2.0 and runs in legacy alpha.11 mode
-#     (no exclude filter, errors swallowed). Every fallback branch carries
-#     the `# REMOVE AT v0.2.0` marker so the v0.2.0 cut is mechanical.
+#   - Fallback: a missing or unloadable policy emits a one-line stderr
+#     notice and runs in legacy mode (no exclude filter, errors
+#     swallowed). Every fallback branch carries the `# REMOVE AT v0.2.0`
+#     marker so the cut is mechanical.
 
 if ! command -v jq >/dev/null 2>&1; then
     echo "gates: jq not found, skipping hook" \
@@ -40,7 +40,7 @@ PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null 
 GATES_LIB_DIR="$PROJECT_ROOT/.specify/gates/lib"
 POLICY_LIB="$GATES_LIB_DIR/policy.sh"
 
-# ADR-006 fallback decisions.
+# missing-policy fallback decisions.
 # REMOVE AT v0.2.0
 LEGACY_MODE=0
 SEVERITY="warning"

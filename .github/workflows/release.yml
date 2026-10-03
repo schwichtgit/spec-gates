@@ -106,7 +106,7 @@ jobs:
           specify extension add gates --from https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/gates-${VERSION}.zip
           \`\`\`
 
-          The zip is the installable package (flat, \`extension.yml\` at its root); the source archives are not installable.
+          The zip is the installable package (a \`gates/\` directory with \`extension.yml\` inside); the source archives are not installable.
 
           Verify the artifact (checksum, then sigstore keyless signature). Behind a proxy that treats \`.sha256\` as a checksum query (e.g. Artifactory), use \`sha256sum -c --ignore-missing SHA256SUMS\` instead of the per-file checksum:
 

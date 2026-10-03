@@ -3,7 +3,7 @@
 set -euo pipefail
 
 # Run every gate test suite. Exit nonzero if any suite fails. Used locally and
-# by the self-enforcement CI job (.github/workflows/gates.yml).
+# by the self-enforcement CI job (.github/workflows/ci.yml).
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 

@@ -7,11 +7,11 @@
 #   format_file <abs_path>         -- run the right formatter for $abs_path
 #   find_prettier_root <abs_path>  -- locate nearest package.json
 #
-# INFRA-019:
+# Notes:
 #   - The caller must source policy.sh before sourcing this file if it
 #     wants policy-driven exclude filtering. When the loader is unavailable
-#     (missing-policy fallback path -- ADR-006), format_file still runs but
-#     skips exclude filtering, matching alpha.11 behavior.
+#     (the hooks' missing-policy fallback), format_file still runs but
+#     skips exclude filtering.
 #   - format_file consults each tool's exclude list (prettier, markdownlint,
 #     and shell scope) before invoking the underlying tool and short-circuits
 #     silently if the project-relative path matches any glob.
@@ -129,7 +129,7 @@ _gates_run_tool() {
 # Returns 0 on success, on exclude-skip, or when no formatter is installed
 # for the extension. Returns nonzero only when a present formatter actually
 # fails on the path. Callers that care about severity (format-changed,
-# post-edit) check this rc; legacy callers can ignore it.
+# post-edit) check this rc; their missing-policy fallback ignores it.
 format_file() {
     local file_path="$1"
     [[ -z "$file_path" ]] && return 0
