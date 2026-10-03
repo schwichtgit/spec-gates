@@ -46,7 +46,7 @@ PR_OK=0
 python3 -c 'import json, re' >/dev/null 2>&1 || PR_OK=2
 
 WORKDIR="$(mktemp -d 2>/dev/null || mktemp -d -t gates-hooks)"
-trap '[[ -n "${WORKDIR:-}" && -d "$WORKDIR" ]] && rm -rf "$WORKDIR"' EXIT
+trap '[[ -n "${GATES_KEEP_TMP:-}" ]] || { [[ -n "${WORKDIR:-}" && -d "$WORKDIR" ]] && rm -rf "$WORKDIR"; }' EXIT
 
 # Project the runtime into <dir> with a custom orchestrator whose command is
 # <cmd> (use "true" to force a green gate, "false" to force a red one).

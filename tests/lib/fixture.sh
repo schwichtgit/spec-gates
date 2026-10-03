@@ -37,6 +37,9 @@ fx_registry() { # <dir> <version>
 }
 
 fx_cleanup() { # <dir>
+    # A coverage run keeps sandboxes: kcov reads a traced script's source
+    # when it processes the trace, which can be after cleanup (#98).
+    [[ -n "${GATES_KEEP_TMP:-}" ]] && return 0
     [[ -n "${1:-}" && -d "$1" ]] && rm -rf "$1"
     return 0
 }
