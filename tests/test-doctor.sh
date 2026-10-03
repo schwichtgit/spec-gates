@@ -42,6 +42,27 @@ expect() { # <name> <actual> <wanted>
     fi
 }
 
+# Doctor exits 1 whenever the host lacks a required tool: python3 (#66),
+# and every linter the fixture's policy enables. A "healthy fixture -> exit
+# 0" case proves nothing on such a host, so it is skipped there, visibly,
+# naming the missing tool (#89). LACK_BASE covers every fixture, LACK_ALL
+# the fixtures using $ALL (prettier, markdownlint, shellcheck).
+LACK_BASE=""
+python3 -c 'import json, re' >/dev/null 2>&1 || LACK_BASE="python3"
+LACK_ALL="$LACK_BASE"
+command -v shellcheck >/dev/null 2>&1 || LACK_ALL="${LACK_ALL:+$LACK_ALL, }shellcheck"
+[[ -x "$REPO_ROOT/node_modules/.bin/prettier" && -x "$REPO_ROOT/node_modules/.bin/markdownlint-cli2" ]] \
+    || LACK_ALL="${LACK_ALL:+$LACK_ALL, }node linters"
+SKIPPED=0
+healthy() { # <name> <actual-rc> <lacking-tools>: expect 0 unless the host lacks a tool
+    if [[ -n "$3" ]]; then
+        echo "SKIP: $1 (this host lacks $3)"
+        SKIPPED=$((SKIPPED + 1))
+        return 0
+    fi
+    expect "$1" "$2" 0
+}
+
 ALL='{ "hooks": { "prettier": {"include":["**/*.md"],"orchestrator":"none","severity":"error"}, "markdownlint": {"include":["**/*.md"],"orchestrator":"none","severity":"error"}, "shellcheck": {"include":["**/*.sh"],"orchestrator":"none","severity":"error"} } }'
 
 # jq + git are always present in the test environment, so "required" passes.
@@ -49,15 +70,17 @@ echo "=== all policy linters available -> exit 0 ==="
 if [[ -x "$REPO_ROOT/node_modules/.bin/prettier" ]]; then
     D="$WORKDIR/ok"
     project "$D" "$ALL" yes
-    expect "everything present -> exit 0" "$(run_doctor "$D")" 0
-    if grep -q "all required tooling present" "$D/out.txt"; then
-        echo "PASS: reports success"
-        PASS=$((PASS + 1))
-    else
-        echo "FAIL: success message"
-        FAIL=$((FAIL + 1))
+    healthy "everything present -> exit 0" "$(run_doctor "$D")" "$LACK_ALL"
+    if [[ -z "$LACK_ALL" ]]; then # skipped with the case above otherwise
+        TOTAL=$((TOTAL + 1))
+        if grep -q "all required tooling present" "$D/out.txt"; then
+            echo "PASS: reports success"
+            PASS=$((PASS + 1))
+        else
+            echo "FAIL: success message"
+            FAIL=$((FAIL + 1))
+        fi
     fi
-    TOTAL=$((TOTAL + 1))
 else
     echo "SKIP: linters-present case (run npm ci)"
 fi
@@ -119,7 +142,7 @@ cat >"$D/specs/200-wip/tasks.md" <<'EOF'
   false
   ```
 EOF
-expect "healthy discovery -> exit 0" "$(run_doctor "$D")" 0
+healthy "healthy discovery -> exit 0" "$(run_doctor "$D")" "$LACK_BASE"
 if grep -q "2 feature(s), 2 accept block(s) parsed, 1 complete" "$D/out.txt"; then
     echo "PASS: discovery counts reported"
     PASS=$((PASS + 1))
@@ -157,7 +180,7 @@ cat >"$D/specs/100-ready/tasks.md" <<'EOF'
 - [x] T001 Task one
 - [x] T002 Task two
 EOF
-expect "all-checked-not-Complete -> still exit 0" "$(run_doctor "$D")" 0
+healthy "all-checked-not-Complete -> still exit 0" "$(run_doctor "$D")" "$LACK_BASE"
 if grep -q "\[rec\] 100-ready — every task checked but Status is not Complete" "$D/out.txt"; then
     echo "PASS: completion nudge shown"
     PASS=$((PASS + 1))
@@ -176,7 +199,7 @@ git init -q "$GB"
 cp "$REPO_ROOT/extension/runtime/hooks/git/pre-commit" \
     "$REPO_ROOT/extension/runtime/hooks/git/commit-msg" "$GB/.git/hooks/"
 chmod +x "$GB/.git/hooks/pre-commit" "$GB/.git/hooks/commit-msg"
-expect "wired executable hooks -> exit 0" "$(run_doctor "$GB")" 0
+healthy "wired executable hooks -> exit 0" "$(run_doctor "$GB")" "$LACK_BASE"
 if grep -q "pre-commit installed, executable, delegates" "$GB/out.txt"; then
     echo "PASS: healthy hook reported ok"
     PASS=$((PASS + 1))
@@ -196,7 +219,7 @@ fi
 TOTAL=$((TOTAL + 1))
 printf '%s' '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } }, "git": { "protected_change_trailer": false } }' \
     >"$GB/.specify/gates/policy.json"
-expect "protected-change trailer off -> still exit 0" "$(run_doctor "$GB")" 0
+healthy "protected-change trailer off -> still exit 0" "$(run_doctor "$GB")" "$LACK_BASE"
 if grep -q "protected-change trailer disabled" "$GB/out.txt"; then
     echo "PASS: protected-change trailer reported disabled"
     PASS=$((PASS + 1))
@@ -239,7 +262,7 @@ for h in pre-commit commit-msg; do
     cp "$REPO_ROOT/extension/runtime/hooks/git/stub.sh" "$GB/.git/hooks/$h"
     chmod +x "$GB/.git/hooks/$h"
 done
-expect "stub hooks with projected targets -> exit 0" "$(run_doctor "$GB")" 0
+healthy "stub hooks with projected targets -> exit 0" "$(run_doctor "$GB")" "$LACK_BASE"
 if grep -q "commit-msg installed as a stub" "$GB/out.txt" && ! grep -q "is a copied hook" "$GB/out.txt"; then
     echo "PASS: stub recognized, no copied-hook nudge"
     PASS=$((PASS + 1))
@@ -255,7 +278,7 @@ TOTAL=$((TOTAL + 1))
 GW="$WORKDIR/git-boundary-wt"
 git -C "$GB" worktree add -q -b feat/wt "$GW" >/dev/null 2>&1
 cp "$GB/.specify/gates/doctor.sh" "$GW/.specify/gates/" 2>/dev/null || true
-expect "linked worktree with stubs -> exit 0" "$(run_doctor "$GW")" 0
+healthy "linked worktree with stubs -> exit 0" "$(run_doctor "$GW")" "$LACK_BASE"
 if grep -q "commit-msg installed as a stub" "$GW/out.txt"; then
     echo "PASS: doctor finds the shared hooks from a linked worktree"
     PASS=$((PASS + 1))
@@ -271,7 +294,7 @@ expect "stub with missing projected hook -> exit 1" "$(run_doctor "$GB")" 1
 rm -rf "$GB/.specify/gates/hooks"
 
 rm "$GB/.git/hooks/pre-commit" "$GB/.git/hooks/commit-msg"
-expect "hooks never installed -> nudge only, exit 0" "$(run_doctor "$GB")" 0
+healthy "hooks never installed -> nudge only, exit 0" "$(run_doctor "$GB")" "$LACK_BASE"
 if grep -q "pre-commit not installed" "$GB/out.txt"; then
     echo "PASS: uninstalled hooks get the [rec] nudge"
     PASS=$((PASS + 1))
@@ -295,7 +318,7 @@ D="$WORKDIR/contract-ok"
 project "$D" "$(jq -cn --arg src "$CB" '{hooks: {"verify-quality": {orchestrator: "none", severity: "error"}}, spec: {enabled: false}, extends: {source: $src, version: "v1.0.0"}}')" no
 cp "$REPO_ROOT/extension/runtime/contract.sh" "$D/.specify/gates/"
 CLAUDE_PROJECT_DIR="$D" bash "$D/.specify/gates/contract.sh" sync >/dev/null 2>&1
-expect "healthy contract -> exit 0" "$(run_doctor "$D")" 0
+healthy "healthy contract -> exit 0" "$(run_doctor "$D")" "$LACK_BASE"
 if grep -q "snapshot matches the pin" "$D/out.txt" && grep -q "deviations: 1 weakened" "$D/out.txt"; then
     echo "PASS: contract state and deviation inventory reported"
     PASS=$((PASS + 1))
@@ -356,7 +379,7 @@ else
     FAIL=$((FAIL + 1))
     TOTAL=$((TOTAL + 1))
 fi
-expect "zero-block Complete feature -> doctor exit 0 (no no-op flag)" "$(run_doctor "$NZ")" 0
+healthy "zero-block Complete feature -> doctor exit 0 (no no-op flag)" "$(run_doctor "$NZ")" "$LACK_BASE"
 if grep -q "suspected NO-OP gate: spec" "$NZ/out.txt"; then
     echo "FAIL: doctor still flags spec as a no-op for a zero-block feature"
     FAIL=$((FAIL + 1))
@@ -388,7 +411,7 @@ TOTAL=$((TOTAL + 1))
 # Non-executable projected gates scripts are a [rec] nudge, never a failure.
 chmod +x "$XB/.claude/hooks/gates/protect-files.sh"
 chmod -x "$XB/.specify/gates/verify.sh"
-expect "non-executable gates script -> still exit 0" "$(run_doctor "$XB")" 0
+healthy "non-executable gates script -> still exit 0" "$(run_doctor "$XB")" "$LACK_BASE"
 if grep -q "projected script(s) not executable" "$XB/out.txt"; then
     echo "PASS: gates-script exec nudge shown"
     PASS=$((PASS + 1))
@@ -417,7 +440,7 @@ fi
 TOTAL=$((TOTAL + 1))
 
 printf '9.9.9\n' >"$RV/.specify/gates/.runtime-version"
-expect "runtime-version match -> doctor exit 0" "$(run_doctor "$RV")" 0
+healthy "runtime-version match -> doctor exit 0" "$(run_doctor "$RV")" "$LACK_BASE"
 if grep -q "matches the installed extension" "$RV/out.txt"; then
     echo "PASS: match reported ok"
     PASS=$((PASS + 1))
@@ -479,7 +502,7 @@ project "$DN" "$ALL" yes
 mkdir -p "$DN/.specify/memory"
 printf '# C\n\n## Core Principles\n\n### I. X\n\nprose, no marker\n' >"$DN/.specify/memory/constitution.md"
 if [[ -x "$REPO_ROOT/node_modules/.bin/prettier" ]]; then
-    expect "constitution without markers -> not a doctor failure" "$(run_doctor "$DN")" 0
+    healthy "constitution without markers -> not a doctor failure" "$(run_doctor "$DN")" "$LACK_ALL"
 fi
 if grep -q "no enforcement annotations" "$DN/out.txt"; then
     echo "PASS: doctor nudges an un-annotated constitution"
@@ -509,7 +532,7 @@ x
 x
 EOF
 if [[ -x "$REPO_ROOT/node_modules/.bin/prettier" ]]; then
-    expect "all-enforced constitution -> doctor exit 0" "$(run_doctor "$DE")" 0
+    healthy "all-enforced constitution -> doctor exit 0" "$(run_doctor "$DE")" "$LACK_ALL"
 fi
 if grep -q "I. Enforced" "$DE/out.txt" && grep -q "II. Prose" "$DE/out.txt"; then
     echo "PASS: doctor lists enforced and prose-only principles"
@@ -574,6 +597,7 @@ has "a --no-agent-hooks projection is checked as one" "$U" "[ok]  projection mat
 fx_cleanup "$U"
 
 echo ""
+[[ "$SKIPPED" -gt 0 ]] && echo "$SKIPPED healthy-fixture case(s) skipped: this host lacks tools doctor requires."
 echo "$PASS of $TOTAL tests passed."
 [[ "$FAIL" -gt 0 ]] && exit 1
 exit 0
