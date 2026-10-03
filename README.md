@@ -476,7 +476,10 @@ bash tests/run.sh   # 14 suites: parity, gate, hooks, policy, doctor, canary, at
 
 The repo gates itself: `.github/workflows/ci.yml` projects the runtime and
 runs `verify.sh --boundary ci` (attestations and the parity gate included)
-plus the canary suite on every PR, alongside the tests. See the pull
+plus the canary suite on every PR, alongside the tests. A separate
+`coverage` job runs the suite under kcov and puts the runtime's line
+coverage per file in the job summary; it reports and never blocks. Locally
+(Linux, with kcov installed): `bash scripts/coverage.sh`. See the pull
 request template for the contribution checklist.
 
 ## License

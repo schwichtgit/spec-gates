@@ -109,3 +109,39 @@ jobs:
         run: |
           export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
           /bin/bash .specify/gates/canary.sh --only bash,protect,prhook,secret,credential,protected,branding,pr
+
+  # Line coverage of the shipped runtime (#98). Report only: the job never
+  # fails on the number (continue-on-error also keeps a suite failure under
+  # tracing from blocking the merge; the gates job is the one that gates).
+  # kcov comes from Debian, so this runs in the same node:26-slim image the
+  # container matrix uses. The per-file table lands in the job summary.
+  coverage:
+    runs-on: ubuntu-latest
+    container: node:26-slim
+    continue-on-error: true
+    timeout-minutes: 45
+    steps:
+      - name: Install tooling (git before checkout, so tags come along)
+        run: |
+          apt-get update -q
+          apt-get install -y -q git jq python3 shellcheck kcov
+
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Trust the checkout (the container runs as root)
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Install pinned linters (prettier, markdownlint-cli2)
+        run: npm ci
+
+      - name: Project the gate runtime
+        run: |
+          mkdir -p .specify/gates/lib
+          cp extension/runtime/verify.sh extension/runtime/doctor.sh extension/runtime/canary.sh extension/runtime/contract.sh extension/runtime/constitution.sh extension/runtime/pr-check.sh extension/runtime/project.sh .specify/gates/
+          cp extension/runtime/lib/*.sh .specify/gates/lib/
+          cp extension/runtime/policy.schema.json .specify/gates/
+
+      - name: Run the suite under kcov and report coverage
+        run: bash scripts/coverage.sh coverage
