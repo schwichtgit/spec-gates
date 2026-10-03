@@ -35,3 +35,6 @@ node_modules/
 
 # Gate run evidence (attestation log): disposable local artifact, never source.
 .specify/gates/attestations.jsonl
+
+# Coverage reports (scripts/coverage.sh): local run output, never source.
+coverage/
