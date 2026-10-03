@@ -318,6 +318,13 @@ one. It reads the tool call JSON on stdin (agent hooks) or gets the hook's
 arguments (`commit-msg` gets the message file as `$1`). Exit 0 allows;
 any other exit refuses, with the rule's stderr as the message.
 
+The rules are the project's, not the agent's: the agent cannot write or
+delete them (Write/Edit is refused, and a Bash command that appears to
+modify them asks you first), and a commit that adds, changes or removes
+one needs `Protected-Change: <path>` and `Approved-By: <name>` trailers,
+checked again in CI by `pr-check.sh`. The same Bash check covers
+`policy.json`, the constitution and every `protected_files.extra` entry.
+
 ```bash
 # .specify/gates/hooks.local.d/validate-bash/10-no-vendor-edits.sh
 if grep -q 'vendor/'; then echo "vendor/ is generated; run make vendor" >&2; exit 1; fi
