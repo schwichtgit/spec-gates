@@ -280,6 +280,102 @@ rc_is "a projected hook that cannot answer fails the proof" 1 "$D" --skip-canary
 ok "the failing hook is named" grep -q 'FAILED: git probe: git runs .git/hooks/commit-msg, but it does not reach the gates commit-msg hook' <<<"$OUT"
 
 echo ""
+echo "=== hook managers (#74b) ==="
+# yamlq <file> <js-expression over doc>: parse the YAML with js-yaml (from the
+# pinned toolchain) and print the expression; empty when node is missing.
+JSYAML="$REPO_ROOT/node_modules/js-yaml"
+yamlq() {
+    [[ -d "$JSYAML" ]] && command -v node >/dev/null 2>&1 || return 0
+    node -e "const y=require('$JSYAML');const doc=y.load(require('fs').readFileSync(process.argv[1],'utf8'));console.log($2)" "$1"
+}
+have_yaml() { [[ -d "$JSYAML" ]] && command -v node >/dev/null 2>&1; }
+
+# husky 9 layout: generated shims in .husky/_ (core.hooksPath), the user's
+# scripts in .husky/<hook>. The shim records that it ran.
+fixture
+mkdir -p "$D/.husky/_"
+for h in pre-commit commit-msg; do
+    # shellcheck disable=SC2016  # literal script or message text
+    printf '#!/bin/sh\ntouch "$(git rev-parse --show-toplevel)/ran.txt"\ns="$(dirname "$(dirname "$0")")/$(basename "$0")"\n[ -f "$s" ] || exit 0\nsh -e "$s" "$@"\n' >"$D/.husky/_/$h"
+    chmod +x "$D/.husky/_/$h"
+done
+printf 'npm test\n' >"$D/.husky/pre-commit"
+git -C "$D" config core.hooksPath .husky/_
+shims="$(cat "$D/.husky/_/pre-commit" "$D/.husky/_/commit-msg" | cksum)"
+rc_is "husky without --wire-manager -> exit 1" 1 "$D" --skip-canary
+ok "husky: the entry and file are printed" grep -q 'pre-commit: add to .husky/pre-commit' <<<"$OUT"
+ok "husky: .husky/pre-commit untouched without the flag" test "$(cat "$D/.husky/pre-commit")" = "npm test"
+rc_is "husky with --wire-manager" 0 "$D" --skip-canary --wire-manager
+ok "husky: user script keeps its line and gains the call-through" bash -c "head -n 1 '$D/.husky/pre-commit' | grep -qx 'npm test' && grep -qF '.specify/gates/hooks/pre-commit' '$D/.husky/pre-commit'"
+ok "husky: commit-msg script created with the call-through" grep -qF '.specify/gates/hooks/commit-msg' "$D/.husky/commit-msg"
+ok "husky: generated shims untouched" test "$shims" = "$(cat "$D/.husky/_/pre-commit" "$D/.husky/_/commit-msg" | cksum)"
+ok "husky: nothing written into .git/hooks" bash -c "! ls '$D/.git/hooks' | grep -qx pre-commit"
+ok "husky: the hooks were checked statically, not run" test ! -e "$D/ran.txt"
+rc_is "husky: a second run changes nothing" 0 "$D" --skip-canary --wire-manager
+ok "husky: still one call-through line" test "$(grep -cF '.specify/gates/hooks/pre-commit' "$D/.husky/pre-commit")" -eq 1
+
+# lefthook: config at the root, generated scripts in .git/hooks.
+fixture
+printf 'colors: false\n' >"$D/lefthook.yml"
+rc_is "lefthook without --wire-manager -> exit 1" 1 "$D" --skip-canary
+rc_is "lefthook with --wire-manager" 1 "$D" --skip-canary --wire-manager
+# shellcheck disable=SC2016  # literal script or message text
+ok "lefthook: tells the user to run lefthook install" grep -q 'now run `lefthook install`' <<<"$OUT"
+if have_yaml; then
+    ok "lefthook: the result parses and runs the gates pre-commit" test "$(yamlq "$D/lefthook.yml" 'doc["pre-commit"].commands["spec-gates"].run')" = "bash .specify/gates/hooks/pre-commit"
+    ok "lefthook: commit-msg passes the message file" test "$(yamlq "$D/lefthook.yml" 'doc["commit-msg"].commands["spec-gates"].run')" = "bash .specify/gates/hooks/commit-msg {1}"
+    ok "lefthook: existing keys kept" test "$(yamlq "$D/lefthook.yml" 'doc.colors')" = "false"
+else
+    echo "SKIP: no node + js-yaml; lefthook YAML not parsed"
+fi
+fixture
+printf 'pre-commit:\n  commands:\n    lint:\n      run: npm run lint\n' >"$D/lefthook.yml"
+cfg="$(cksum <"$D/lefthook.yml")"
+printf '#!/bin/sh\n# lefthook generated\nexit 0\n' >"$D/.git/hooks/pre-commit"
+chmod +x "$D/.git/hooks/pre-commit"
+rc_is "lefthook: an existing pre-commit key is not edited -> exit 1" 1 "$D" --skip-canary --wire-manager
+ok "lefthook: the by-hand entry is printed" grep -q 'add this by hand' <<<"$OUT"
+ok "lefthook: the existing block is untouched" bash -c "head -n 4 '$D/lefthook.yml' | cksum | grep -q '$(printf '%s' "$cfg" | cut -d' ' -f1)'"
+ok "lefthook: the absent commit-msg key was still added" grep -q '^commit-msg:' "$D/lefthook.yml"
+if have_yaml; then
+    ok "lefthook: the file still parses (no duplicate key)" test "$(yamlq "$D/lefthook.yml" 'doc["pre-commit"].commands.lint.run')" = "npm run lint"
+fi
+ok "lefthook: the generated hook is untouched" grep -q 'lefthook generated' "$D/.git/hooks/pre-commit"
+
+# pre-commit framework: .pre-commit-config.yaml; repos: last, both indents.
+for ind in "" "  "; do
+    fixture
+    printf 'default_stages: [pre-commit]\nrepos:\n%s- repo: https://github.com/pre-commit/pre-commit-hooks\n%s  rev: v4.6.0\n%s  hooks:\n%s    - id: trailing-whitespace\n' \
+        "$ind" "$ind" "$ind" "$ind" >"$D/.pre-commit-config.yaml"
+    rc_is "pre-commit (indent '${#ind}') with --wire-manager" 1 "$D" --skip-canary --wire-manager
+    if have_yaml; then
+        ok "pre-commit (indent '${#ind}'): parses with three repos" test "$(yamlq "$D/.pre-commit-config.yaml" 'doc.repos.length')" = "3"
+        ok "pre-commit (indent '${#ind}'): the gates pre-commit hook" test "$(yamlq "$D/.pre-commit-config.yaml" 'doc.repos[1].hooks[0].id + " " + doc.repos[1].hooks[0].stages')" = "spec-gates-pre-commit pre-commit"
+        ok "pre-commit (indent '${#ind}'): the gates commit-msg hook" test "$(yamlq "$D/.pre-commit-config.yaml" 'doc.repos[2].hooks[0].entry')" = "bash .specify/gates/hooks/commit-msg"
+    fi
+    ok "pre-commit (indent '${#ind}'): install hint for commit-msg" grep -q 'pre-commit install --hook-type commit-msg' <<<"$OUT"
+done
+fixture
+printf 'repos:\n- repo: local\n  hooks: []\nci:\n  autofix_prs: false\n' >"$D/.pre-commit-config.yaml"
+cfg="$(cksum <"$D/.pre-commit-config.yaml")"
+rc_is "pre-commit: repos: not last -> not edited, exit 1" 1 "$D" --skip-canary --wire-manager
+ok "pre-commit: file untouched" test "$cfg" = "$(cksum <"$D/.pre-commit-config.yaml")"
+ok "pre-commit: by-hand entry printed" grep -q 'add this by hand' <<<"$OUT"
+
+# Doctor reads the managers' config statically.
+fixture
+printf 'colors: false\n' >"$D/lefthook.yml"
+rc_is "lefthook wired for doctor" 1 "$D" --skip-canary --wire-manager
+for h in pre-commit commit-msg; do
+    # shellcheck disable=SC2016  # literal script or message text
+    printf '#!/bin/sh\n# lefthook\ntouch "$(git rev-parse --show-toplevel)/ran.txt"\n' >"$D/.git/hooks/$h"
+    chmod +x "$D/.git/hooks/$h"
+done
+OUT="$(cd "$D" && CLAUDE_PROJECT_DIR="$D" bash .specify/gates/doctor.sh 2>&1)" || true
+ok "doctor: lefthook entry found statically" grep -q 'commit-msg (static): another tool owns the hook and calls the gates commit-msg hook' <<<"$OUT"
+ok "doctor: lefthook hooks not run" test ! -e "$D/ran.txt"
+
+echo ""
 echo "=== refusals before writing ==="
 fixture
 rm -f "$D/.specify/gates/policy.json"

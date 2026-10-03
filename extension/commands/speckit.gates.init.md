@@ -86,11 +86,17 @@ Read the exit code:
 
 - `0`: projected, and every canary blocked.
 - `1`: a canary was accepted (a broken gate: report it and point at
-  `/speckit.gates.doctor`), or another tool owns a git hook. In that case
-  `project.sh` leaves the hook alone and prints the one call-through line
-  to add to it. Give the user that line and where it goes (for husky,
-  `.husky/<hook>`; for lefthook, a `run:` entry in `lefthook.yml`; never
-  the generated files in `.husky/_/` or `.git/hooks`).
+  `/speckit.gates.doctor`), or another tool owns the git hooks:
+  - **husky, lefthook or the pre-commit framework**: `project.sh` printed
+    the gates entry for that tool's own file (`.husky/<hook>`,
+    `lefthook.yml`, `.pre-commit-config.yaml`). Show it, ask the user, and
+    on approval re-run with `--wire-manager` to append it. If it says the
+    file cannot be appended to safely, give the user the entry to add by
+    hand. If it says to run `lefthook install` or `pre-commit install
+--hook-type commit-msg`, tell the user to run it (never run another
+    tool's installer yourself).
+  - **any other owner**: give the user the call-through line it printed.
+  - Never edit the generated files in `.husky/_/` or `.git/hooks`.
 - `2`: refused before writing; its message says why (no policy, an
   interrupted install, a corrupt `.projected.sha256`).
 - `3`: files projected earlier were changed locally. Treat it as
