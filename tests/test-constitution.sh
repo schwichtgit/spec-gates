@@ -499,6 +499,68 @@ chk_bad="$(CLAUDE_PROJECT_DIR="$CHK" bash "$CONST" check --constitution "$CHK/.s
 expect "check: malformed marker exits 1" "$rc" "1"
 expect_contains "check: malformed names the file and line" "$chk_bad" "bad.md:6: malformed marker"
 
+# --- scope: only ### under ## Core Principles are principles (#82) ----------
+
+PLIB="$REPO_ROOT/extension/runtime/lib/constitution.sh"
+cparse() { bash -c "source '$PLIB'; gates_const_parse '$1'"; }
+cat >"$WORKDIR/scope1.md" <<'MD'
+## Core Principles
+
+### I. Tests First
+<!-- gates:enforce surface=prose -->
+
+## Additional Constraints
+
+### Performance Budget
+Some prose.
+MD
+sc1="$(cparse "$WORKDIR/scope1.md")"
+expect "scope: ### under another section is not a principle" "$(grep -c '^PRINCIPLE' <<<"$sc1")" "1"
+expect_parse "scope: the Core Principles heading still is" "$sc1" "I. Tests First" "prose"
+cat >"$WORKDIR/scope2.md" <<'MD'
+## Core Principles
+
+### I. One
+
+## Governance
+
+### Amendments
+<!-- gates:enforce surface=prose -->
+MD
+sc2="$(cparse "$WORKDIR/scope2.md")"
+expect_contains "scope: a marker outside Core Principles is MALFORMED" "$sc2" "gates:enforce marker outside Core Principles"
+rc=0
+sc2chk="$(CLAUDE_PROJECT_DIR="$WORKDIR" bash "$CONST" check --constitution "$WORKDIR/scope2.md")" || rc=$?
+expect "scope: check fails on the misplaced marker" "$rc" "1"
+expect_contains "scope: check names its line" "$sc2chk" "scope2.md:8: malformed marker"
+printf '# C\n\n### Orphan\n' >"$WORKDIR/scope3.md"
+expect "scope: no Core Principles -> no principles, NOCORE" "$(cparse "$WORKDIR/scope3.md")" "NOCORE"
+sc3chk="$(CLAUDE_PROJECT_DIR="$WORKDIR" bash "$CONST" check --constitution "$WORKDIR/scope3.md" || true)"
+expect_contains "scope: check says the section is missing" "$sc3chk" "has no '## Core Principles' section"
+expect "scope: this repo's constitution keeps its 5 principles" \
+    "$(cparse "$REPO_ROOT/.specify/memory/constitution.md" | grep -c '^PRINCIPLE')" "5"
+cat >"$WORKDIR/scope4.md" <<'MD'
+# Legacy
+
+## Core Principles
+
+### I. Ship Fast
+
+Ship.
+
+## Governance
+
+### Amendments
+
+Reviewed.
+MD
+printf '%s' '{ "selections": [ { "name": "No Secrets", "surface": "scanner", "ref": "gitleaks:default", "body": "Never commit a secret." } ] }' \
+    >"$WORKDIR/scope4.json"
+run_const draft --corpus "$CORPUS" --selections "$WORKDIR/scope4.json" \
+    --out "$WORKDIR/scope4-out.md" --augment "$WORKDIR/scope4.md"
+expect_parse "scope: augment numbers after Core Principles only (II, not III)" \
+    "$(cparse "$WORKDIR/scope4-out.md")" "II. No Secrets" "scanner"
+
 # --- summary -----------------------------------------------------------------
 
 echo ""

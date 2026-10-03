@@ -450,6 +450,9 @@ if declare -f gates_const_check_raw >/dev/null 2>&1; then
                     UNANNOTATED)
                         [[ "$c1" -gt 0 ]] && echo "  $c1 principle(s) unannotated (informational)"
                         ;;
+                    NOCORE)
+                        echo "${REC}constitution.md has no '## Core Principles' section, so it declares no principles (#82)"
+                        ;;
                 esac
             done <<<"$CONST_RAW"
         else
