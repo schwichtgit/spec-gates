@@ -217,6 +217,37 @@ OUT="$(cd "$D" && bash "$P" --check 2>&1)" && rc=0 || rc=$?
 ok "--check exits 1 while a git hook is unwired" test "$rc" -eq 1
 
 echo ""
+echo "=== hooks.local.d and policy notices (#71) ==="
+fixture
+rc_is "initial projection" 0 "$D" --skip-canary
+mkdir -p "$D/.specify/gates/hooks.local.d/validate-bash"
+printf 'exit 0\n' >"$D/.specify/gates/hooks.local.d/validate-bash/10-mine.sh"
+localsum="$(cksum <"$D/.specify/gates/hooks.local.d/validate-bash/10-mine.sh")"
+printf '\n# newer upstream\n' >>"$D/.specify/extensions/gates/runtime/verify.sh"
+rc_is "upgrade with local rules present" 0 "$D" --skip-canary
+ok "local rule untouched" test "$localsum" = "$(cksum <"$D/.specify/gates/hooks.local.d/validate-bash/10-mine.sh")"
+ok "local rule not reported" bash -c "! grep -q hooks.local.d <<<\"\$1\"" _ "$OUT"
+ok "local rule not in the manifest" bash -c "! grep -q hooks.local.d '$D/.specify/gates/.projected.sha256'"
+fixture
+sed -i.b 's/^  version: .*/  version: "0.4.0"/' "$D/.specify/extensions/gates/extension.yml" && rm -f "$D/.specify/extensions/gates/extension.yml.b"
+fx_registry "$D" 0.4.0
+printf '0.3.6\n' >"$D/.specify/gates/.runtime-version"
+polsum="$(cksum <"$D/.specify/gates/policy.json")"
+rc_is "upgrade from 0.3.6 lists new policy settings" 0 "$D" --skip-canary
+ok "the new setting is named" grep -q 'git.block_bulk_staging (since 0.4.0, default false)' <<<"$OUT"
+ok "policy.json unchanged" test "$polsum" = "$(cksum <"$D/.specify/gates/policy.json")"
+fixture
+sed -i.b 's/^  version: .*/  version: "0.4.0"/' "$D/.specify/extensions/gates/extension.yml" && rm -f "$D/.specify/extensions/gates/extension.yml.b"
+fx_registry "$D" 0.4.0
+printf '0.3.6\n' >"$D/.specify/gates/.runtime-version"
+printf '{ "hooks": {}, "git": { "block_bulk_staging": false } }\n' >"$D/.specify/gates/policy.json"
+rc_is "a setting the policy already has is not listed" 0 "$D" --skip-canary
+ok "no notice for a set key" bash -c "! grep -q 'new policy settings' <<<\"\$1\"" _ "$OUT"
+fixture
+rc_is "a fresh install lists no settings" 0 "$D" --skip-canary
+ok "no notice on a fresh install" bash -c "! grep -q 'new policy settings' <<<\"\$1\"" _ "$OUT"
+
+echo ""
 echo "=== refusals before writing ==="
 fixture
 rm -f "$D/.specify/gates/policy.json"

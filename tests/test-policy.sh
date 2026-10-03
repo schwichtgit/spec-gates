@@ -442,6 +442,33 @@ else
     fail "malformed protected_change_trailer / ai_branding not rejected: $ERR_OUT"
 fi
 
+# 0.4.0 key: block_bulk_staging (issue #71).
+BULK_OK="$(write_policy bulk-ok '{
+  "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } },
+  "git": { "block_bulk_staging": true }
+}')"
+if gates_validate_policy "$BULK_OK" >/dev/null 2>&1; then
+    pass "git.block_bulk_staging accepted"
+else
+    fail "git.block_bulk_staging rejected"
+fi
+BULK_BAD="$(write_policy bulk-bad '{
+  "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } },
+  "git": { "block_bulk_staging": "yes" }
+}')"
+ERR_OUT="$(gates_validate_policy "$BULK_BAD" 2>&1 || true)"
+if echo "$ERR_OUT" | grep -q 'git: block_bulk_staging must be a boolean'; then
+    pass "non-boolean git.block_bulk_staging rejected"
+else
+    fail "non-boolean git.block_bulk_staging not rejected: $ERR_OUT"
+fi
+if jq -e '.properties.git.properties.block_bulk_staging | .default == false and ."x-since" == "0.4.0"' \
+    "$REPO_ROOT/extension/runtime/policy.schema.json" >/dev/null; then
+    pass "schema documents block_bulk_staging (default false, x-since 0.4.0)"
+else
+    fail "schema entry for block_bulk_staging missing or wrong"
+fi
+
 # Nested accessor tells "absent" (defaults) from "present but empty".
 if ! GATES_POLICY_FILE="$GOOD_SECTIONS" gates_policy_path_list git ai_branding terms >/dev/null \
     && [[ "$(GATES_POLICY_FILE="$NEW_GIT" gates_policy_path_list git ai_branding terms)" == "Gemini" ]] \

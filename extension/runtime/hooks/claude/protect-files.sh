@@ -100,16 +100,26 @@ case "$BASENAME" in
         ;;
 esac
 
-# Certificates
+# Certificates and key stores
 case "$BASENAME" in
-    *.pem|*.key|*.crt|*.p12|*.pfx)
+    *.pem|*.key|*.crt|*.p12|*.pfx|*.jks|*.keystore)
         BLOCKED="Certificate/key file"
         ;;
 esac
 
-# Credentials
-if echo "$BASENAME" | grep -qiE '(credentials|secret|password|token|keystore)'; then
-    BLOCKED="Credentials file"
+# Credentials (#71): an exact credential file name is strong evidence and
+# blocks. A sensitive word that merely appears in the name (a test such as
+# test_no_secret_leak.py, a token parser) asks the human instead: blocking
+# it outright left no way to edit such files at all.
+case "$BASENAME" in
+    credentials|credentials.json|credentials.yml|credentials.yaml|.netrc|.pypirc)
+        BLOCKED="Credentials file"
+        ;;
+esac
+NAMEASK=""
+if [[ -z "$BLOCKED" ]]; then
+    _word="$(echo "$BASENAME" | grep -oiE 'credentials|secret|password|token|keystore' | head -n 1 || true)"
+    [[ -n "$_word" ]] && NAMEASK="the file name contains '$_word'; confirm $FILE_PATH does not hold a credential"
 fi
 
 # Cloud configs
@@ -178,7 +188,27 @@ if [[ -n "$BLOCKED" ]]; then
     echo "File: $FILE_PATH" >&2
     exit 2
 fi
+
+# Project-owned rules (#71) run once no shipped rule blocked, so they can
+# add a refusal but never remove one. They run before any "ask": a project
+# refusal is stronger than a question.
+LROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+if compgen -G "$LROOT/.specify/gates/hooks.local.d/protect-files/*.sh" >/dev/null; then
+    LLIB="$LROOT/.specify/gates/lib/local-hooks.sh"
+    if [[ ! -f "$LLIB" ]] || ! bash -n "$LLIB" 2>/dev/null; then
+        ask "local rules exist in hooks.local.d/protect-files, but lib/local-hooks.sh cannot load; run /speckit.gates.doctor"
+    fi
+    # shellcheck source=/dev/null disable=SC1090
+    source "$LLIB"
+    if ! GATES_LOCAL_STDIN="$INPUT" gates_run_local "$LROOT" protect-files; then
+        echo "BLOCKED: $GATES_LOCAL_MSG" >&2
+        echo "File: $FILE_PATH" >&2
+        exit 2
+    fi
+fi
+
 [[ -n "$ASK" ]] && ask "$ASK"
+[[ -n "$NAMEASK" ]] && ask "$NAMEASK"
 
 if [[ -n "$DEGRADED" ]]; then
     echo "gates: protect-files checked in raw mode ($DEGRADED); run /speckit.gates.doctor" >&2

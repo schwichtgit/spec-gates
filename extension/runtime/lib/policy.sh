@@ -333,8 +333,8 @@ gates_validate_policy() {
     # sections.
     local section_errors
     section_errors="$(jq -r '
-        def git_keys: ["block_main_commits", "conventional_commits", "forbid_ai_isms", "protected_change_trailer", "ai_branding"];
-        def git_bool_keys: ["block_main_commits", "conventional_commits", "forbid_ai_isms", "protected_change_trailer"];
+        def git_keys: ["block_main_commits", "conventional_commits", "forbid_ai_isms", "protected_change_trailer", "block_bulk_staging", "ai_branding"];
+        def git_bool_keys: ["block_main_commits", "conventional_commits", "forbid_ai_isms", "protected_change_trailer", "block_bulk_staging"];
         def brand_keys: ["terms", "allow_phrases"];
         def att_keys: ["enabled", "max_records", "parity"];
         def parity_values: ["error", "warning", "off"];

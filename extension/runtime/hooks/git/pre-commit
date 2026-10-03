@@ -204,6 +204,23 @@ if [[ "${GATES_SKIP:-0}" != "1" ]]; then
     fi
 fi
 
+# --- Project-owned rules (#71): .specify/gates/hooks.local.d/pre-commit/ ---
+# They add refusals on top of the checks above and survive upgrades.
+if compgen -G "$PROJECT_ROOT/.specify/gates/hooks.local.d/pre-commit/*.sh" >/dev/null; then
+    LLIB="$PROJECT_ROOT/.specify/gates/lib/local-hooks.sh"
+    if [[ -f "$LLIB" ]] && bash -n "$LLIB" 2>/dev/null; then
+        # shellcheck source=/dev/null disable=SC1090
+        source "$LLIB"
+        if ! gates_run_local "$PROJECT_ROOT" pre-commit; then
+            echo "BLOCKED: $GATES_LOCAL_MSG" >&2
+            ERRORS=$((ERRORS + 1))
+        fi
+    else
+        echo "BLOCKED: local rules exist in hooks.local.d/pre-commit, but lib/local-hooks.sh cannot load" >&2
+        ERRORS=$((ERRORS + 1))
+    fi
+fi
+
 if [[ "$ERRORS" -gt 0 ]]; then
     echo "" >&2
     echo "Pre-commit failed: $ERRORS issue(s) found." >&2
