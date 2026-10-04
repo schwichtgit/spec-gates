@@ -13,6 +13,7 @@ set -uo pipefail
 #
 # v1 canary set:
 #   format  -- prettier-dirty file    -> verify.sh format gate     (exit 2)
+#   markdown -- MD018 heading         -> verify.sh markdownlint gate (exit 2)
 #   shell   -- SC2086-class script    -> verify.sh shellcheck gate (exit 2)
 #   bash    -- `rm -rf /` tool call, with and without jq on PATH
 #                                     -> validate-bash.sh hook     (exit 2)
@@ -68,7 +69,7 @@ done
 CANARY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 
-CANARY_SET="format shell bash protect prhook bulk local secret credential protected branding pr spec contract"
+CANARY_SET="format markdown shell bash protect prhook bulk local secret credential protected branding pr spec contract"
 
 if [[ -n "$ONLY" ]]; then
     IFS=',' read -r -a _only_ids <<<"$ONLY"
@@ -214,6 +215,28 @@ run_format_canary() {
         record format blocked "format gate (prettier) rejected a prettier-dirty file" 0
     else
         record format accepted "verify.sh exit $rc on a prettier-dirty file — the format gate (prettier) did not block" 1
+    fi
+}
+
+run_markdown_canary() {
+    if [[ -z "$(host_tool_bin markdownlint-cli2)" ]]; then
+        if host_policy_enables markdownlint; then
+            record markdown skipped "markdownlint-cli2 is policy-enabled but not installed — enforcement gap (markdownlint gate)" 1
+        else
+            record markdown skipped "markdownlint-cli2 not installed and not policy-enabled" 0
+        fi
+        return 0
+    fi
+    local d="$WORKDIR/markdown"
+    project_sandbox "$d" '{ "hooks": { "markdownlint": { "include": ["**/*.md"], "orchestrator": "none", "severity": "error" }, "verify-quality": { "orchestrator": "none", "severity": "error" } } }'
+    # MD018 (no space after the heading hash), on by default.
+    printf '#Bad heading\n' >"$d/probe.md" || setup_fail "markdown probe"
+    local rc
+    rc="$(sandbox_verify "$d")"
+    if [[ "$rc" -eq 2 ]]; then
+        record markdown blocked "markdownlint gate rejected a file with a known finding" 0
+    else
+        record markdown accepted "verify.sh exit $rc on a file with a known markdownlint finding — the markdownlint gate did not block" 1
     fi
 }
 
@@ -626,6 +649,7 @@ for id in $CANARY_SET; do
     want "$id" || continue
     case "$id" in
         format) run_format_canary ;;
+        markdown) run_markdown_canary ;;
         shell) run_shell_canary ;;
         bash) run_bash_canary ;;
         protect) run_protect_canary ;;

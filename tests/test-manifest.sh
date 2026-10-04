@@ -61,13 +61,16 @@ echo "=== projection table ==="
 T="$(gates_projection_table "$RT" 1)"
 for want in ".specify/gates/verify.sh" ".specify/gates/project.sh" ".specify/gates/lib/manifest.sh" \
     ".specify/gates/policy.schema.json" ".specify/gates/hooks/commit-msg" ".specify/gates/hooks/stub.sh" \
-    ".claude/hooks/gates/protect-files.sh"; do
+    ".claude/hooks/gates/protect-files.sh" ".specify/gates/install-shellcheck.sh" \
+    ".specify/gates/shellcheck.sha256"; do
     ok "table lists $want" grep -qF "$want" <<<"$T"
 done
 ok "table never lists hooks.local.d" bash -c "! grep -q hooks.local.d <<<\"\$1\"" _ "$T"
 ok "table never lists policy.json" bash -c "! grep -q 'policy.json\$' <<<\"\$1\"" _ "$T"
 ok "--no-agent-hooks drops .claude/hooks/gates" bash -c "! grep -q '.claude/hooks/gates' <<<\"\$1\"" _ "$(gates_projection_table "$RT" 0)"
+ok "table never lists the project's own shellcheck pins" bash -c "! grep -q shellcheck.local <<<\"\$1\"" _ "$T"
 ok "git hooks are exec targets" gates_is_exec_target .specify/gates/hooks/pre-commit
+ok "the shellcheck installer is an exec target" gates_is_exec_target .specify/gates/install-shellcheck.sh
 ok "schema is not an exec target" bash -c "source '$RT/lib/manifest.sh'; ! gates_is_exec_target .specify/gates/policy.schema.json"
 
 echo ""

@@ -35,7 +35,9 @@ create`; GitLab: `glab repo create` or the web UI; Jenkins: the SCM
      created-locally-only project fails here) before proceeding, and
      match the platform argument against the remote URL (warn on
      `gitlab` with a github.com remote and vice versa).
-1. Resolve the extension's `ci/<platform>/` directory.
+1. Resolve the extension's `ci/<platform>/` directory. The templates run
+   `.specify/gates/install-shellcheck.sh`; if it is missing, the projected
+   runtime predates it, so run `/speckit.gates.upgrade` first.
 2. Show the user what will be written:
    - github → `.github/workflows/gates.yml`
    - gitlab → merge the `gates` job fragment into `.gitlab-ci.yml`
@@ -59,6 +61,29 @@ create`; GitLab: `glab repo create` or the web UI; Jenkins: the SCM
    silent.
 4. Remind the user of the parity property: this job runs the same
    entrypoint as the Stop hook and pre-commit, so local green == CI green.
+   It holds only when CI resolves the same tool versions, so every template
+   installs them before the gate runs:
+   - node linters with `npm ci` from the lockfile (latest only when the
+     repository pins nothing);
+   - shellcheck with `bash .specify/gates/install-shellcheck.sh`, which
+     installs the version pinned in `.tool-versions` for the runner's OS
+     and architecture (linux and macOS, x86_64 and aarch64) and refuses a
+     download that does not match `.specify/gates/shellcheck.sha256`.
+     Without a `shellcheck` line in `.tool-versions` the templates install
+     the distro package instead (GitHub, GitLab) or use the agent's own
+     (Jenkins): unpinned, so offer to add the pin. spec-gates ships
+     checksums for the version it pins; for another version, set it in
+     `.tool-versions` and run
+     `bash .specify/gates/install-shellcheck.sh --update`, which reads the
+     release's published digests, checks them against a download, and
+     writes `.specify/gates/shellcheck.local.sha256` (commit it; upgrades
+     never touch it).
+
+   When merging into an existing pipeline, keep these install steps. The
+   `canary.sh` step fails when a linter the policy enables is not
+   installed, so a pipeline that installs nothing is red, never a green
+   run that linted nothing.
+
 5. Explain the PR/MR step (`pr-check.sh`). It checks the PR/MR title and
    description against the commit-message rules, and Protected-Change
    declarations across the PR's commits (declarations in the description

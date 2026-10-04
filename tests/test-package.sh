@@ -161,6 +161,123 @@ expect "no shipped line pipes into grep -q or head" "${PIPED:-none}" "none"
 # shellcheck disable=SC2001  # sed, not ${PIPED//...}: the slow form in bash 3.2
 [[ -n "$PIPED" ]] && sed "s|$REPO_ROOT/||; s/^/    /" <<<"$PIPED"
 
+# The CI templates install shellcheck with the projected installer (#138):
+# the pinned version, for the runner's architecture, checksum-verified.
+# Exercised offline: curl and uname are stubs, the release asset a local
+# tarball holding a fake shellcheck.
+echo ""
+echo "=== shellcheck installer ships and verifies (#138) ==="
+expect "installer ships in the runtime" "$(present "$STAGE/runtime/install-shellcheck.sh")" "yes"
+expect "installer checksums ship in the runtime" "$(present "$STAGE/runtime/shellcheck.sha256")" "yes"
+for plat in linux.x86_64 linux.aarch64; do
+    expect "shipped checksums cover shellcheck $PINNED_SC on $plat" \
+        "$(awk -v a="shellcheck-v$PINNED_SC.$plat.tar.xz" '$2 == a { n++ } END { print n + 0 }' \
+            "$STAGE/runtime/shellcheck.sha256")" "1"
+done
+expect "shipped checksums match this repository's own CI pins" \
+    "$(cmp -s "$REPO_ROOT/extension/runtime/shellcheck.sha256" "$REPO_ROOT/.github/shellcheck.sha256" && echo same || echo differ)" "same"
+
+IW="$WORKDIR/installer"
+mkdir -p "$IW/proj/.specify/gates" "$IW/stub" "$IW/asset/shellcheck-v9.9.9" "$IW/evil/shellcheck-v9.9.9"
+cp "$REPO_ROOT/extension/runtime/install-shellcheck.sh" "$IW/proj/.specify/gates/"
+printf '#!/bin/sh\necho "version: 9.9.9"\n' >"$IW/asset/shellcheck-v9.9.9/shellcheck"
+printf '#!/bin/sh\necho "version: 6.6.6"\n' >"$IW/evil/shellcheck-v9.9.9/shellcheck"
+chmod +x "$IW/asset/shellcheck-v9.9.9/shellcheck" "$IW/evil/shellcheck-v9.9.9/shellcheck"
+cat >"$IW/stub/curl" <<'EOF'
+#!/bin/bash
+out="" url=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -o) out="$2"; shift 2 ;;
+        -*) shift ;;
+        *) url="$1"; shift ;;
+    esac
+done
+printf '%s\n' "$url" >>"$STUB_LOG"
+case "$url" in
+    *api.github.com*) cp "$STUB_RELEASE" "$out" ;;
+    *) cp "$STUB_ASSET" "$out" ;;
+esac
+EOF
+cat >"$IW/stub/uname" <<'EOF'
+#!/bin/bash
+case "$1" in
+    -s) echo "$STUB_OS" ;;
+    -m) echo "$STUB_ARCH" ;;
+esac
+EOF
+chmod +x "$IW/stub/curl" "$IW/stub/uname"
+if (cd "$IW/asset" && tar -cJf "$IW/good.tar.xz" shellcheck-v9.9.9) 2>/dev/null \
+    && (cd "$IW/evil" && tar -cJf "$IW/evil.tar.xz" shellcheck-v9.9.9) 2>/dev/null; then
+    if command -v sha256sum >/dev/null 2>&1; then
+        GOOD_SHA="$(sha256sum "$IW/good.tar.xz" | cut -d' ' -f1)"
+    else
+        GOOD_SHA="$(shasum -a 256 "$IW/good.tar.xz" | cut -d' ' -f1)"
+    fi
+    write_sums() { # <file> <platform>...
+        local f="$1" p
+        shift
+        : >"$f"
+        for p in "$@"; do printf '%s  shellcheck-v9.9.9.%s.tar.xz\n' "$GOOD_SHA" "$p" >>"$f"; done
+    }
+    write_sums "$IW/proj/.specify/gates/shellcheck.sha256" linux.x86_64 linux.aarch64
+    printf '# pins\nshellcheck 9.9.9\n' >"$IW/proj/.tool-versions"
+    # inst <os> <arch> <asset> [args...] -> exit code; output in $IW/out
+    inst() {
+        local os="$1" arch="$2" asset="$3" rc=0
+        shift 3
+        rm -rf "${IW:?}/bin"
+        : >"$IW/log"
+        PATH="$IW/stub:$PATH" CLAUDE_PROJECT_DIR="$IW/proj" STUB_OS="$os" STUB_ARCH="$arch" \
+            STUB_ASSET="$asset" STUB_LOG="$IW/log" STUB_RELEASE="$IW/release.json" \
+            bash "$IW/proj/.specify/gates/install-shellcheck.sh" "${@:-$IW/bin}" >"$IW/out" 2>&1 || rc=$?
+        echo "$rc"
+    }
+
+    expect "linux x86_64: pinned version installs" "$(inst Linux x86_64 "$IW/good.tar.xz")" "0"
+    expect "linux x86_64: the installed binary is the pinned one" \
+        "$("$IW/bin/shellcheck" --version 2>/dev/null)" "version: 9.9.9"
+    expect "linux x86_64: downloads the x86_64 asset of the pinned release" \
+        "$(cat "$IW/log")" "https://github.com/koalaman/shellcheck/releases/download/v9.9.9/shellcheck-v9.9.9.linux.x86_64.tar.xz"
+    expect "linux aarch64: installs" "$(inst Linux aarch64 "$IW/good.tar.xz")" "0"
+    expect "linux aarch64: downloads the aarch64 asset" \
+        "$(grep -c 'shellcheck-v9.9.9.linux.aarch64.tar.xz$' "$IW/log")" "1"
+    expect "arm64 is read as aarch64" "$(inst Linux arm64 "$IW/good.tar.xz")" "0"
+    expect "tampered download: refused" "$(inst Linux x86_64 "$IW/evil.tar.xz")" "1"
+    expect "tampered download: reported as a checksum mismatch" \
+        "$(grep -c 'checksum mismatch for shellcheck-v9.9.9.linux.x86_64.tar.xz' "$IW/out")" "1"
+    expect "tampered download: nothing installed" "$(present "$IW/bin/shellcheck")" "no"
+    expect "platform without a pinned checksum: refused" "$(inst Darwin arm64 "$IW/good.tar.xz")" "1"
+    expect "platform without a pinned checksum: says so" \
+        "$(grep -c 'no pinned checksum for shellcheck-v9.9.9.darwin.aarch64.tar.xz' "$IW/out")" "1"
+    expect "platform without a pinned checksum: nothing downloaded" "$(wc -l <"$IW/log" | tr -d ' ')" "0"
+    expect "unsupported architecture: refused" "$(inst Linux riscv64 "$IW/good.tar.xz")" "1"
+    write_sums "$IW/proj/.specify/gates/shellcheck.local.sha256" darwin.aarch64
+    expect "a project pin in shellcheck.local.sha256 is honoured" "$(inst Darwin arm64 "$IW/good.tar.xz")" "0"
+    rm -f "$IW/proj/.specify/gates/shellcheck.local.sha256"
+
+    # --update: digests come from the release API and must match a fresh
+    # download; the pins land in shellcheck.local.sha256, other versions kept.
+    jq -n --arg d "sha256:$GOOD_SHA" '{assets: [("darwin.aarch64", "darwin.x86_64", "linux.aarch64", "linux.x86_64")
+        | {name: "shellcheck-v9.9.9.\(.).tar.xz", digest: $d}]}' >"$IW/release.json"
+    printf 'abc  shellcheck-v1.0.0.linux.x86_64.tar.xz\n' >"$IW/proj/.specify/gates/shellcheck.local.sha256"
+    expect "--update pins the version in .tool-versions" "$(inst Linux x86_64 "$IW/good.tar.xz" --update)" "0"
+    expect "--update writes all four platforms" \
+        "$(grep -c "^$GOOD_SHA  shellcheck-v9.9.9\." "$IW/proj/.specify/gates/shellcheck.local.sha256")" "4"
+    expect "--update keeps the pins of other versions" \
+        "$(grep -c 'shellcheck-v1.0.0.linux.x86_64.tar.xz' "$IW/proj/.specify/gates/shellcheck.local.sha256")" "1"
+    expect "--update leaves the shipped checksums alone" \
+        "$(wc -l <"$IW/proj/.specify/gates/shellcheck.sha256" | tr -d ' ')" "2"
+    expect "--update refuses a download that differs from the published digest" \
+        "$(inst Linux x86_64 "$IW/evil.tar.xz" --update)" "1"
+
+    printf 'nodejs 22\n' >"$IW/proj/.tool-versions"
+    expect "no shellcheck pin in .tool-versions: refused" "$(inst Linux x86_64 "$IW/good.tar.xz")" "1"
+    expect "no shellcheck pin: says so" "$(grep -c 'declares no shellcheck version' "$IW/out")" "1"
+else
+    echo "SKIP: tar cannot write .tar.xz here (install xz to run the installer checks)"
+fi
+
 echo ""
 echo "test-package: $PASS/$TOTAL passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]

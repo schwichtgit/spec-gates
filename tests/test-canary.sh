@@ -240,6 +240,39 @@ else
         "$(canary "$NOPIN" --only format)" 1
 fi
 
+# markdownlint had no canary, so a CI job that installed no linters stayed
+# green under a policy enabling it (#138).
+echo ""
+echo "=== markdown canary (#138) ==="
+if command -v markdownlint-cli2 >/dev/null 2>&1; then
+    skip "markdownlint gap checks" "a global markdownlint-cli2 is on PATH"
+else
+    NOML="$WORKDIR/no-markdownlint"
+    project_fixture "$NOML"
+    rm -f "$NOML/node_modules"
+    printf '%s' '{"hooks":{"verify-quality":{"orchestrator":"none","severity":"error"}}}' \
+        >"$NOML/.specify/gates/policy.json"
+    expect "markdownlint absent + not policy-enabled -> skipped, exit 0" \
+        "$(canary "$NOML" --only markdown)" 0
+    printf '%s' '{"hooks":{"markdownlint":{"include":["**/*.md"],"orchestrator":"none","severity":"error"},"verify-quality":{"orchestrator":"none","severity":"error"}}}' \
+        >"$NOML/.specify/gates/policy.json"
+    expect "markdownlint absent but policy-enabled -> enforcement gap, exit 1" \
+        "$(canary "$NOML" --only markdown)" 1
+    expect "the gap names markdownlint" \
+        "$(CLAUDE_PROJECT_DIR="$NOML" bash "$NOML/.specify/gates/canary.sh" --json --only markdown \
+            | jq -r '.canaries[0].outcome' | grep -c 'markdownlint-cli2 is policy-enabled but not installed' || true)" 1
+fi
+if have_node_linters; then
+    expect "markdownlint installed: markdown canary blocked (exit 0)" \
+        "$(canary "$FIX" --only markdown)" 0
+    printf '#!/bin/bash\nexit 0\n' >"$FIX/.specify/gates/lib/formatter-dispatch.sh"
+    expect "no-op dispatch -> markdown canary fails (exit 1)" \
+        "$(canary "$FIX" --only markdown)" 1
+    cp "$REPO_ROOT/extension/runtime/lib/formatter-dispatch.sh" "$FIX/.specify/gates/lib/"
+else
+    skip "markdown canary blocking checks" "run npm ci to install pinned markdownlint-cli2"
+fi
+
 echo ""
 echo "$PASS passed, $FAIL failed, $SKIP skipped ($TOTAL total)"
 [[ "$FAIL" -gt 0 ]] && exit 1

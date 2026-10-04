@@ -31,6 +31,8 @@ node_modules/
 .specify/gates/constitution.sh
 .specify/gates/pr-check.sh
 .specify/gates/project.sh
+.specify/gates/install-shellcheck.sh
+.specify/gates/shellcheck.sha256
 .specify/gates/lib/
 .specify/gates/policy.schema.json
 

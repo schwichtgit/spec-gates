@@ -127,6 +127,20 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   printed "Config templates not scaffolded". The policy lives at
   `.specify/gates/policy.json` and `/speckit.gates.init` seeds it; the
   manifest no longer declares a config file.
+- **The CI templates install the pinned shellcheck, and Jenkins installs
+  its linters** (#138). The GitHub and GitLab templates installed the
+  distro shellcheck (0.9.0), which the parity gate rejects against a
+  `.tool-versions` pin. They now run `.specify/gates/install-shellcheck.sh`,
+  projected with the runtime, which installs the pinned version for the
+  runner's OS and architecture and refuses a download that does not match
+  `shellcheck.sha256` (`--update` pins another version in
+  `shellcheck.local.sha256`); without a pin they fall back to the distro
+  package. The Jenkins fragment ran no `npm ci` and installed nothing, so
+  on a bare agent it passed having linted nothing; it now installs both.
+  A new `markdown` canary proves the markdownlint gate blocks and, like
+  the format and shell canaries, fails the run when the policy enables
+  markdownlint but it is not installed, so every template's canary step
+  is red when a policy-enabled linter is missing.
 - **Checks no longer miss matches on large input** (#117). Under
   `pipefail`, `echo "$x" | grep -q` read a match as a miss once the input
   outgrew the pipe buffer, so the pre-commit secret scan let a key through

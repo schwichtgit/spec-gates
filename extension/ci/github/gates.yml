@@ -35,7 +35,19 @@ jobs:
       - name: Install gate tooling
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q jq shellcheck
+          sudo apt-get install -y -q jq
+          # Install shellcheck at the version pinned in .tool-versions, from
+          # the upstream release for this runner's architecture, refused
+          # unless it matches the checksums in
+          # .specify/gates/shellcheck.sha256 (apt ships an older release
+          # whose findings differ; the parity gate fails on the drift).
+          # Without a pin, the distro package is installed instead:
+          # unpinned, so CI and local runs may disagree.
+          if grep -qs '^shellcheck[[:space:]]' .tool-versions; then
+            bash .specify/gates/install-shellcheck.sh
+          else
+            sudo apt-get install -y -q shellcheck
+          fi
           # Lockfile-pinned linters keep CI on the versions local runs use
           # (the parity gate compares them); fall back to the latest only
           # when the repo pins nothing.
@@ -47,7 +59,8 @@ jobs:
       - name: Run quality gates
         run: bash .specify/gates/verify.sh --boundary ci
       # A red step here means a BROKEN GATE, not a dirty tree: a canary
-      # (known violation) was accepted instead of blocked.
+      # (known violation) was accepted instead of blocked, or a linter the
+      # policy enables is not installed (the gate would skip it).
       - name: Prove the gate still blocks (canaries)
         run: bash .specify/gates/canary.sh
       # PR title/description against the commit-message rules, and

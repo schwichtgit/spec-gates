@@ -55,7 +55,7 @@ gates_version_cmp() { # <a> <b>
 gates_projection_table() { # <runtime-dir> <agent-hooks:0|1>
     local src="$1" agent="${2:-1}" f n
     for n in verify.sh doctor.sh canary.sh contract.sh constitution.sh pr-check.sh project.sh \
-        policy.schema.json; do
+        install-shellcheck.sh shellcheck.sha256 policy.schema.json; do
         [[ -f "$src/$n" ]] && printf '%s\t%s\n' "$n" ".specify/gates/$n"
     done
     for f in "$src"/lib/*.sh; do
