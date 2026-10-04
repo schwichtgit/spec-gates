@@ -408,6 +408,15 @@ fixture
 rm -f "$D/.specify/gates/policy.json"
 rc_is "no policy.json -> exit 2" 2 "$D" --skip-canary
 ok "nothing projected without a policy" test ! -e "$D/.specify/gates/verify.sh"
+# An invalid policy would leave every boundary refusing to run (#124).
+for bad in '{"version":' '{}' '{ "hooks": {}, "attestation": { "max_records": 0 } }'; do
+    fixture
+    printf '%s' "$bad" >"$D/.specify/gates/policy.json"
+    rc_is "invalid policy $bad -> exit 2" 2 "$D" --skip-canary
+    ok "invalid policy $bad: refusal names it" grep -qF 'the policy is invalid; fix it before projecting' <<<"$OUT"
+    ok "invalid policy $bad: nothing projected" test ! -e "$D/.specify/gates/verify.sh"
+done
+ok "invalid policy: the validator's error is shown" grep -qF 'attestation: max_records must be an integer >= 1' <<<"$OUT"
 fixture
 fx_registry "$D" 9.9.9
 rc_is "registry/vendored mismatch -> exit 2" 2 "$D" --skip-canary

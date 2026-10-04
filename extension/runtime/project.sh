@@ -124,6 +124,15 @@ VERSION="$(gates_extension_version "$SRC/../extension.yml")"
 [[ -n "$VERSION" ]] || refuse "cannot read the extension version from $SRC/../extension.yml"
 [[ -f "$ROOT/.specify/gates/policy.json" ]] \
     || refuse "no .specify/gates/policy.json yet. /speckit.gates.init infers and approves the policy before projecting."
+# Validated by the runtime being projected, since that is what will enforce
+# it: projecting under an invalid policy would leave every boundary refusing
+# to run (#124).
+[[ -f "$SRC/lib/policy.sh" ]] || refuse "runtime library $SRC/lib/policy.sh is missing; reinstall the extension"
+# shellcheck source=/dev/null disable=SC1090,SC1091
+source "$SRC/lib/policy.sh"
+if ! POLICY_ERR="$(gates_validate_policy "$(CLAUDE_PROJECT_DIR="$ROOT" gates_policy_file)" 2>&1)"; then
+    refuse "the policy is invalid; fix it before projecting:" "$POLICY_ERR"
+fi
 
 gates_manifest_load "$ROOT"
 if [[ "$GATES_MANIFEST_STATUS" == "corrupt" ]]; then

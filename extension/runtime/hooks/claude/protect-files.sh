@@ -176,11 +176,12 @@ if [[ -z "$BLOCKED" ]]; then
             || ! command -v gates_policy_section_list >/dev/null 2>&1; then
             ask "the gates policy library failed to load, so protected_files.extra cannot be checked; run /speckit.gates.doctor"
         fi
-        # The reader returns no entries for an unparseable policy, which
-        # would read as "nothing protected".
+        # The reader returns no entries for an unparseable or malformed
+        # policy, which would read as "nothing protected". Same validation
+        # verify.sh refuses on (#124).
         _pf="$(gates_policy_file)"
-        if [[ -f "$_pf" ]] && ! jq -e . "$_pf" >/dev/null 2>&1; then
-            ask "$_pf is not valid JSON, so protected_files.extra cannot be checked; run /speckit.gates.doctor"
+        if [[ -f "$_pf" ]] && ! gates_validate_policy "$_pf" >/dev/null 2>&1; then
+            ask "$_pf is invalid (verify.sh refuses it), so protected_files.extra cannot be checked; run /speckit.gates.doctor"
         fi
         REL="$FILE_PATH"
         [[ "$FILE_PATH" == "$PROJECT_ROOT/"* ]] && REL="${FILE_PATH#"$PROJECT_ROOT"/}"

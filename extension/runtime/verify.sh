@@ -20,20 +20,38 @@ set -euo pipefail
 # blocks as informational output (feature 002); complete features are
 # enforced on every run regardless.
 #
-# Exit codes: 0 = all gates green, 1 = internal error, 2 = gate failure.
+# Exit codes: 0 = all gates green, 1 = internal error (bad arguments, no jq,
+# no or invalid policy; no gate ran), 2 = gate failure.
 
 BOUNDARY="unspecified"
 JSON=0
 DRY_RUN=0
 ACCEPT_ARG=""
 
+usage() { # <message>: argument error, exit 1
+    echo "gates: $1" >&2
+    echo "usage: verify.sh --boundary agent|git|ci [--json] [--dry-run] [--accept <feature|all>]" >&2
+    exit 1
+}
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --boundary) BOUNDARY="${2:?}"; shift 2 ;;
+        --boundary)
+            [[ $# -ge 2 && "$2" != -* ]] || usage "--boundary needs a value (agent, git or ci)"
+            case "$2" in
+                agent | git | ci) BOUNDARY="$2" ;;
+                *) usage "--boundary: invalid value: $2 (allowed: agent, git, ci)" ;;
+            esac
+            shift 2
+            ;;
         --json)     JSON=1; shift ;;
         --dry-run)  DRY_RUN=1; shift ;;
-        --accept)   ACCEPT_ARG="${2:?}"; shift 2 ;;
-        *) echo "gates: unknown argument: $1" >&2; exit 1 ;;
+        --accept)
+            [[ $# -ge 2 && "$2" != -* ]] || usage "--accept needs a feature name or all"
+            ACCEPT_ARG="$2"
+            shift 2
+            ;;
+        *) usage "unknown argument: $1" ;;
     esac
 done
 
@@ -60,6 +78,16 @@ source "$GATES_DIR/lib/attest.sh"
 source "$GATES_DIR/lib/spec-gate.sh"
 # shellcheck source=lib/contract.sh disable=SC1091
 source "$GATES_DIR/lib/contract.sh"
+
+# The loader reads the policy fail-open (a missing or unreadable field is a
+# default), so a malformed or schema-invalid policy would silently drop
+# gates. Refuse it like a missing policy (#124), before any gate runs: the
+# same exit 1, which the Stop hook treats as a setup error (it allows the
+# stop and says why) and the git and CI boundaries as a failure.
+if ! gates_validate_policy "$(gates_policy_file)"; then
+    echo "gates: invalid policy, no gate ran; fix the errors above (run /speckit.gates.doctor)" >&2
+    exit 1
+fi
 
 FAILED=0
 WARNINGS=0

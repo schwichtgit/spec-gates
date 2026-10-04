@@ -183,6 +183,24 @@ Dispatch follows the policy's `verify-quality.orchestrator`:
 Exit codes: `0` green, `1` internal error, `2` gate failure. `--json`
 emits a single machine-readable object for workflow steps and CI.
 
+**An invalid policy runs no gate.** Before any gate, `verify.sh` validates
+the policy it enforces (`policy.json`, or `policy.effective.json` in a
+contract repo) with the same check as `policy.sh validate`: malformed
+JSON, a missing `hooks` object, an unknown field or a wrong value (a
+severity of `Error`, a `spec.timeout_s` of `"abc"`, an
+`attestation.max_records` of `0`) is refused with exit `1` and the
+validator's errors, exactly like a missing policy. The policy reader treats
+an unreadable field as its default, so without this check a typo would
+silently drop gates while every boundary passed. The git and CI
+boundaries fail on exit `1`. The Stop hook treats it as a setup error: it
+prints the errors and lets the session stop, because an agent must never be
+locked in by a broken configuration. The other agent hooks match:
+`protect-files` asks before every edit (it cannot tell what the policy
+protects), `post-edit` and `format-changed` format nothing, and doctor
+reports the policy as `[MISSING]`; `project.sh` refuses to project under
+it. A bad `--boundary` value, or `--boundary` or `--accept` without a
+value, is a usage error (exit `1`).
+
 ## Evidence, canaries, and verified parity
 
 Three separate silent-no-op enforcement bugs in this project's own history

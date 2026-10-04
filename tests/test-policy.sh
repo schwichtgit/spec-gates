@@ -812,6 +812,50 @@ else
     fail "non-object root not rejected: $ERR_OUT"
 fi
 
+# --- 7: schema rules the validator used to miss (#124) ---
+# verify.sh now refuses whatever this rejects, so a validator that passes a
+# schema-invalid policy is a gate that silently drops checks.
+echo ""
+echo "=== schema-invalid shapes rejected ==="
+
+# <name> <policy-json> <rc> <needle>
+rejects() {
+    local f out rc=0
+    f="$(write_policy "$1" "$2")"
+    out="$(gates_validate_policy "$f" 2>&1)" || rc=$?
+    if [[ "$rc" == "$3" ]] && grep -qF -- "$4" <<<"$out"; then
+        pass "$1 rejected (rc $3)"
+    else
+        fail "$1: rc $rc, output: $out"
+    fi
+}
+rejects empty-file '' 4 'top-level "hooks" object'
+rejects two-documents '{"hooks":{}} {"hooks":5}' 4 'top-level "hooks" object'
+rejects hook-string '{ "hooks": { "prettier": "on" } }' 5 'prettier: must be an object'
+rejects hook-include-string '{ "hooks": { "prettier": { "severity": "error", "include": "*.md" } } }' 5 'prettier: include must be an array of strings'
+rejects hook-exclude-number '{ "hooks": { "prettier": { "severity": "error", "exclude": [1] } } }' 5 'prettier: exclude entries must be strings'
+rejects top-level-typo '{ "hooks": {}, "attestaton": { "enabled": false } }' 5 'unknown top-level field "attestaton"'
+rejects timeout-negative '{ "hooks": {}, "spec": { "timeout_s": -1 } }' 5 'spec: timeout_s must be an integer >= 1'
+rejects max-records-negative '{ "hooks": {}, "attestation": { "max_records": -1 } }' 5 'attestation: max_records must be an integer >= 1'
+
+# shellcheck disable=SC2016  # a literal "$schema" key
+GOOD_TOP="$(write_policy good-top '{ "_comment": "x", "$schema": "./policy.schema.json", "hooks": {} }')"
+if gates_validate_policy "$GOOD_TOP" >/dev/null 2>&1; then
+    pass "_comment and \$schema accepted at the top level"
+else
+    fail "_comment or \$schema rejected"
+fi
+
+# The top-level keys the validator allows are exactly the schema's.
+SCHEMA_TOP="$(jq -r '.properties | keys | join(",")' "$REPO_ROOT/extension/runtime/policy.schema.json")"
+VALIDATOR_TOP="$(sed -n 's/^ *def top_keys: \[\(.*\)\];$/\1/p' "$REPO_ROOT/extension/runtime/lib/policy.sh" \
+    | jq -rR 'split(", ") | map(fromjson) | sort | join(",")')"
+if [[ -n "$SCHEMA_TOP" && "$SCHEMA_TOP" == "$VALIDATOR_TOP" ]]; then
+    pass "validator top-level keys match the schema"
+else
+    fail "top-level keys differ: schema [$SCHEMA_TOP] validator [$VALIDATOR_TOP]"
+fi
+
 echo ""
 echo "$PASSED of $TOTAL tests passed"
 if [[ "$FAILED" -eq 0 ]]; then
