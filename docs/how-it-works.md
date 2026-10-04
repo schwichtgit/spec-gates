@@ -67,9 +67,20 @@ refuses (`cat .env`), when it bypasses the git hooks (`--no-verify`,
 cannot evaluate. A project rule in `hooks.local.d` runs before any of
 these questions, so its refusal wins. They never
 silently allow. Without jq, or for input that is not valid JSON, they read
-the field in a raw mode that keeps every built-in block rule; an internal
-error, an undecodable value or an unreadable policy asks. Doctor keeps
-failing until jq is installed.
+the field in a raw mode that keeps every built-in block rule and still
+checks `policy.json`, the constitution and the project's rules; an
+internal error, an undecodable or missing value, or a
+`protected_files.extra` it cannot read asks. Doctor keeps failing until jq
+is installed.
+
+**The Stop hook does not fail closed.** When `verify.sh` cannot run (no
+jq, no git, no policy), `verify-quality.sh` lets the session end and says
+why. That is deliberate: a missing tool must never lock the agent in a
+session it cannot finish. The gate still holds where it can: `pre-commit`
+refuses every commit while `verify.sh` cannot run, `pr-check.sh` and
+`verify.sh` in CI exit with an error, and the Write/Edit and Bash hooks
+keep working in raw mode. Only a red gate, never a missing tool, keeps the
+session open.
 
 **Project rules.** A project adds its own refusals as scripts in
 `.specify/gates/hooks.local.d/<hook>/` for `protect-files`,

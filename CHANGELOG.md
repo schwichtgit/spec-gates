@@ -284,6 +284,17 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   bypasses (`--no-verify`, `git commit -n`, a `core.hooksPath` setting).
   `git.ai_branding.allow_phrases` now ignore case, as the terms always
   did.
+- **A missing jq or git no longer lets a violation through** (#121).
+  `pr-check.sh` without jq read an empty protected list and passed an
+  undeclared protected change; it now exits 2 and names the missing tool.
+  `verify.sh` without git skipped the spec gate's check that an accept
+  block left the tree unchanged; it now refuses (exit 1, as without jq).
+  Without jq, the Bash hook now checks `policy.json` and the constitution
+  as well as the project's rules, reads a plain `protected_files.extra`
+  list, and asks on any change when it cannot read that list. It also
+  asks, instead of guessing, when the input holds more than one `command`
+  field or none. The README now says plainly that the Stop hook lets the
+  session end when `verify.sh` cannot run, and what still enforces.
 
 ## 0.3.6 — 2026-10-02
 

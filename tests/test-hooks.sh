@@ -107,7 +107,7 @@ rmcheck "rm: system path blocked" 2 'cd x && rm -rf /opt/app'
 check "allowed rm -rf ./build" 0 bash -c 'echo '"'"'{"tool_input":{"command":"rm -rf ./build"}}'"'"' | '"'$HOOKS/validate-bash.sh'"''
 check "blocked git push --force" 2 bash -c 'echo '"'"'{"tool_input":{"command":"git push --force origin main"}}'"'"' | '"'$HOOKS/validate-bash.sh'"''
 check "blocked fork bomb" 2 bash -c 'echo '"'"'{"tool_input":{"command":":(){ :|:& };:"}}'"'"' | '"'$HOOKS/validate-bash.sh'"''
-check "bad JSON without a command allowed" 0 bash -c "echo 'not-json' | '$HOOKS/validate-bash.sh'"
+check "bad JSON without a command asks (#121)" 0 bash -c "echo 'not-json' | '$HOOKS/validate-bash.sh' | grep -q '\"permissionDecision\":\"ask\"'"
 
 echo ""
 echo "=== validate-pr.sh ==="
@@ -1127,6 +1127,37 @@ printf '%s\n' 'if grep -q "vendor/"; then echo "vendor/ is generated" >&2; exit 
     >"$VB/.specify/gates/hooks.local.d/validate-bash/10-no-vendor.sh"
 check "a local refusal wins over a shipped ask" 0 bash -c "out=\$(printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$VB' '$HOOKS/validate-bash.sh' 2>&1); rc=\$?; [[ \$rc -eq 2 ]] && grep -q 'vendor/ is generated' <<<\"\$out\"" _ "$(vb_payload 'sed -i s/a/b/ .specify/gates/policy.json vendor/x')"
 askcheck "the shipped ask stands when the local rule passes" "$(vb_payload 'sed -i s/a/b/ .specify/gates/policy.json')" validate-bash.sh CLAUDE_PROJECT_DIR="$VB"
+
+# ===========================================================================
+# Part J: validate-bash without jq checks the built-in protected paths and
+# never guesses at its input (#121)
+# ===========================================================================
+echo ""
+echo "=== validate-bash raw mode: protected paths and field extraction (#121) ==="
+RJ="$WORKDIR/raw121"
+mkdir -p "$RJ/.specify/gates" "$RJ/.specify/memory"
+rj_payload() { jq -nc --arg c "$1" --arg d "$RJ" '{cwd:$d,tool_input:{command:$c}}'; }
+rj_allows() { # <name> <command>
+    check "$1" 0 bash -c "out=\$(printf '%s' \"\$1\" | PATH='$NOJQ' CLAUDE_PROJECT_DIR='$RJ' '$HOOKS/validate-bash.sh') && [[ -z \"\$out\" ]]" _ "$(rj_payload "$2")"
+}
+printf '%s' '{ "hooks": {} }' >"$RJ/.specify/gates/policy.json"
+for c in 'rm .specify/gates/policy.json' 'echo {} > .specify/gates/policy.json' \
+    'sed -i s/a/b/ .specify/gates/policy.json' 'rm .specify/memory/constitution.md'; do
+    askcheck "raw mode, no extra: built-in path asks: $c" "$(rj_payload "$c")" validate-bash.sh PATH="$NOJQ" CLAUDE_PROJECT_DIR="$RJ"
+done
+rj_allows "raw mode, no extra: an unrelated change is allowed" 'rm -rf build'
+printf '%s\n' '{' '  "hooks": {},' '  "protected_files": {' '    "extra": [".specify/gates/policy.json", "infra/**"]' '  }' '}' \
+    >"$RJ/.specify/gates/policy.json"
+askcheck "raw mode: a plain extra list is read" "$(rj_payload 'rm -rf infra/prod')" validate-bash.sh PATH="$NOJQ" CLAUDE_PROJECT_DIR="$RJ"
+rj_allows "raw mode: a change outside the extra list is allowed" 'rm -rf build'
+printf '%s' '{ "hooks": {}, "protected_files": { "extra": ["docs/a.md", { "glob": "infra/**" }] } }' >"$RJ/.specify/gates/policy.json"
+for c in 'rm -rf build' 'echo x > notes.txt'; do
+    askcheck "raw mode: an unreadable extra makes a change ask: $c" "$(rj_payload "$c")" validate-bash.sh PATH="$NOJQ" CLAUDE_PROJECT_DIR="$RJ"
+done
+rj_allows "raw mode: an unreadable extra still allows a read" 'ls -la'
+askcheck "raw mode: two command fields ask" '{"tool_input":{"command":"rm -rf .specify/gates/policy.json"},"x":{"command":"ls"}}' validate-bash.sh PATH="$NOJQ" CLAUDE_PROJECT_DIR="$RJ"
+askcheck "raw mode: no command field asks" '{"tool_input":{"cmd":"rm -rf /"}}' validate-bash.sh PATH="$NOJQ" CLAUDE_PROJECT_DIR="$RJ"
+check "raw mode: an empty command is still allowed" 0 bash -c "out=\$(printf '%s' '{\"tool_input\":{\"command\":\"\"}}' | PATH='$NOJQ' CLAUDE_PROJECT_DIR='$RJ' '$HOOKS/validate-bash.sh') && [[ -z \"\$out\" ]]"
 
 # --- Summary ---
 echo ""

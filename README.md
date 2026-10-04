@@ -204,9 +204,16 @@ its enforcement frontmatter — one registry, two consumers.
 
 ## Requirements
 
-- **jq** and **git**: the hooks and `verify.sh` require them. Without
-  jq, the file and command hooks fall back to a raw mode that keeps every
-  built-in block rule and asks you about anything it can't check.
+- **jq** and **git**: the hooks, `verify.sh` and `pr-check.sh` require
+  them; `verify.sh` and `pr-check.sh` refuse to run without either, so
+  `pre-commit` refuses commits and the CI job fails. Without jq, the file
+  and command hooks fall back to a raw mode that keeps every built-in
+  block rule, still checks `policy.json`, the constitution and the
+  project's rules, and asks you about anything it can't check; the PR
+  hook refuses PR commands. The Stop hook is the one exception, on
+  purpose: when `verify.sh` cannot run it lets the session end and says
+  why, so a missing tool never locks the agent in. Until jq is installed,
+  the quality gate holds at the git and CI boundaries only.
 - **python3** with the `json` module: the PR hook parses commands with it
   and refuses every PR command without it. The message rules' emoji check
   needs python3 or perl. `doctor` fails when either is missing.

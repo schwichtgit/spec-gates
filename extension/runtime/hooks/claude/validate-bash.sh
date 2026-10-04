@@ -26,10 +26,13 @@ trap 'ask "validate-bash.sh failed unexpectedly (line $LINENO); run /speckit.gat
 # from $INPUT without jq. A JSON string is a regular language, so the sed
 # match is exact for it; escapes are decoded below. Returns 1 when the
 # field is absent and 2 when the value uses an escape this decoder does not
-# handle (\uXXXX could spell a blocked word), which the caller turns into
-# "ask".
+# handle (\uXXXX could spell a blocked word) or the key appears more than
+# once (which one the hook reads would be a guess, #121), which the caller
+# turns into "ask".
 raw_field() {
-    local v
+    local v n
+    n="$({ grep -oE '"'"$1"'"[[:space:]]*:' <<<"$INPUT" || true; } | awk 'END { print NR }')"
+    [[ "${n:-0}" -gt 1 ]] && return 2
     # The leading "=" tells an empty value ("") apart from no match.
     v="$(printf '%s' "$INPUT" | tr '\n' ' ' \
         | sed -nE 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)".*/=\1/p')"
@@ -73,6 +76,8 @@ else
     rc=0
     COMMAND="$(raw_field command)" || rc=$?
     [[ "$rc" -eq 2 ]] && ask "cannot decode the command without jq ($DEGRADED); confirm it is safe"
+    # No command field at all: nothing here says the call is harmless.
+    [[ "$rc" -eq 1 ]] && ask "no command found in the hook input without jq ($DEGRADED); confirm the call"
 fi
 
 if [[ -z "$COMMAND" ]]; then
@@ -362,19 +367,46 @@ fi
 # from a read by the command text alone is a heuristic, so a command that
 # appears to modify one asks the human instead of blocking; reads stay
 # allowed. The paths: the project's rules (hooks.local.d) plus
-# protected_files.extra (glob entries by their literal prefix; with jq
-# only). A path counts as named when it appears in the command, when one
+# protected_files.extra (glob entries by their literal prefix). Without
+# jq, policy.json and the constitution are always checked, extra is read
+# when it is a plain list of strings, and when it cannot be read a command
+# that changes anything asks (#121). A path counts as named when it appears in the command, when one
 # of its parent directories appears as a whole argument (`rm -rf
 # .specify/gates`), or when the command first changes into it or a parent
 # (`cd .specify/gates && ...`, `git -C`). Matching ignores case, after
 # `./`, `//`, `/./`, "$PWD/" and the project root are normalized away
 # (#130).
+POLICY="$LROOT/.specify/gates/policy.json"
+# raw_extra: protected_files.extra without jq, one entry per line. Returns
+# 2 when the policy declares an extra this cannot read (escapes, values
+# that are not strings, a layout other than a flat array).
+raw_extra() {
+    local flat body
+    flat="$(tr '\n' ' ' <"$POLICY")"
+    grep -qE '"extra"[[:space:]]*:' <<<"$flat" || return 0
+    body="$(sed -nE 's/.*"protected_files"[[:space:]]*:[[:space:]]*\{[^{}]*"extra"[[:space:]]*:[[:space:]]*\[([^]]*)\].*/=\1/p' <<<"$flat")"
+    [[ -n "$body" ]] || return 2
+    body="${body#=}"
+    grep -qE '^[[:space:]]*("[^"\\]*"[[:space:]]*(,[[:space:]]*"[^"\\]*"[[:space:]]*)*)?$' <<<"$body" || return 2
+    { grep -oE '"[^"\\]*"' <<<"$body" || true; } | sed -e 's/^"//' -e 's/"$//'
+}
+RAW_EXTRA=""
+EXTRA_UNREAD=0
+if [[ -n "$DEGRADED" && -f "$POLICY" ]]; then
+    rc=0
+    RAW_EXTRA="$(raw_extra)" || rc=$?
+    [[ "$rc" -eq 2 ]] && EXTRA_UNREAD=1
+fi
 protected_prefixes() {
     printf '%s\n' ".specify/gates/hooks.local.d"
-    local pf="$LROOT/.specify/gates/policy.json"
-    [[ -z "$DEGRADED" && -f "$pf" ]] || return 0
-    jq -r '(.protected_files.extra // [])[] | select(type == "string")' "$pf" 2>/dev/null \
-        | sed -e 's/[*?[].*$//' -e 's:/*$::' | awk 'length($0) > 0' || true
+    {
+        if [[ -n "$DEGRADED" ]]; then
+            printf '%s\n' ".specify/gates/policy.json" ".specify/memory/constitution.md"
+            [[ -n "$RAW_EXTRA" ]] && printf '%s\n' "$RAW_EXTRA"
+        elif [[ -f "$POLICY" ]]; then
+            jq -r '(.protected_files.extra // [])[] | select(type == "string")' "$POLICY" 2>/dev/null || true
+        fi
+    } | sed -e 's/[*?[].*$//' -e 's:/*$::' | awk 'length($0) > 0' || true
 }
 # shellcheck disable=SC2016  # the backtick is a literal command separator
 MUTATE_VERB='(^|[;&|(`[:space:]])(rm|rmdir|unlink|shred|mv|cp|ln|install|truncate|tee|chmod|chown|dd|rsync)[[:space:]]'
@@ -401,6 +433,9 @@ grep -q '>' <<<"$(sed -E -e 's#[0-9]*>>?[[:space:]]*/dev/(null|stdout|stderr|tty
 MUTATES=0
 if grep -qE "$MUTATE_VERB|$MUTATE_EDIT|$MUTATE_FIND" <<<"$NCMD"; then
     MUTATES=1
+fi
+if [[ "$EXTRA_UNREAD" -eq 1 ]] && [[ "$MUTATES" -eq 1 || "$WRITE_REDIRECT" -eq 1 ]]; then
+    defer_ask "policy protected_files.extra cannot be read ($DEGRADED); confirm this command changes no protected path"
 fi
 ere_escape() { printf '%s' "$1" | sed 's/[][\.*^$+?(){}|/]/\\&/g'; }
 # shellcheck disable=SC2016
