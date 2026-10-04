@@ -239,6 +239,16 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   on an older branch was refused for a missing hook. The stub now asks git
   whether anything under `.specify/gates` is tracked, in `HEAD` or in the
   index.
+- **Commit hooks handle empty commits, merges and fixups** (#129). An
+  empty or delete-only commit on `main` skipped `git.block_main_commits`,
+  because pre-commit exited on "nothing staged" before the branch check; the
+  check now comes first. A merge commit (recognized by `MERGE_HEAD`) and
+  `fixup!`, `squash!` and `amend!` subjects skip the Conventional Commits
+  rule, so `git merge --no-edit` and `git commit --fixup` work; every other
+  message rule still applies. A merge needs a `Protected-Change` trailer only
+  for a protected path that differs from every merged parent. An amend that
+  drops a commit's trailers is caught by `pr-check.sh`, and `git revert`
+  runs no commit hooks; both are now documented as covered in CI.
 
 - **The file and command hooks never silently allow** (#83). Without jq,
   or for input that isn't valid JSON, `protect-files.sh` and

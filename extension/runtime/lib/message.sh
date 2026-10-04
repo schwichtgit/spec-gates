@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # message.sh -- the commit / PR message rules, shared by every boundary.
 #
-#   gates_message_check <commit|pr> <text>
+#   gates_message_check <commit|pr> <text> [generated]
 #
 # commit-msg (git boundary), validate-pr.sh (agent boundary) and pr-check.sh
 # (CI boundary) all call this, so a message refused at one boundary is
@@ -13,6 +13,8 @@
 #   commit -- emoji checked in the subject; body lines > 100 chars warn.
 #   pr     -- <text> is "title\n\nbody"; emoji checked everywhere (a PR body
 #             is free-form markdown, so no line-length rule).
+# "generated" marks a subject git wrote itself (a merge, fixup!/squash!/
+# amend!): the conventional-format rule is skipped, every other rule runs.
 #
 # Policy (via lib/policy.sh when sourced first; defaults otherwise):
 #   git.forbid_ai_isms, git.conventional_commits, git.ai_branding.
@@ -63,8 +65,8 @@ PYEOF
     return 2
 }
 
-gates_message_check() { # <commit|pr> <text>
-    local mode="$1" msg="$2" subject
+gates_message_check() { # <commit|pr> <text> [generated]
+    local mode="$1" msg="$2" generated="${3:-}" subject
     GATES_MSG_ERRORS=0
     GATES_MSG_WARNINGS=0
     subject="${msg%%$'\n'*}"
@@ -155,6 +157,7 @@ gates_message_check() { # <commit|pr> <text>
 
     # A PR edit that changes only the body has no title to judge.
     if _gates_msg_policy_enabled conventional_commits \
+        && [[ "$generated" != "generated" ]] \
         && ! [[ "$mode" == "pr" && -z "$subject" ]]; then
         if ! grep -qE '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?: .+' <<<"$subject"; then
             _err "Subject does not match conventional commit format."

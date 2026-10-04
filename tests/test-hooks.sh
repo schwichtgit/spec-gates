@@ -560,6 +560,62 @@ check "stub: a staged .specify/gates path counts as adopted" 1 \
 ( cd "$ST" && git rm -q --cached .specify/gates/policy.json && rm -rf .specify ) >/dev/null 2>&1
 
 # ===========================================================================
+# Part E2c2: commit hook edge cases (issue #129). An empty commit on main is
+# still a commit to main; subjects git writes itself (merge, fixup!,
+# squash!, amend!) skip only the subject-format rule; a merge needs
+# declarations only for protected edits made while merging.
+# ===========================================================================
+echo ""
+echo "=== git-generated commits and empty commits on main ==="
+EC="$WORKDIR/edges"
+mkdir -p "$EC"
+git -C "$EC" init -q -b main
+git -C "$EC" config user.email t@example.com
+git -C "$EC" config user.name tester
+project_runtime "$EC" "true"
+cp "$GITHOOKS/pre-commit" "$GITHOOKS/commit-msg" "$EC/.git/hooks/"
+chmod +x "$EC/.git/hooks/pre-commit" "$EC/.git/hooks/commit-msg"
+echo c >"$EC/const.md"
+echo a >"$EC/a.txt"
+( cd "$EC" && git add -A && git commit -q --no-verify -m "chore: seed" ) >/dev/null 2>&1
+check "main: an empty commit on main is refused" 0 \
+    bash -c "cd '$EC' && ! git commit -q --allow-empty -m 'chore: empty' 2>'$WORKDIR/ec.err' && grep -q \"Direct commits to 'main' are blocked\" '$WORKDIR/ec.err'"
+check "main: a delete-only commit on main is refused" 1 \
+    bash -c "cd '$EC' && git rm -q a.txt && git commit -q -m 'chore: drop a'"
+( cd "$EC" && git reset -q --hard ) >/dev/null 2>&1
+check "main: GATES_ALLOW_MAIN_COMMIT=1 allows an empty commit" 0 \
+    bash -c "cd '$EC' && GATES_ALLOW_MAIN_COMMIT=1 git commit -q --allow-empty -m 'chore: release'"
+printf '%s' '{ "hooks": {}, "git": { "block_main_commits": false }, "protected_files": { "extra": ["const.md"] } }' \
+    >"$EC/.specify/gates/policy.json"
+check "main: block_main_commits false allows an empty commit" 0 \
+    bash -c "cd '$EC' && git commit -q --allow-empty -m 'chore: empty'"
+(
+    cd "$EC" && git add -A && git commit -q --no-verify -m "chore: protect const"
+    git switch -q -c side && echo s >side.txt && git add side.txt && git commit -q --no-verify -m "feat: side"
+    echo changed >const.md && git add const.md
+    git commit -q --no-verify -F - <<<$'docs: const\n\nProtected-Change: const.md\nApproved-By: Reviewer'
+    git switch -q main && git switch -q -c feat/work && echo w >w.txt && git add w.txt && git commit -q --no-verify -m "feat: work"
+) >/dev/null 2>&1
+check "merge: git's subject and the side's declared protected change pass" 0 \
+    bash -c "cd '$EC' && git merge -q --no-ff --no-edit side"
+( cd "$EC" && git reset -q --hard HEAD^ ) >/dev/null 2>&1
+check "merge: a protected edit made while merging needs a declaration" 1 \
+    bash -c "cd '$EC' && git merge -q --no-ff --no-commit side && echo resolved >const.md && git add const.md && git commit -q --no-edit"
+( cd "$EC" && git merge --abort ) >/dev/null 2>&1
+check "merge: the subject alone is not a merge" 1 \
+    bash -c "cd '$EC' && git commit -q --allow-empty -m \"Merge branch 'x' into feat/work\""
+check "fixup: git commit --fixup passes" 0 \
+    bash -c "cd '$EC' && git commit -q --allow-empty --fixup HEAD"
+check "squash: git commit --squash passes" 0 \
+    bash -c "cd '$EC' && git commit -q --allow-empty --squash HEAD -m 'note the reason'"
+printf 'amend! feat: work\n\nfeat: work on w\n' >"$MSGF"
+check "amend!: subject passes" 0 bash -c "cd '$EC' && '$GITHOOKS/commit-msg' '$MSGF'"
+printf 'fixup! feat: work\n\nCo-Authored-By: someone <s@example.com>\n' >"$MSGF"
+check "fixup!: other rules still apply (Co-Authored-By)" 1 bash -c "cd '$EC' && '$GITHOOKS/commit-msg' '$MSGF'"
+printf 'squash! feat: work\n\nWritten with Copilot.\n' >"$MSGF"
+check "squash!: other rules still apply (branding)" 1 bash -c "cd '$EC' && '$GITHOOKS/commit-msg' '$MSGF'"
+
+# ===========================================================================
 # Part E2d: linked worktrees. Hooks live in the shared hooks directory
 # (git rev-parse --git-path hooks); the stub runs the worktree's own
 # branch hook, and the hooks judge the worktree's policy even when an

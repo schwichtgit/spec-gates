@@ -85,6 +85,13 @@ list is policy (`git.ai_branding.terms`); a legitimate phrase that contains
 a term, such as a product name a repository integrates, is allowed exactly
 via `git.ai_branding.allow_phrases`.
 
+Subjects git writes itself are exempt from the Conventional Commits rule
+only: a merge commit (recognized by `MERGE_HEAD`, not by its subject) and
+the `fixup!`, `squash!` and `amend!` subjects of `git commit --fixup` and
+`--squash`. Every other message rule still applies to them. `git revert`
+runs no commit hooks at all (git's own behavior), so a revert is checked
+only at the CI boundary.
+
 `.git/hooks` holds two copies of a small stub, not the hooks themselves.
 `.git/hooks` is shared by every branch while the projected runtime is per
 branch, so the stub runs the checked-out branch's
@@ -135,7 +142,13 @@ A staged protected path without a declaration, a declaration for a path
 the commit does not change, or a missing `Approved-By` is refused. The
 protected list is the union of the worktree policy and the committed one
 at `HEAD`, plus the built-in `hooks.local.d/**`, so a staged `policy.json`
-cannot drop its own protection on the way in. The trailer is an auditable
+cannot drop its own protection on the way in. A merge commit needs a
+declaration only for a protected path that differs from every merged
+parent, such as an edit made while resolving it; the merged commits carry
+their own. `git commit --amend` cannot be told apart from a new commit
+inside `commit-msg`, so an amend that drops a commit's trailers passes the
+git boundary; `pr-check.sh` re-checks every commit in the range and
+refuses it there unless the PR description declares the path. The trailer is an auditable
 declaration, not a credential: real approval is enforced server-side by
 CODEOWNERS plus branch protection. Setting `git.protected_change_trailer`
 to `false` restores the unconditional refusal.

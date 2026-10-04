@@ -26,12 +26,6 @@ fi
 
 STAGED_FILES="$(git diff --cached --name-only --diff-filter=ACM)"
 
-if [[ -z "$STAGED_FILES" ]]; then
-    exit 0
-fi
-
-ERRORS=0
-
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 # The git boundary judges the repository being committed. An inherited
 # CLAUDE_PROJECT_DIR (a session in the main checkout committing in a linked
@@ -45,6 +39,9 @@ POLICY_LIB="$PROJECT_ROOT/.specify/gates/lib/policy.sh"
 [[ -f "$POLICY_LIB" ]] && source "$POLICY_LIB"
 
 # --- Block commits to protected branches (policy: git.block_main_commits) ---
+# Checked before the no-staged-files exit below: an empty commit
+# (--allow-empty) or one that only deletes files is still a commit to main
+# (issue #129).
 BLOCK_MAIN=true
 if command -v gates_policy_section_get >/dev/null 2>&1; then
     [[ "$(gates_policy_section_get git block_main_commits)" == "false" ]] && BLOCK_MAIN=false
@@ -62,6 +59,12 @@ if [[ "$BLOCK_MAIN" == "true" ]] \
         exit 1
     fi
 fi
+
+if [[ -z "$STAGED_FILES" ]]; then
+    exit 0
+fi
+
+ERRORS=0
 
 # --- Check for forbidden files ---
 check_forbidden_files() {
