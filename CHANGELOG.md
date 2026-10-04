@@ -332,6 +332,13 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   `Package-Lock.json` were written. It now resolves `.`, `..` and `//`
   before matching, makes a path under the project relative to it, and
   compares ignoring case.
+- **Generated hook files no longer fail the lint gates** (#126). With
+  husky v9 every commit failed: the shellcheck gate linted husky's
+  generated, gitignored `.husky/_/husky.sh`, which CI never sees. The
+  `none` orchestrator now skips untracked files git ignores, so the local
+  gates check what CI checks; a tracked file is still checked when an
+  ignore pattern matches it. New policies also seed `.husky/_/**` in
+  `shellcheck.exclude`.
 
 ## 0.3.6 — 2026-10-02
 

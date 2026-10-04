@@ -210,7 +210,10 @@ so a fresh pipeline is needed after one.
 Dispatch follows the policy's `verify-quality.orchestrator`:
 
 - `none`: per-tool walk (prettier, markdownlint, shellcheck) driven by the
-  policy's include and exclude globs via `lib/formatter-dispatch.sh`.
+  policy's include and exclude globs via `lib/formatter-dispatch.sh`. In a
+  git work tree it skips untracked files git ignores (husky's generated
+  `.husky/_/`, build output), since CI never sees them; a tracked file is
+  checked even when an ignore pattern matches it.
 - `task`: `task lint` (error class) and `task test` (warning class), the
   fixed Taskfile convention. `policy-infer` seeds it when a Taskfile
   declares top-level `lint` and `test` targets.
