@@ -56,11 +56,26 @@ version_lt() {
     return 1
 }
 
+# --- Subjects git writes itself (issue #129) ---
+# A merge commit ("Merge branch ..."), detected by MERGE_HEAD in the git dir
+# rather than by its subject, and the fixup!/squash!/amend! prefixes of
+# `git commit --fixup/--squash` are not Conventional Commits and are not
+# meant to be. They skip the subject-format rule; every other rule applies.
+MERGE_HEAD_FILE="$(git rev-parse --git-path MERGE_HEAD 2>/dev/null || true)"
+GENERATED=""
+if [[ -n "$MERGE_HEAD_FILE" && -f "$MERGE_HEAD_FILE" ]]; then
+    GENERATED=merge
+else
+    case "${MSG%%$'\n'*}" in
+        "fixup! "* | "squash! "* | "amend! "*) GENERATED=fixup ;;
+    esac
+fi
+
 # --- Message rules (shared with validate-pr.sh and pr-check.sh) ---
 if [[ -f "$MESSAGE_LIB" ]]; then
     # shellcheck source=/dev/null disable=SC1091
     source "$MESSAGE_LIB"
-    gates_message_check commit "$MSG" || true
+    gates_message_check commit "$MSG" ${GENERATED:+generated} || true
     ERRORS="$GATES_MSG_ERRORS"
     WARNINGS="$GATES_MSG_WARNINGS"
 elif [[ -z "$RUNTIME_VERSION" ]] || version_lt "$RUNTIME_VERSION" 0.3.4; then
@@ -88,6 +103,20 @@ fi
 if command -v gates_protected_check >/dev/null 2>&1 \
     && gates_protected_trailer_enabled; then
     PROTECTED_STAGED="$(gates_staged_protected_paths)"
+    if [[ "$GENERATED" == merge && -n "$PROTECTED_STAGED" ]]; then
+        # A merge brings in the other side's commits, which carry their own
+        # declarations (and pr-check re-checks every commit in the range).
+        # Only a protected path that differs from EVERY merged parent, an
+        # edit made while resolving the merge, needs one here. A parent
+        # that cannot be compared keeps the full list.
+        while IFS= read -r _parent; do
+            [[ -z "$_parent" ]] && continue
+            if _differs="$(git diff --cached --name-only --no-renames "$_parent" 2>/dev/null)"; then
+                PROTECTED_STAGED="$(awk 'FNR == NR { d[$0] = 1; next } ($0 in d)' \
+                    <(printf '%s\n' "$_differs") <(printf '%s\n' "$PROTECTED_STAGED"))"
+            fi
+        done <"$MERGE_HEAD_FILE"
+    fi
     # --no-divider: a `---` line in the body is prose here, not a patch start.
     TRAILERS="$(git interpret-trailers --parse --no-divider "$MSG_FILE" 2>/dev/null || true)"
     DECLARED="$(printf '%s\n' "$TRAILERS" | gates_trailer_values protected-change)"

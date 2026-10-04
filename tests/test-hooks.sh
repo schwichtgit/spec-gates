@@ -349,6 +349,32 @@ check "secret scan: token: 'abcdefgh12' blocked" 1 \
     bash -c "cd '$GF' && printf \"token: 'abcdefgh12'\\n\" >k2.txt && git add k2.txt && git commit -q -m 'chore: k2'"
 ( cd "$GF" && git reset -q -- . >/dev/null 2>&1; rm -f k2.txt )
 
+# The scan reads the staged blobs in one batch per rule (issue #133): a name
+# with a space is one file, binary content is scanned, the staged copy is
+# what counts, and each offending file is reported once, in staged order.
+check "secret scan: a name with a space is scanned as one file" 0 \
+    bash -c "cd '$GF' && printf 'AKIA%s\n' ABCDEFGHIJKLMNOP >'my notes.txt' && git add 'my notes.txt' && ! git commit -q -m 'chore: n' 2>'$WORKDIR/sc.err' && grep -qF 'SECRET: AWS key pattern in my notes.txt' '$WORKDIR/sc.err'"
+( cd "$GF" && git reset -q -- . >/dev/null 2>&1; rm -f 'my notes.txt' )
+check "secret scan: binary staged content is scanned" 1 \
+    bash -c "cd '$GF' && printf 'a\0b\nghp_%s\n' abcdefghijklmnopqrstuvwxyz0123456789 >blob.dat && git add blob.dat && git commit -q -m 'chore: blob'"
+( cd "$GF" && git reset -q -- . >/dev/null 2>&1; rm -f blob.dat )
+check "secret scan: the staged copy is scanned, not the worktree" 1 \
+    bash -c "cd '$GF' && printf 'xoxb-%s\n' 1234567890 >st.txt && git add st.txt && echo clean >st.txt && git commit -q -m 'chore: st'"
+( cd "$GF" && git reset -q -- . >/dev/null 2>&1; rm -f st.txt )
+printf 'BLOCKED: forbidden file: .env\n  SECRET: AWS key pattern in z.txt\n' >"$WORKDIR/sc.want"
+check "secret scan: one line per file, staged order, first rule wins" 0 \
+    bash -c "cd '$GF' && echo X=1 >.env && printf 'AKIA%s\nxoxb-1234567890\n' ABCDEFGHIJKLMNOP >z.txt && echo ok >m.txt && git add -f .env z.txt m.txt && ! git commit -q -m 'chore: z' 2>'$WORKDIR/sc.err' && grep -E '^(BLOCKED|  SECRET)' '$WORKDIR/sc.err' | diff - '$WORKDIR/sc.want' && grep -q 'failed: 2 issue' '$WORKDIR/sc.err'"
+( cd "$GF" && git reset -q -- . >/dev/null 2>&1; rm -f .env z.txt m.txt )
+# A git grep that fails is not a clean scan. The hook is run directly: git
+# puts its own exec path first on PATH for the hooks it runs.
+mkdir -p "$WORKDIR/failgrep"
+# shellcheck disable=SC2016  # $a and $@ belong to the wrapper script
+printf '#!/bin/sh\nfor a; do [ "$a" = grep ] && exit 128; done\nexec %s "$@"\n' "$(command -v git)" >"$WORKDIR/failgrep/git"
+chmod +x "$WORKDIR/failgrep/git"
+check "secret scan: a failing git grep refuses the commit" 0 \
+    bash -c "cd '$GF' && echo ok >fg.txt && git add fg.txt && ! PATH='$WORKDIR/failgrep':\"\$PATH\" '$GITHOOKS/pre-commit' >/dev/null 2>'$WORKDIR/sc.err' && grep -q 'cannot read staged content for the secret scan' '$WORKDIR/sc.err'"
+( cd "$GF" && git reset -q -- . >/dev/null 2>&1; rm -f fg.txt )
+
 # Forbidden-file allowlist: template/example files are committable even when
 # the base name looks sensitive; real secret files still blocked.
 FF="$WORKDIR/forbidden.sh"
@@ -542,7 +568,7 @@ check "stub: switching back restores this branch's hook" 1 \
 check "stub: deleting the branch's hooks fails closed, not open" 1 \
     bash -c "cd '$ST' && git rm -q .specify/gates/hooks/pre-commit .specify/gates/hooks/commit-msg && git commit -q -m 'chore: drop hooks' 2>'$WORKDIR/stub.err'"
 check "stub: the refusal names the missing hook" 0 \
-    grep -q "refused -- .specify/gates exists" "$WORKDIR/stub.err"
+    grep -q "refused -- .specify/gates is tracked" "$WORKDIR/stub.err"
 ( cd "$ST" && git reset -q --hard >/dev/null 2>&1 )
 (
     # --orphan empties the index and removes tracked files; drop leftovers.
@@ -550,6 +576,70 @@ check "stub: the refusal names the missing hook" 0 \
 ) >/dev/null 2>&1
 check "stub: a branch without a projected hook is skipped, not refused" 0 \
     bash -c "cd '$ST' && echo x >x.txt && git add x.txt && git commit -q -m 'any subject' 2>'$WORKDIR/stub.err' && grep -q 'skipped' '$WORKDIR/stub.err'"
+# Gitignored gate output survives a branch switch; it is not adoption (#125).
+mkdir -p "$ST/.specify/gates"
+echo '{}' >"$ST/.specify/gates/attestations.jsonl"
+check "stub: leftover attestations.jsonl on a pre-adoption branch is skipped" 0 \
+    bash -c "cd '$ST' && echo y >y.txt && git add y.txt && git commit -q -m 'another subject' 2>'$WORKDIR/stub.err' && grep -q 'skipped' '$WORKDIR/stub.err'"
+check "stub: a staged .specify/gates path counts as adopted" 1 \
+    bash -c "cd '$ST' && echo '{}' >.specify/gates/policy.json && git add .specify/gates/policy.json && git commit -q -m 'chore: adopt'"
+( cd "$ST" && git rm -q --cached .specify/gates/policy.json && rm -rf .specify ) >/dev/null 2>&1
+
+# ===========================================================================
+# Part E2c2: commit hook edge cases (issue #129). An empty commit on main is
+# still a commit to main; subjects git writes itself (merge, fixup!,
+# squash!, amend!) skip only the subject-format rule; a merge needs
+# declarations only for protected edits made while merging.
+# ===========================================================================
+echo ""
+echo "=== git-generated commits and empty commits on main ==="
+EC="$WORKDIR/edges"
+mkdir -p "$EC"
+git -C "$EC" init -q -b main
+git -C "$EC" config user.email t@example.com
+git -C "$EC" config user.name tester
+project_runtime "$EC" "true"
+cp "$GITHOOKS/pre-commit" "$GITHOOKS/commit-msg" "$EC/.git/hooks/"
+chmod +x "$EC/.git/hooks/pre-commit" "$EC/.git/hooks/commit-msg"
+echo c >"$EC/const.md"
+echo a >"$EC/a.txt"
+( cd "$EC" && git add -A && git commit -q --no-verify -m "chore: seed" ) >/dev/null 2>&1
+check "main: an empty commit on main is refused" 0 \
+    bash -c "cd '$EC' && ! git commit -q --allow-empty -m 'chore: empty' 2>'$WORKDIR/ec.err' && grep -q \"Direct commits to 'main' are blocked\" '$WORKDIR/ec.err'"
+check "main: a delete-only commit on main is refused" 1 \
+    bash -c "cd '$EC' && git rm -q a.txt && git commit -q -m 'chore: drop a'"
+( cd "$EC" && git reset -q --hard ) >/dev/null 2>&1
+check "main: GATES_ALLOW_MAIN_COMMIT=1 allows an empty commit" 0 \
+    bash -c "cd '$EC' && GATES_ALLOW_MAIN_COMMIT=1 git commit -q --allow-empty -m 'chore: release'"
+printf '%s' '{ "hooks": {}, "git": { "block_main_commits": false }, "protected_files": { "extra": ["const.md"] } }' \
+    >"$EC/.specify/gates/policy.json"
+check "main: block_main_commits false allows an empty commit" 0 \
+    bash -c "cd '$EC' && git commit -q --allow-empty -m 'chore: empty'"
+(
+    cd "$EC" && git add -A && git commit -q --no-verify -m "chore: protect const"
+    git switch -q -c side && echo s >side.txt && git add side.txt && git commit -q --no-verify -m "feat: side"
+    echo changed >const.md && git add const.md
+    git commit -q --no-verify -F - <<<$'docs: const\n\nProtected-Change: const.md\nApproved-By: Reviewer'
+    git switch -q main && git switch -q -c feat/work && echo w >w.txt && git add w.txt && git commit -q --no-verify -m "feat: work"
+) >/dev/null 2>&1
+check "merge: git's subject and the side's declared protected change pass" 0 \
+    bash -c "cd '$EC' && git merge -q --no-ff --no-edit side"
+( cd "$EC" && git reset -q --hard HEAD^ ) >/dev/null 2>&1
+check "merge: a protected edit made while merging needs a declaration" 1 \
+    bash -c "cd '$EC' && git merge -q --no-ff --no-commit side && echo resolved >const.md && git add const.md && git commit -q --no-edit"
+( cd "$EC" && git merge --abort ) >/dev/null 2>&1
+check "merge: the subject alone is not a merge" 1 \
+    bash -c "cd '$EC' && git commit -q --allow-empty -m \"Merge branch 'x' into feat/work\""
+check "fixup: git commit --fixup passes" 0 \
+    bash -c "cd '$EC' && git commit -q --allow-empty --fixup HEAD"
+check "squash: git commit --squash passes" 0 \
+    bash -c "cd '$EC' && git commit -q --allow-empty --squash HEAD -m 'note the reason'"
+printf 'amend! feat: work\n\nfeat: work on w\n' >"$MSGF"
+check "amend!: subject passes" 0 bash -c "cd '$EC' && '$GITHOOKS/commit-msg' '$MSGF'"
+printf 'fixup! feat: work\n\nCo-Authored-By: someone <s@example.com>\n' >"$MSGF"
+check "fixup!: other rules still apply (Co-Authored-By)" 1 bash -c "cd '$EC' && '$GITHOOKS/commit-msg' '$MSGF'"
+printf 'squash! feat: work\n\nWritten with Copilot.\n' >"$MSGF"
+check "squash!: other rules still apply (branding)" 1 bash -c "cd '$EC' && '$GITHOOKS/commit-msg' '$MSGF'"
 
 # ===========================================================================
 # Part E2d: linked worktrees. Hooks live in the shared hooks directory

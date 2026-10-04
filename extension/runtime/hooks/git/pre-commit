@@ -26,12 +26,6 @@ fi
 
 STAGED_FILES="$(git diff --cached --name-only --diff-filter=ACM)"
 
-if [[ -z "$STAGED_FILES" ]]; then
-    exit 0
-fi
-
-ERRORS=0
-
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 # The git boundary judges the repository being committed. An inherited
 # CLAUDE_PROJECT_DIR (a session in the main checkout committing in a linked
@@ -45,6 +39,9 @@ POLICY_LIB="$PROJECT_ROOT/.specify/gates/lib/policy.sh"
 [[ -f "$POLICY_LIB" ]] && source "$POLICY_LIB"
 
 # --- Block commits to protected branches (policy: git.block_main_commits) ---
+# Checked before the no-staged-files exit below: an empty commit
+# (--allow-empty) or one that only deletes files is still a commit to main
+# (issue #129).
 BLOCK_MAIN=true
 if command -v gates_policy_section_get >/dev/null 2>&1; then
     [[ "$(gates_policy_section_get git block_main_commits)" == "false" ]] && BLOCK_MAIN=false
@@ -63,11 +60,18 @@ if [[ "$BLOCK_MAIN" == "true" ]] \
     fi
 fi
 
+if [[ -z "$STAGED_FILES" ]]; then
+    exit 0
+fi
+
+ERRORS=0
+
 # --- Check for forbidden files ---
 check_forbidden_files() {
     local file="$1"
-    local basename
-    basename=$(basename "$file")
+    # Parameter expansion and case, no subprocess: this runs once per staged
+    # file (issue #133).
+    local basename="${file##*/}"
 
     # Template/example files are meant to be committed even when the base name
     # looks sensitive (.env.example, config.sample, .env.template). Must come
@@ -84,63 +88,42 @@ check_forbidden_files() {
         credentials.json | service-account*.json | aws-credentials) return 1 ;;
     esac
 
-    if grep -qE '/(\.ssh|\.gnupg|\.aws|\.gcloud)/' <<<"$file"; then
-        return 1
-    fi
+    case "$file" in
+        */.ssh/* | */.gnupg/* | */.aws/* | */.gcloud/*) return 1 ;;
+    esac
 
     return 0
 }
 
 # --- Check for secrets in staged content ---
-check_for_secrets() {
-    local file="$1"
-    local content
-    content=$(git show ":$file" 2>/dev/null || echo "")
+# One label, grep flag and ERE per rule, checked in this order; a file is
+# reported once, for the first rule it matches. The last rule is the
+# generic password/secret/token assignment. POSIX classes only: inside a
+# bracket expression `\s` and `\x27` are literal characters, so the old
+# `[^\s"']` matched spaces and flagged prose such as the runtime's own
+# `"unparseable token: " kv` (issue #50).
+SECRET_LABELS=("AWS key pattern" "OpenAI key pattern" "GitHub token pattern"
+    "GitLab token pattern" "Slack token pattern" "Possible credential assignment")
+SECRET_FLAGS=(-E -E -E -E -E -i)
+SECRET_PATTERNS=('AKIA[0-9A-Z]{16}' 'sk-[a-zA-Z0-9]{48}' '(ghp_|gho_)[a-zA-Z0-9]{36}'
+    'glpat-[a-zA-Z0-9_-]{20}' 'xoxb-[0-9]{10,}'
+    '(password|secret|api_key|token)[[:space:]]*[=:][[:space:]]*["'\''][^[:space:]"'\'']{8,}')
 
-    if [[ -z "$content" ]]; then
-        return 0
-    fi
-
-    # AWS keys
-    if grep -qE 'AKIA[0-9A-Z]{16}' <<<"$content"; then
-        echo "  SECRET: AWS key pattern in $file" >&2
-        return 1
-    fi
-
-    # OpenAI keys
-    if grep -qE 'sk-[a-zA-Z0-9]{48}' <<<"$content"; then
-        echo "  SECRET: OpenAI key pattern in $file" >&2
-        return 1
-    fi
-
-    # GitHub tokens
-    if grep -qE '(ghp_|gho_)[a-zA-Z0-9]{36}' <<<"$content"; then
-        echo "  SECRET: GitHub token pattern in $file" >&2
-        return 1
-    fi
-
-    # GitLab tokens
-    if grep -qE 'glpat-[a-zA-Z0-9_-]{20}' <<<"$content"; then
-        echo "  SECRET: GitLab token pattern in $file" >&2
-        return 1
-    fi
-
-    # Slack tokens
-    if grep -qE 'xoxb-[0-9]{10,}' <<<"$content"; then
-        echo "  SECRET: Slack token pattern in $file" >&2
-        return 1
-    fi
-
-    # Generic password/secret/token assignments. POSIX classes only: inside a
-    # bracket expression `\s` and `\x27` are literal characters, so the old
-    # `[^\s"']` matched spaces and flagged prose such as the runtime's own
-    # `"unparseable token: " kv` (issue #50).
-    if grep -qiE '(password|secret|api_key|token)[[:space:]]*[=:][[:space:]]*["'\''][^[:space:]"'\'']{8,}' <<<"$content"; then
-        echo "  SECRET: Possible credential assignment in $file" >&2
-        return 1
-    fi
-
-    return 0
+# Staged files (of the NUL-separated list on stdin) whose staged content
+# matches rule <i>, NUL-separated on stdout. One `git grep --cached` per rule
+# reads the staged blobs directly, binary ones included, instead of one
+# `git show` per file (issue #133); xargs splits a long list. Literal
+# pathspecs, so a name such as `*.ts` matches only itself. Returns 1 when
+# git grep fails (exit > 1), never mistaking an unreadable index for a
+# clean one. The failure is recorded in <fail-file>: xargs exit codes
+# differ (BSD xargs returns 1 for an invocation that found no match).
+scan_secret_rule() { # <i> <fail-file>
+    rm -f "$2"
+    # shellcheck disable=SC2016  # the script's $1/$2/$3/$@ belong to sh
+    xargs -0 sh -c 'p="$1" f="$2" fail="$3"; shift 3
+        git --literal-pathspecs grep --cached --no-color --full-name -l -z -E "$f" -e "$p" -- "$@"
+        [ "$?" -le 1 ] || : >"$fail"' sh "${SECRET_PATTERNS[$1]}" "${SECRET_FLAGS[$1]}" "$2" \
+        && [[ ! -e "$2" ]]
 }
 
 # Staged protected_files.extra paths (issue #47). With
@@ -162,7 +145,7 @@ elif command -v gates_policy_section_list >/dev/null 2>&1; then
         [[ -z "$_entry" ]] && continue
         while IFS= read -r _f; do
             [[ -z "$_f" ]] && continue
-            if gates_glob_match "$_f" "$_entry" || [[ "$(basename "$_f")" == "$_entry" ]]; then
+            if gates_glob_match "$_f" "$_entry" || [[ "${_f##*/}" == "$_entry" ]]; then
                 PROTECTED_STAGED="${PROTECTED_STAGED:+$PROTECTED_STAGED$'\n'}$_f"
             fi
         done <<<"$STAGED_FILES"
@@ -173,18 +156,46 @@ fi
 # --- Git-specific safety pass over staged files ---
 echo "Pre-commit: scanning staged files for secrets and forbidden paths..."
 
-for file in $STAGED_FILES; do
-    if ! check_forbidden_files "$file"; then
-        echo "BLOCKED: forbidden file: $file" >&2
-        ERRORS=$((ERRORS + 1))
-        continue
+# Names are read NUL-separated, so none is split at a space or globbed.
+# Forbidden files are reported and not scanned; the rest are scanned in one
+# batch per rule. VERDICTS keeps staged order ("F" forbidden, "S" scanned)
+# so the report below lists each file where the per-file loop used to.
+SCAN_FILES=()
+VERDICTS=""
+while IFS= read -r -d '' file; do
+    if check_forbidden_files "$file"; then
+        SCAN_FILES+=("$file")
+        VERDICTS+="S"$'\t'"$file"$'\n'
+    else
+        VERDICTS+="F"$'\t'"$file"$'\n'
     fi
+done < <(git diff --cached --name-only -z --diff-filter=ACM)
 
-    if ! check_for_secrets "$file"; then
-        ERRORS=$((ERRORS + 1))
-        continue
-    fi
-done
+HITS=""
+if [[ "${#SCAN_FILES[@]}" -gt 0 ]]; then
+    SCAN_OUT="$(mktemp 2>/dev/null || mktemp -t gates-scan)"
+    for i in "${!SECRET_PATTERNS[@]}"; do
+        if printf '%s\0' "${SCAN_FILES[@]}" | scan_secret_rule "$i" "$SCAN_OUT.fail" >"$SCAN_OUT"; then
+            HITS+="$(tr '\0' '\n' <"$SCAN_OUT" | awk -v l="${SECRET_LABELS[$i]}" 'NF { print "H\t" l "\t" $0 }')"$'\n'
+        else
+            echo "BLOCKED: cannot read staged content for the secret scan (git grep failed)" >&2
+            ERRORS=$((ERRORS + 1))
+            break
+        fi
+    done
+    rm -f "$SCAN_OUT" "$SCAN_OUT.fail"
+fi
+
+# One line per offending file, in staged order: the first rule a file
+# matched, or the forbidden-file refusal.
+SCAN_REPORT="$(printf '%s%s' "$HITS" "$VERDICTS" | awk -F'\t' '
+    $1 == "H" { name = substr($0, length($2) + 4); if (!(name in hit)) hit[name] = $2; next }
+    $1 == "F" { print "BLOCKED: forbidden file: " substr($0, 3); next }
+    $1 == "S" { name = substr($0, 3); if (name in hit) print "  SECRET: " hit[name] " in " name }')"
+if [[ -n "$SCAN_REPORT" ]]; then
+    printf '%s\n' "$SCAN_REPORT" >&2
+    ERRORS=$((ERRORS + $(grep -c '' <<<"$SCAN_REPORT")))
+fi
 
 if [[ -n "$PROTECTED_STAGED" ]]; then
     if [[ "$PROTECTED_TRAILER" == "true" ]]; then

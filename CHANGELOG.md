@@ -233,6 +233,31 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   marker outside Core Principles is now malformed (doctor and
   `constitution.sh check` fail and name the line), and a constitution
   without the section is reported as declaring no principles.
+- **Branches from before adoption can commit again** (#125). The git hook
+  stub treated the `.specify/gates` directory as proof of adoption, but the
+  gitignored `attestations.jsonl` survives a branch switch, so every commit
+  on an older branch was refused for a missing hook. The stub now asks git
+  whether anything under `.specify/gates` is tracked, in `HEAD` or in the
+  index.
+- **Commit hooks handle empty commits, merges and fixups** (#129). An
+  empty or delete-only commit on `main` skipped `git.block_main_commits`,
+  because pre-commit exited on "nothing staged" before the branch check; the
+  check now comes first. A merge commit (recognized by `MERGE_HEAD`) and
+  `fixup!`, `squash!` and `amend!` subjects skip the Conventional Commits
+  rule, so `git merge --no-edit` and `git commit --fixup` work; every other
+  message rule still applies. A merge needs a `Protected-Change` trailer only
+  for a protected path that differs from every merged parent. An amend that
+  drops a commit's trailers is caught by `pr-check.sh`, and `git revert`
+  runs no commit hooks; both are now documented as covered in CI.
+- **The git hooks are fast on large commits** (#133). Protected-path
+  matching forked a `basename` per staged path and pattern, and the secret
+  scan ran one `git show` plus six `grep` processes per file, so a
+  1500-file commit took tens of seconds per hook. Matching now runs in one
+  pass without subprocesses, and the scan reads the staged content with one
+  `git grep --cached` per rule. Same rules, same one-line-per-file report.
+  File names with spaces are now scanned as one file (they were split into
+  words and skipped), and a scan that cannot read the index refuses the
+  commit instead of passing it.
 
 - **The file and command hooks never silently allow** (#83). Without jq,
   or for input that isn't valid JSON, `protect-files.sh` and
