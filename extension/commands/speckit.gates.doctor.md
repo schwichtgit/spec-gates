@@ -13,7 +13,8 @@ the checking; this command runs it, shows the output, and explains it.
 - `bash .specify/extensions/gates/runtime/doctor.sh --installed-only`: only
   the installed extension (registry, version, skills, install mode). Use it
   before the runtime is projected, or for an install without an agent
-  integration.
+  integration. The full check on such an install fails and says the
+  runtime is not projected.
 - `--probe-git`: also run git hooks another tool owns (husky, lefthook, the
   pre-commit framework) to prove the chain reaches gates. Their own steps
   run too (husky's default `pre-commit` is `npm test`), so ask the user

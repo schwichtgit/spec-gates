@@ -780,6 +780,26 @@ CLAUDE_PROJECT_DIR="$GPD" bash "$GPD/.specify/gates/doctor.sh" --probe-git >"$GP
 has "--probe-git: a lefthook skip is named" "$GPD" "lefthook skipped the gates job because nothing is staged"
 cp "$GPD/.specify/extensions/gates/runtime/hooks/git/stub.sh" "$GPD/.git/hooks/pre-commit"
 rm -f "$GPD/ran.txt"
+# A call-through that never runs does not count (#128), and a hook that
+# merely mentions "gates" is not one that delegates to it.
+printf '#!/bin/sh\n# delegates to gates later\nexit 0\n' >"$GPD/.git/hooks/commit-msg"
+run_doctor "$GPD" >/dev/null
+expect "a hook mentioning gates is not reported as delegating" \
+    "$(grep -c 'commit-msg installed, executable, delegates to the gates runtime' "$GPD/out.txt")" "0"
+has "a hook mentioning gates gets the not-calling note" "$GPD" "[rec] commit-msg is executable but does not call .specify/gates/hooks/commit-msg itself"
+for body in '#!/bin/sh\n# bash .specify/gates/hooks/commit-msg "$@"\n' \
+    '#!/bin/sh\nexit 0\nbash .specify/gates/hooks/commit-msg "$@"\n' \
+    '#!/bin/sh\nexit\nbash .specify/gates/hooks/commit-msg "$@"\n'; do
+    # shellcheck disable=SC2059  # the body carries the newline escapes
+    printf "$body" >"$GPD/.git/hooks/commit-msg"
+    run_doctor "$GPD" >/dev/null
+    has "a call-through that never runs fails the static check" "$GPD" "[MISSING] commit-msg (static)"
+done
+# shellcheck disable=SC2016  # the hook body is written literally
+printf '#!/bin/sh\nif [ -n "$SKIP" ]; then\n  exit 0\nfi\nbash .specify/gates/hooks/commit-msg "$@"\n' >"$GPD/.git/hooks/commit-msg"
+run_doctor "$GPD" >/dev/null
+has "an exit inside a block does not hide the call-through" "$GPD" "[ok]  commit-msg (static)"
+has "a hook that calls the gates hook is reported as delegating" "$GPD" "[ok]  commit-msg installed, executable, delegates to the gates runtime"
 # husky layout: generated shims in .husky/_, the call-through in .husky/<hook>.
 mkdir -p "$GPD/.husky/_"
 printf '#!/bin/sh\ntouch ran.txt\nexit 1\n' >"$GPD/.husky/_/commit-msg"
@@ -798,6 +818,15 @@ OUT_IO="$(cd "$DOR" && CLAUDE_PROJECT_DIR="$DOR" bash .specify/extensions/gates/
 expect "--installed-only on a dormant install exits 0" "$rc" "0"
 expect "--installed-only reports the dormant state" \
     "$(grep -c 'installed; the runtime is not projected yet' <<<"$OUT_IO")" "1"
+# The full run on a dormant install says nothing is projected (#128),
+# instead of reporting the policy's linters as not enabled.
+printf '{ "hooks": { "prettier": { "include": ["**/*.md"] } } }\n' >"$DOR/.specify/gates/policy.json"
+OUT_IO="$(cd "$DOR" && CLAUDE_PROJECT_DIR="$DOR" bash .specify/extensions/gates/runtime/doctor.sh 2>&1)" && rc=0 || rc=$?
+expect "the full run on a dormant install exits 1" "$rc" "1"
+expect "the full run says the runtime is not projected" \
+    "$(grep -c 'the gates runtime is not projected' <<<"$OUT_IO")" "1"
+expect "the full run points at --installed-only" "$(grep -c 'doctor.sh --installed-only' <<<"$OUT_IO")" "1"
+expect "no linter is reported as not enabled" "$(grep -c 'not enabled in policy' <<<"$OUT_IO")" "0"
 mkdir -p "$DOR/.specify/gates"
 printf '0.3.6\n' >"$DOR/.specify/gates/.runtime-version"
 rm -rf "$DOR/.specify/extensions/gates"

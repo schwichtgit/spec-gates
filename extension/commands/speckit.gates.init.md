@@ -141,11 +141,13 @@ Read the exit code:
     the gates entry for that tool's own file (`.husky/<hook>`,
     `lefthook.yml`, `.pre-commit-config.yaml`). Show it, ask the user, and
     on approval re-run with `--wire-manager` to append it. If it says the
-    file cannot be appended to safely, give the user the entry to add by
-    hand. If it says to run `lefthook install` or `pre-commit install
+    file cannot be appended to safely, give the user the entry and the
+    instruction it printed (merge into an existing block, or put the line
+    before any `exit`). If it says to run `lefthook install` or `pre-commit install
 --hook-type commit-msg`, tell the user to run it (never run another
     tool's installer yourself).
-  - **any other owner**: give the user the call-through line it printed.
+  - **any other owner**: give the user the call-through line it printed,
+    to go before any `exit` in their hook.
   - Never edit the generated files in `.husky/_/` or `.git/hooks`.
 - `2`: refused before writing; its message says why (no policy, an
   interrupted install, a corrupt `.projected.sha256`).
