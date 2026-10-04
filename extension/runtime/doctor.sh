@@ -236,6 +236,16 @@ else
             MISSING=$((MISSING + 1))
         fi
     done
+    # Fields that still validate but that no gate reads (#112).
+    if have jq; then
+        while IFS= read -r field; do
+            [[ -n "$field" ]] || continue
+            echo "${REC}hooks.$field has no effect (deprecated) — remove it from policy.json"
+        done < <(jq -r '(.hooks // {}) | to_entries[] | select(.value | type == "object")
+            | .key as $k | .value | keys[]
+            | select(. == "on_missing_runner" or . == "on_missing_tests")
+            | "\($k).\(.)"' "$PROJECT_ROOT/.specify/gates/policy.json" 2>/dev/null || true)
+    fi
 fi
 
 # Runtime projection vs installed extension (issue #33): after an extension

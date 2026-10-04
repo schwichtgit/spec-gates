@@ -120,6 +120,33 @@ fi
 TOTAL=$((TOTAL + 1))
 
 echo ""
+echo "=== deprecated policy fields are flagged, not failed (#112) ==="
+D="$WORKDIR/deprecated"
+project "$D" '{ "hooks": { "shellcheck": {"include":["**/*.sh"],"orchestrator":"none","severity":"error"} } }' yes
+RC_PLAIN="$(run_doctor "$D")"
+TOTAL=$((TOTAL + 1))
+if grep -q "has no effect (deprecated)" "$D/out.txt"; then
+    echo "FAIL: flags a deprecated field the policy does not set"
+    FAIL=$((FAIL + 1))
+else
+    echo "PASS: no deprecation line without the fields"
+    PASS=$((PASS + 1))
+fi
+printf '%s' '{ "hooks": { "shellcheck": {"include":["**/*.sh"],"orchestrator":"none","severity":"error","on_missing_runner":"warn"}, "verify-quality": {"orchestrator":"none","severity":"error","on_missing_tests":"skip"} } }' \
+    >"$D/.specify/gates/policy.json"
+expect "deprecated fields do not change the exit code" "$(run_doctor "$D")" "$RC_PLAIN"
+for f in shellcheck.on_missing_runner verify-quality.on_missing_tests; do
+    TOTAL=$((TOTAL + 1))
+    if grep -qF "[rec] hooks.$f has no effect (deprecated)" "$D/out.txt"; then
+        echo "PASS: names hooks.$f"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL: does not name hooks.$f"
+        FAIL=$((FAIL + 1))
+    fi
+done
+
+echo ""
 echo "=== spec conformance section (feature 002) ==="
 MINIMAL='{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } } }'
 

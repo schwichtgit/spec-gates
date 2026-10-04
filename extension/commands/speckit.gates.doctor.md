@@ -31,7 +31,9 @@ the checking; this command runs it, shows the output, and explains it.
      (the emoji rule). Without jq the agent hooks run in raw mode.
    - **Policy-enabled linters**: each linter the policy turns on must
      resolve (`node_modules/.bin`, then PATH). A missing one is an
-     enforcement gap, so it fails.
+     enforcement gap, so it fails. A deprecated field that no gate reads
+     (`on_missing_runner`, `on_missing_tests`) gets a `[rec]` line to remove
+     it; it does not fail.
    - **Runtime projection**: the projected runtime's `.runtime-version` must
      match the installed extension; a mismatch **fails** (run
      `/speckit.gates.upgrade`). Also the install itself: registered gates

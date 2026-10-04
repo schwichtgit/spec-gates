@@ -235,16 +235,18 @@
           "description": "How the hook's overall exit code maps to caller-visible severity."
         },
         "on_missing_runner": {
+          "deprecated": true,
           "type": "string",
           "enum": ["warn", "skip"],
           "default": "warn",
-          "description": "Behavior when no per-service runner can be resolved for a tool (neither $dir/.venv/bin/<tool> nor `uv run --project $dir <tool>` is available). Default is warn. INFRA-025: applies to the verify-quality legacy walker's Python branch; per-service opt-out via [tool.gates.hooks] skip in pyproject.toml is logged as SKIP regardless of this field."
+          "description": "Deprecated: no gate reads this field, so it has no effect. It is still accepted so existing policies validate; doctor recommends removing it."
         },
         "on_missing_tests": {
+          "deprecated": true,
           "type": "string",
           "enum": ["warn", "skip"],
           "default": "skip",
-          "description": "Behavior when the test runner reports no tests collected (pytest exit code 5). Default is skip (log SKIP, no WARNING/FAIL). INFRA-026: warn flips to logging WARN and incrementing the warnings counter; consumed by the verify-quality Python branch's pytest classifier."
+          "description": "Deprecated: no gate reads this field, so it has no effect. It is still accepted so existing policies validate; doctor recommends removing it."
         },
         "custom_command": {
           "type": "string",
