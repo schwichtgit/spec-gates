@@ -35,7 +35,30 @@ stage('Quality Gates') {
             // PR title (CHANGE_TITLE; Jenkins exposes no description) and
             // Protected-Change declarations across origin/CHANGE_TARGET..HEAD.
             // Needs a full-history checkout; skips itself outside PR builds.
-            sh 'bash .specify/gates/pr-check.sh'
+            // In a PR build it runs the BASE revision's pr-check.sh and lib
+            // against the PR checkout (GATES_RUNTIME_DIR), so a PR cannot
+            // replace the code that judges it. A base without pr-check.sh
+            // (the PR adopting spec-gates) runs the PR's own copy. This
+            // Jenkinsfile still comes from the PR unless the job trusts only
+            // the target branch's: protect it and .specify/gates/** with
+            // branch protection + CODEOWNERS.
+            sh '''
+                set -e
+                if [ -z "${CHANGE_TARGET:-}" ]; then
+                    bash .specify/gates/pr-check.sh
+                    exit 0
+                fi
+                base="origin/$CHANGE_TARGET"
+                if git cat-file -e "$base:.specify/gates/pr-check.sh" 2>/dev/null; then
+                    rt="$(mktemp -d)"
+                    git archive "$base" .specify/gates | tar -x -C "$rt"
+                    echo "pr-check: running the base revision's pr-check.sh ($base)"
+                    GATES_RUNTIME_DIR="$rt/.specify/gates" bash "$rt/.specify/gates/pr-check.sh"
+                else
+                    echo "pr-check: the base ($base) has no pr-check.sh (adoption PR); running the pull request's own copy"
+                    bash .specify/gates/pr-check.sh
+                fi
+            '''
         }
     }
 }

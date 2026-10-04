@@ -25,6 +25,17 @@ set -uo pipefail
 #    description count for every commit (a squash merge keeps the
 #    description, not the commit trailers).
 #
+# A base whose policy is invalid stops the check (exit 2): its rules cannot
+# be read, and reading nothing would pass everything (#166). A base with no
+# policy at all (the PR that adopts spec-gates) is checked against the PR's
+# own policy, with policy.json, the constitution, hooks.local.d and the
+# contract artifacts protected whatever that policy says.
+#
+# The runtime libraries load from $GATES_RUNTIME_DIR/lib when it is set
+# (default: the project's .specify/gates). The CI templates use it to run
+# the base revision's pr-check.sh and lib against the PR checkout, so a PR
+# cannot replace the code that judges it (#166).
+#
 # Usage:
 #   pr-check.sh [--title <text>] [--body-file <file>] [--range <base>..<head>]
 #
@@ -66,15 +77,22 @@ PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
     echo "pr-check: not inside a git repository" >&2
     exit 2
 }
+RUNTIME_DIR="$PROJECT_ROOT/.specify/gates"
+if [[ -n "${GATES_RUNTIME_DIR:-}" ]]; then
+    RUNTIME_DIR="$(cd "$GATES_RUNTIME_DIR" 2>/dev/null && pwd)" || {
+        echo "pr-check: GATES_RUNTIME_DIR is not a directory: $GATES_RUNTIME_DIR" >&2
+        exit 2
+    }
+fi
 cd "$PROJECT_ROOT" || exit 2
-POLICY_LIB="$PROJECT_ROOT/.specify/gates/lib/policy.sh"
+POLICY_LIB="$RUNTIME_DIR/lib/policy.sh"
 if [[ ! -f "$POLICY_LIB" ]]; then
     echo "pr-check: $POLICY_LIB not found -- re-project the runtime (/speckit.gates.upgrade)" >&2
     exit 2
 fi
 # shellcheck source=/dev/null disable=SC1091
 source "$POLICY_LIB"
-MESSAGE_LIB="$PROJECT_ROOT/.specify/gates/lib/message.sh"
+MESSAGE_LIB="$RUNTIME_DIR/lib/message.sh"
 if ! command -v gates_protected_check >/dev/null 2>&1 || [[ ! -f "$MESSAGE_LIB" ]]; then
     echo "pr-check: projected runtime predates pr-check.sh -- re-project it (/speckit.gates.upgrade)" >&2
     exit 2
@@ -188,19 +206,40 @@ resolve_range() {
     done
 
     # The rules come from the base (#123, #147): the PR under review must
-    # not be able to relax them, for its text or its protected changes. A
-    # base without a policy falls back to the checked-out one.
+    # not be able to relax them, for its text or its protected changes. An
+    # invalid base policy is a setup error, never an empty rule set (#166).
+    # A base without a policy (the adoption PR) falls back to the
+    # checked-out one, which must be valid too, and widens the
+    # always-protected paths below.
+    local err head_policy
     BASE_POLICY="$(mktemp 2>/dev/null || mktemp -t gates-policy)" || return 2
     if gates_policy_at_rev "$BASE" "$BASE_POLICY"; then
+        if ! err="$(GATES_POLICY_FILE="$BASE_POLICY" gates_validate_policy "$BASE_POLICY" 2>&1)"; then
+            echo "pr-check: ERROR -- the policy committed at the base ($BASE) is invalid, so its rules cannot be checked; fix .specify/gates/policy.json on the base branch first:" >&2
+            printf '%s\n' "$err" | sed 's/^/  /' >&2
+            return 2
+        fi
         export GATES_POLICY_FILE="$BASE_POLICY"
     else
         rm -f "$BASE_POLICY"
         BASE_POLICY=""
+        ADOPTION=true
+        head_policy="$(gates_policy_file)"
+        if [[ -f "$head_policy" ]] && ! err="$(gates_validate_policy "$head_policy" 2>&1)"; then
+            echo "pr-check: ERROR -- the base ($BASE) has no policy and the pull request's own policy is invalid:" >&2
+            printf '%s\n' "$err" | sed 's/^/  /' >&2
+            return 2
+        fi
+        echo "pr-check: NOTICE -- the base ($BASE) has no .specify/gates/policy.json (adoption PR); checking against the pull request's own policy, with policy.json, the constitution, hooks.local.d and the contract artifacts protected regardless"
     fi
     return 0
 }
+ADOPTION=false
 RANGE_RC=0
 resolve_range || RANGE_RC=$?
+# The rules cannot be read: checking the text against the checkout's policy
+# would only add noise to the setup error.
+[[ "$RANGE_RC" -eq 2 ]] && exit 2
 
 # --- 1. PR/MR text ---
 if [[ -n "$DESCRIPTION_UNCHECKABLE" ]]; then
@@ -223,6 +262,13 @@ fi
 # Paths checked whatever the policy says: the runtime's built-in entries plus
 # the policy file itself, so a PR cannot switch its own check off (#123).
 ALWAYS_PROTECTED="$GATES_BUILTIN_PROTECTED"$'\n'".specify/gates/policy.json"
+ALWAYS_NAMES="policy.json, hooks.local.d"
+# Adoption PR: no base policy decides what is protected, so the constitution
+# joins the list rather than depending on the policy the PR brings (#166).
+if [[ "$ADOPTION" == "true" ]]; then
+    ALWAYS_PROTECTED="$ALWAYS_PROTECTED"$'\n'".specify/memory/constitution.md"
+    ALWAYS_NAMES="policy.json, the constitution, hooks.local.d"
+fi
 protected_range_check() { # -> 0 pass/skip, 1 violations, 2 setup error
     if [[ "$RANGE_RC" -eq 1 ]]; then
         echo "pr-check: protected range skipped -- no pull/merge request range (pass --range or set GATES_COMMIT_RANGE)"
@@ -232,7 +278,7 @@ protected_range_check() { # -> 0 pass/skip, 1 violations, 2 setup error
     FULL_LIST=true
     if ! gates_protected_trailer_enabled; then
         FULL_LIST=false
-        echo "pr-check: git.protected_change_trailer is false -- checking only the always-protected paths (policy.json, hooks.local.d)"
+        echo "pr-check: git.protected_change_trailer is false -- checking only the always-protected paths ($ALWAYS_NAMES)"
     fi
 
     BODY_DECLARED="$(printf '%s\n' "$BODY" | gates_trailer_values protected-change)"
