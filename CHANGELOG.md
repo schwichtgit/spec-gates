@@ -172,7 +172,9 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   hold. A `hooks.local.d` rule that is a dangling symlink refuses, a rule
   still running after 10 seconds (`GATES_LOCAL_TIMEOUT`) is killed with
   everything it started and refuses, and a rule that ignores a large tool
-  call on stdin no longer turns it into a refusal.
+  call on stdin no longer turns it into a refusal. On Linux, a tool call
+  over 128 KB no longer makes every local rule refuse: it was exported into
+  the rules' environment, which the kernel rejects.
 - **Checks no longer miss matches on large input** (#117). Under
   `pipefail`, `echo "$x" | grep -q` read a match as a miss once the input
   outgrew the pipe buffer, so the pre-commit secret scan let a key through

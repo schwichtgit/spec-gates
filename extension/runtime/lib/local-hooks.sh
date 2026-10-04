@@ -80,6 +80,12 @@ _gates_local_exec() {
 gates_run_local() { # <root> <hook> [args...]
     local root="$1" hook="$2" f name out rc
     shift 2
+    # Callers write `GATES_LOCAL_STDIN="$INPUT" gates_run_local ...`, and bash
+    # exports a prefix assignment to a function for the call. Every program
+    # started below would inherit the whole tool call, and Linux refuses to
+    # exec one with an environment string over 128 KB (E2BIG), which read
+    # as a refusal. It reaches the rule through a here-string instead.
+    export -n GATES_LOCAL_STDIN 2>/dev/null || true
     GATES_LOCAL_MSG=""
     for f in "$root/.specify/gates/hooks.local.d/$hook"/*.sh; do
         [[ -e "$f" || -L "$f" ]] || continue
