@@ -11,6 +11,10 @@ set -uo pipefail
 #
 # Exit 0 = everything required (incl. policy-enabled linters) is present.
 # Exit 1 = something required is missing.
+#
+# --ci leaves out what only a developer clone has: the git hook stubs in
+# .git/hooks (CI never installs them) and the git boundary checks. Every
+# other check runs, so a CI step can run doctor (#148).
 
 # --canary delegates to the canary suite (projected as a sibling of this
 # script), propagating its exit code and output.
@@ -26,9 +30,11 @@ fi
 
 INSTALLED_ONLY=0
 PROBE_GIT=0
+CI_MODE=0
 for _a in "$@"; do
     case "$_a" in
         --installed-only) INSTALLED_ONLY=1 ;;
+        --ci) CI_MODE=1 ;;
         # Run hooks another tool owns too (their own steps run with them).
         --probe-git) PROBE_GIT=1 ;;
     esac
@@ -71,6 +77,32 @@ REC="  [rec] "
 SKIP="  [--]  "
 
 have() { command -v "$1" >/dev/null 2>&1; }
+
+INSTALL_HINT="apt-get install, apk add, brew install"
+
+# Tools project.sh and the gates cannot run without, shared by the full
+# run and --installed-only (#122): each missing one is named with what it
+# breaks and how to install it.
+base_tool_checks() {
+    if have git; then
+        echo "${OK}git"
+    else
+        echo "${BAD}git — not installed; the git and CI boundaries cannot run and project.sh cannot wire the git hooks. Install git ($INSTALL_HINT)."
+        MISSING=$((MISSING + 1))
+    fi
+    if have cmp; then
+        echo "${OK}cmp"
+    else
+        echo "${BAD}cmp — not installed; project.sh refuses to run without it. Install diffutils ($INSTALL_HINT)."
+        MISSING=$((MISSING + 1))
+    fi
+    if have sha256sum || have shasum; then
+        echo "${OK}sha256sum or shasum"
+    else
+        echo "${BAD}sha256sum or shasum — neither is installed; project.sh refuses to run, the contract gate cannot verify its pin, and verify.sh records no attestation. Install coreutils or perl ($INSTALL_HINT)."
+        MISSING=$((MISSING + 1))
+    fi
+}
 
 # Resolve a tool binary the way the gate does (node_modules/.bin -> PATH).
 tool_bin() { # <binname>
@@ -157,8 +189,8 @@ if [[ "$INSTALLED_ONLY" -eq 1 ]]; then
     echo "project: $PROJECT_ROOT"
     echo ""
     echo "Required:"
-    if have jq; then echo "${OK}jq"; else echo "${BAD}jq"; MISSING=$((MISSING + 1)); fi
-    if have git; then echo "${OK}git"; else echo "${BAD}git"; MISSING=$((MISSING + 1)); fi
+    if have jq; then echo "${OK}jq"; else echo "${BAD}jq — not installed. Install jq ($INSTALL_HINT)."; MISSING=$((MISSING + 1)); fi
+    base_tool_checks
     echo ""
     echo "Installed extension:"
     IST="$(gates_install_state "$PROJECT_ROOT")"
@@ -175,6 +207,7 @@ if [[ "$INSTALLED_ONLY" -eq 1 ]]; then
             echo "${BAD}the extension registry and .specify/extensions/gates/ disagree — reinstall the extension"
             MISSING=$((MISSING + 1))
             ;;
+        unknown) echo "${SKIP}install state not checked: reading .specify/extensions/.registry needs jq" ;;
         *)
             echo "${BAD}the gates extension is not installed"
             MISSING=$((MISSING + 1))
@@ -218,7 +251,7 @@ else
     echo "${BAD}jq — the agent hooks run in raw mode without it (built-in rules only; protected_files.extra asks for every edit). Install jq."
     MISSING=$((MISSING + 1))
 fi
-if have git; then echo "${OK}git"; else echo "${BAD}git"; MISSING=$((MISSING + 1)); fi
+base_tool_checks
 # The PR hook parses commands with python3 (json + re) and fails closed
 # without it (#66). The message rules' emoji check runs on python3 or perl.
 if python3 -c 'import json, re' >/dev/null 2>&1; then
@@ -331,6 +364,11 @@ if declare -f gates_install_state >/dev/null 2>&1 && [[ -d "$PROJECT_ROOT/.speci
             echo "${BAD}the extension registry and .specify/extensions/gates/ disagree (interrupted install) — reinstall the extension"
             MISSING=$((MISSING + 1))
             ;;
+        # jq is reported missing above; the registry says nothing without it.
+        unknown)
+            echo ""
+            echo "${SKIP}install state not checked: reading .specify/extensions/.registry needs jq"
+            ;;
     esac
 fi
 
@@ -345,12 +383,15 @@ if declare -f gates_ci_missing >/dev/null 2>&1 && [[ -d "$PROJECT_ROOT/.specify/
     VEND_RT="$PROJECT_ROOT/.specify/extensions/gates/runtime"
     if [[ -f "$VEND_RT/project.sh" ]]; then
         PFLAGS=""
+        # The git hook stubs live in .git/hooks, never in a checkout, and
+        # are not in the manifest: --ci leaves out only the git wiring.
+        [[ "$CI_MODE" -eq 1 ]] && PFLAGS="--no-git-hooks"
         MAN_FILE="$PROJECT_ROOT/.specify/gates/.projected.sha256"
         if [[ -f "$MAN_FILE" ]] && ! grep -q '  \.claude/hooks/gates/' "$MAN_FILE"; then
-            PFLAGS="--no-agent-hooks"
+            PFLAGS="$PFLAGS --no-agent-hooks"
         fi
         prc=0
-        # shellcheck disable=SC2086  # PFLAGS is empty or one flag
+        # shellcheck disable=SC2086  # PFLAGS holds up to two flags
         POUT="$(cd "$PROJECT_ROOT" && bash "$VEND_RT/project.sh" --check $PFLAGS 2>&1)" || prc=$?
         case "$prc" in
             0) echo "${OK}projection matches the installed extension" ;;
@@ -464,6 +505,25 @@ if [[ -n "$NONEXEC_GATES" ]]; then
     echo "${REC}projected script(s) not executable:${NONEXEC_GATES} — harmless (they run via bash), but chmod +x keeps direct invocation working"
 fi
 
+# Attestation writability (#122): verify.sh still passes or fails as it
+# should when it cannot append its record, but the run leaves no evidence,
+# and the no-op check below reads exactly that evidence. A failure.
+ATT_DIR="$PROJECT_ROOT/.specify/gates"
+if [[ -d "$ATT_DIR" ]] && declare -f gates_policy_section_get >/dev/null 2>&1 \
+    && [[ "$(gates_policy_section_get attestation enabled 2>/dev/null)" != "false" ]]; then
+    ATT_RO=""
+    if [[ ! -w "$ATT_DIR" ]]; then
+        ATT_RO=".specify/gates/"
+    elif [[ -e "$ATT_DIR/attestations.jsonl" && ! -w "$ATT_DIR/attestations.jsonl" ]]; then
+        ATT_RO=".specify/gates/attestations.jsonl"
+    fi
+    if [[ -n "$ATT_RO" ]]; then
+        echo ""
+        echo "${BAD}attestations cannot be written: $ATT_RO is not writable — verify.sh still runs, but records no evidence (make it writable, or set attestation.enabled=false)"
+        MISSING=$((MISSING + 1))
+    fi
+fi
+
 # No-op heuristic (FR-004): a gate that PASSED while checking none of its
 # candidate files is the historical silent-no-op signature. No legitimate
 # instance exists, so it is a doctor FAILURE, not a warning.
@@ -545,7 +605,10 @@ fi
 # were never installed get a [rec] nudge only (agent+CI-only repos are a
 # legitimate setup). Zip installs drop execute bits (Python extraction),
 # which is exactly how downstream repos end up in the gap state.
-if git -C "$PROJECT_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+if [[ "$CI_MODE" -eq 1 ]]; then
+    echo ""
+    echo "${SKIP}git boundary not checked (--ci: git hooks exist only in a developer clone)"
+elif git -C "$PROJECT_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
     echo ""
     echo "Git boundary (hooks git actually runs):"
     # --git-path hooks resolves the directory git actually runs hooks from:

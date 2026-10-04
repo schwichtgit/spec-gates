@@ -333,6 +333,13 @@ run_prhook_canary() {
         record prhook accepted "validate-pr.sh is not executable — Claude Code runs it by path, so the PR hook never fires" 1
         return 0
     fi
+    # Without python3 the hook refuses every PR command (it fails closed,
+    # #66). Name the tool: "the hook is broken" alone points at the hook
+    # (#122).
+    if ! python3 -c 'import json, re' >/dev/null 2>&1; then
+        record prhook accepted "python3 with the json module is not installed — validate-pr.sh refuses every PR command until it is (install python3)" 1
+        return 0
+    fi
     local d="$WORKDIR/prhookenv" rc_ok=0 rc_bad=0 out_bad
     mkdir -p "$d/.specify/gates/lib" || setup_fail "prhook sandbox"
     cp "$CANARY_DIR/lib/"*.sh "$d/.specify/gates/lib/" || setup_fail "prhook lib"
@@ -619,6 +626,12 @@ run_spec_canary() {
 run_contract_canary() {
     if ! command -v git >/dev/null 2>&1; then
         record contract skipped "git not installed -- a policy contract cannot exist without it" 0
+        return 0
+    fi
+    # sync pins the baseline by its SHA-256; without a tool for it the
+    # sandbox cannot be built, which is not a broken sandbox (#122).
+    if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
+        record contract skipped "neither sha256sum nor shasum is installed -- the contract gate cannot verify a pin (install one)" 1
         return 0
     fi
     local b="$WORKDIR/contract-base"

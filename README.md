@@ -230,9 +230,14 @@ its enforcement frontmatter — one registry, two consumers.
   needs python3 or perl. `doctor` fails when either is missing.
 - **Standard POSIX tools** (`awk`, `sed`, `grep`, `cmp`, `sha256sum` or
   `shasum`): `project.sh` refuses to run without `cmp` and a SHA-256
-  tool.
+  tool, the contract gate cannot verify its pin without a SHA-256 tool,
+  and `doctor` fails when either is missing.
 - **Node** with the linters your policy uses (default: **prettier**,
   **markdownlint-cli2**). Pin them in `package.json` so local and CI agree.
+  A linter the policy enables but the host lacks does not block anything
+  by itself: every boundary passes with that gate reported `[skipped]`.
+  `doctor` and the canary suite fail on it, and the CI templates run the
+  canary suite, so a CI job without the linter fails.
 - **shellcheck** if you lint shell. Its findings change between releases
   (0.9.0 reports SC2015 where 0.11.0 does not), so declare the version in
   `.tool-versions` (`shellcheck 0.11.0`) and install that one everywhere —
@@ -466,16 +471,16 @@ with a `Protected-Change` trailer.
 
 ## Commands
 
-| Command                       | Purpose                                                                                                                                                                                                                                      |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/speckit.gates.init`         | Infer the policy, then project the runtime and wire the agent and git hooks in one `project.sh` run, and self-test                                                                                                                           |
-| `/speckit.gates.verify`       | Run the full suite on demand (also runs after `implement`)                                                                                                                                                                                   |
-| `/speckit.gates.doctor`       | Health check: tools, hooks wired and proven, versions in sync, upgrade safety (local edits, holds, CI drift), install hygiene, attestations, spec, contract and constitution state; `--installed-only` for an install with nothing projected |
-| `/speckit.gates.ci`           | Project CI enforcement (`github` \| `gitlab` \| `jenkins`); `--protect` requires the check + a PR on the default branch                                                                                                                      |
-| `/speckit.gates.upgrade`      | Verify a release, swap the installed extension, and re-project through `project.sh`; never touches policy.json                                                                                                                               |
-| `/speckit.gates.sync`         | Pin + materialize the `extends` baseline; `--update` moves the pin as a reviewable branch                                                                                                                                                    |
-| `/speckit.gates.propose`      | Package this repo's policy deviations as an upstream change request against the baseline                                                                                                                                                     |
-| `/speckit.gates.constitution` | Guided session: interview to a profile, pick corpus principles, produce an enforcement-annotated constitution, and align each principle to its boundary                                                                                      |
+| Command                       | Purpose                                                                                                                                                                                                                                                           |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/speckit.gates.init`         | Infer the policy, then project the runtime and wire the agent and git hooks in one `project.sh` run, and self-test                                                                                                                                                |
+| `/speckit.gates.verify`       | Run the full suite on demand (also runs after `implement`)                                                                                                                                                                                                        |
+| `/speckit.gates.doctor`       | Health check: tools, hooks wired and proven, versions in sync, upgrade safety (local edits, holds, CI drift), install hygiene, attestations, spec, contract and constitution state; `--installed-only` for an install with nothing projected, `--ci` for a CI job |
+| `/speckit.gates.ci`           | Project CI enforcement (`github` \| `gitlab` \| `jenkins`); `--protect` requires the check + a PR on the default branch                                                                                                                                           |
+| `/speckit.gates.upgrade`      | Verify a release, swap the installed extension, and re-project through `project.sh`; never touches policy.json                                                                                                                                                    |
+| `/speckit.gates.sync`         | Pin + materialize the `extends` baseline; `--update` moves the pin as a reviewable branch                                                                                                                                                                         |
+| `/speckit.gates.propose`      | Package this repo's policy deviations as an upstream change request against the baseline                                                                                                                                                                          |
+| `/speckit.gates.constitution` | Guided session: interview to a profile, pick corpus principles, produce an enforcement-annotated constitution, and align each principle to its boundary                                                                                                           |
 
 ## Workflow-engine integration
 

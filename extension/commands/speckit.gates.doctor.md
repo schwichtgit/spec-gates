@@ -19,6 +19,10 @@ the checking; this command runs it, shows the output, and explains it.
   pre-commit framework) to prove the chain reaches gates. Their own steps
   run too (husky's default `pre-commit` is `npm test`), so ask the user
   first.
+- `--ci`: for a CI job. A CI checkout has no git hook stubs (they live in
+  `.git/hooks` of a developer clone), so the full check would report the
+  projection as not current. `--ci` leaves out the git hook wiring and
+  the git boundary section and runs every other check.
 - `--canary`: run the canary suite instead (`canary.sh`; same exit code).
 
 ## Steps
@@ -27,9 +31,11 @@ the checking; this command runs it, shows the output, and explains it.
    `bash .specify/gates/doctor.sh`. Each line is `[ok]`, `[MISSING]` (a
    failure: doctor exits 1), `[rec]` (a recommendation) or `[--]`
    (skipped). The sections, in order:
-   - **Required tools**: `jq`, `git`, `python3` with the `json` module (the
-     PR hook refuses every PR command without it), and python3 or perl
-     (the emoji rule). Without jq the agent hooks run in raw mode.
+   - **Required tools**: `jq`, `git`, `cmp`, `sha256sum` or `shasum`,
+     `python3` with the `json` module (the PR hook refuses every PR
+     command without it), and python3 or perl (the emoji rule). Each
+     missing one is named with an install hint. Without jq the agent
+     hooks run in raw mode.
    - **Policy**: the policy `verify.sh` enforces must validate; an invalid
      one **fails** with the validator's errors (every boundary refuses to
      run the gates until it is fixed), and the linters are not listed.
@@ -46,7 +52,8 @@ the checking; this command runs it, shows the output, and explains it.
      without the execute bit are flagged.
    - **Install state**: a projected runtime whose extension was removed and
      not added back (a half-done upgrade), or a registry that disagrees
-     with the installed copy, fails.
+     with the installed copy, fails. Without jq the registry cannot be
+     read, and the state is reported as not checked.
    - **Upgrade safety**: whether `project.sh --check` finds the projection
      current; local edits that are not held fail; held files are listed,
      and a hold whose file now equals the installed copy is stale and
@@ -57,8 +64,11 @@ the checking; this command runs it, shows the output, and explains it.
      pipeline runs is stale and fails, and an unknown id gets a `[rec]`.
    - **Agent hooks**: each projected hook must be executable (Claude Code
      runs them by path).
-   - **Attestations**: the latest record must not show a gate that passed
-     while checking none of its candidate files (the no-op signature).
+   - **Attestations**: `.specify/gates/` and its `attestations.jsonl`
+     must be writable (unless `attestation.enabled` is false): `verify.sh`
+     still runs without them but records no evidence, so doctor fails.
+     The latest record must not show a gate that passed while checking
+     none of its candidate files (the no-op signature).
    - **Spec conformance**: features, accept blocks and Complete count; a
      parse error fails; all tasks checked without the Complete flip gets a
      nudge.

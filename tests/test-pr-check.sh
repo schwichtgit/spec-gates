@@ -164,7 +164,16 @@ for t in bash sh git python3 perl curl cat grep sed awk head tail tr wc dirname 
 done
 expect "no jq: undeclared protected commit -> setup error (exit 2)" \
     "$(run "${GH[@]}" PATH="$NOJQ" GATES_PR_TITLE="feat: x" GATES_PR_BODY="Adds a.")" 2
-expect "no jq: the refusal names jq" "$(grep -c 'jq not found' "$WORKDIR/out.txt")" 1
+expect "no jq: the refusal names jq" "$(grep -c 'jq is not installed' "$WORKDIR/out.txt")" 1
+# Without git the refusal names git, not "not inside a git repository" (#122).
+NOGIT="$WORKDIR/path-nogit"
+mkdir -p "$NOGIT"
+for t in bash sh jq python3 perl curl cat grep sed awk head tail tr wc dirname basename mktemp rm cp env sort uniq cut date; do
+    command -v "$t" >/dev/null 2>&1 && ln -sf "$(command -v "$t")" "$NOGIT/$t"
+done
+expect "no git: setup error (exit 2)" \
+    "$(run "${GH[@]}" PATH="$NOGIT" GATES_PR_TITLE="feat: x" GATES_PR_BODY="Adds a.")" 2
+expect "no git: the refusal says git is not installed" "$(grep -c 'git is not installed' "$WORKDIR/out.txt")" 1
 mr_api "Adds a."$'\n\n'"A long but clean tail."
 expect "GitLab < 16.7 (no description var), no token -> notice, title checked (exit 0)" \
     "$(run "${GL[@]}")" 0

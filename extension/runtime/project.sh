@@ -283,7 +283,9 @@ fi
 HOOKPLAN="" FOREIGN="" GITNOTE="" MANAGER="" MGRPLAN="" MGRAPPLY="" MGRMANUAL="" MGRDONE=""
 STUB="$SRC/hooks/git/stub.sh"
 if [[ "$GITHOOKS" -eq 1 ]]; then
-    if ! command -v git >/dev/null 2>&1 || ! git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    if ! command -v git >/dev/null 2>&1; then
+        GITNOTE="git is not installed: the git boundary is not wired. Install git and run this again."
+    elif ! git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         GITNOTE="not a git work tree: the git boundary is not wired. Run this again after git init."
     else
         HOOKSDIR="$(cd "$ROOT" && git rev-parse --git-path hooks)"

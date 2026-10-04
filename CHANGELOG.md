@@ -109,6 +109,25 @@ add` forms at the agent boundary. `project.sh` lists new settings like
 
 ### Fixed
 
+- **Degraded hosts get messages that name the cause** (#122). Without jq,
+  doctor reported an interrupted install because it could not read the
+  registry; it now says the install state was not checked. Without
+  python3, the PR-hook canary names python3 instead of calling the hook
+  broken. Without git, `project.sh` says git is not installed instead of
+  asking for `git init`, and doctor and `pr-check.sh` give an install
+  hint. Without `sha256sum` or `shasum`, the contract canary names the
+  tool instead of reporting a sandbox setup failure. Doctor now checks
+  `cmp` and a SHA-256 tool, which `project.sh` needs. With a read-only
+  `.specify/gates/`, `verify.sh` prints one warning that the run left no
+  evidence instead of a shell `Permission denied` line, and doctor fails
+  because attestations cannot be written. README "Requirements" says
+  what a missing policy-enabled linter does: every boundary passes with
+  that gate `[skipped]`, while doctor and the canary suite (and so a CI
+  job from the templates) fail.
+- **Doctor can run as a CI step** (#148). A CI checkout has no git hook
+  stubs, so doctor reported the projection as not current. `doctor.sh
+--ci` leaves out the git hook wiring and the git boundary section and
+  runs every other check.
 - **The test suite passes on a host without python3** (#120). The GitLab
   "no curl" case assumed python3's `urllib` as the fallback fetcher; it
   now skips visibly without it, and a new case checks that with neither

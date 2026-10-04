@@ -115,7 +115,7 @@ gates_attest_ignore() { # <log-path>
     fi
     local sep=""
     [[ -s "$ignore" && -n "$(tail -c 1 "$ignore" 2>/dev/null)" ]] && sep=$'\n'
-    printf '%s%s\n' "$sep" "$name" >>"$ignore" 2>/dev/null || true
+    { printf '%s%s\n' "$sep" "$name" >>"$ignore"; } 2>/dev/null || true
     return 0
 }
 
@@ -123,26 +123,30 @@ gates_attest_ignore() { # <log-path>
 # the append is a single atomic-in-practice write; the cap rewrite goes
 # through a temp file in the same directory + mv (atomic rename), so readers
 # never observe a truncated file. Concurrent capping is last-writer-wins.
+# A directory or log that cannot be written returns 1 without output (#122):
+# the caller prints the one warning; bash's own "Permission denied" for a
+# failed redirection would otherwise leak. Redirection errors go to the
+# shell's stderr, so the group, not the command, is silenced.
 gates_attest_append() { # <record-json> <log-path> <max-records>
     local record="${1:-}" log="${2:-}" max="${3:-200}"
     [[ -n "$record" && -n "$log" ]] || return 1
     local dir
     dir="$(dirname "$log")"
     if [[ ! -d "$dir" ]]; then
-        mkdir -p "$dir" || return 1
+        mkdir -p "$dir" 2>/dev/null || return 1
     fi
-    printf '%s\n' "$record" >>"$log" || return 1
+    { printf '%s\n' "$record" >>"$log"; } 2>/dev/null || return 1
     gates_attest_ignore "$log"
     local lines
     lines="$(wc -l <"$log" | tr -d '[:space:]')" || return 1
     if [[ "$lines" -gt "$max" ]]; then
         local tmp="$dir/.attestations.jsonl.$$"
-        if ! tail -n "$max" "$log" >"$tmp"; then
-            rm -f "$tmp"
+        if ! { tail -n "$max" "$log" >"$tmp"; } 2>/dev/null; then
+            rm -f "$tmp" 2>/dev/null
             return 1
         fi
-        if ! mv "$tmp" "$log"; then
-            rm -f "$tmp"
+        if ! mv "$tmp" "$log" 2>/dev/null; then
+            rm -f "$tmp" 2>/dev/null
             return 1
         fi
     fi

@@ -135,7 +135,8 @@ Read the exit code:
 - `1`: a canary was skipped because a policy-enabled tool is not
   installed (the user declined step 3: name the tool and say that gate
   skips until it is installed), a canary was accepted (a broken gate:
-  report it and point at `/speckit.gates.doctor`), or another tool owns
+  report it and point at `/speckit.gates.doctor`; when its line names a
+  missing tool such as python3, name that tool instead), or another tool owns
   the git hooks:
   - **husky, lefthook or the pre-commit framework**: `project.sh` printed
     the gates entry for that tool's own file (`.husky/<hook>`,

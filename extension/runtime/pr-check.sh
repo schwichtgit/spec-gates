@@ -58,7 +58,7 @@ done
 # paths, which would read as "nothing protected" and pass (#121).
 for _tool in jq git; do
     if ! command -v "$_tool" >/dev/null 2>&1; then
-        echo "pr-check: $_tool not found -- install it in the CI image (apt-get install $_tool, apk add $_tool, brew install $_tool)" >&2
+        echo "pr-check: $_tool is not installed -- install it in the CI image (apt-get install $_tool, apk add $_tool, brew install $_tool)" >&2
         exit 2
     fi
 done

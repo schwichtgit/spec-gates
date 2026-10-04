@@ -200,6 +200,11 @@ eq "dev install" dev "$(gates_install_state "$D")"
 rmdir "$D/.specify/extensions/gates/.specify-dev"
 fx_registry "$D" 9.9.9
 eq "registry/vendored disagree -> mismatch" mismatch "$(gates_install_state "$D")"
+# Without jq the registry cannot be read, which says nothing about the
+# install (#122): unknown, not mismatch.
+mkdir "$D/no-tools"
+# shellcheck disable=SC2123  # a subshell PATH without jq is the point
+eq "registry present, no jq -> unknown" unknown "$(PATH="$D/no-tools"; gates_install_state "$D")"
 rm -rf "$D/.specify/extensions"
 eq "extension removed, runtime projected -> removed" removed "$(gates_install_state "$D")"
 rm -f "$D/.specify/gates/.runtime-version"
