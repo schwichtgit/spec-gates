@@ -67,12 +67,12 @@ gates_message_check() { # <commit|pr> <text>
     local mode="$1" msg="$2" subject
     GATES_MSG_ERRORS=0
     GATES_MSG_WARNINGS=0
-    subject="$(printf '%s\n' "$msg" | head -n 1)"
+    subject="${msg%%$'\n'*}"
 
     _err() { echo "ERROR: $*" >&2; GATES_MSG_ERRORS=$((GATES_MSG_ERRORS + 1)); }
     _warn() { echo "WARN: $*" >&2; GATES_MSG_WARNINGS=$((GATES_MSG_WARNINGS + 1)); }
 
-    if [[ -z "${msg//[[:space:]]/}" ]]; then
+    if ! [[ "$msg" =~ [^[:space:]] ]]; then
         _err "Empty message."
         return 1
     fi
@@ -92,13 +92,13 @@ gates_message_check() { # <commit|pr> <text>
     fi
 
     if _gates_msg_policy_enabled forbid_ai_isms; then
-        if printf '%s\n' "$msg" | grep -qiE '\b(I have|I'\''ve|I updated|I fixed|I added|I removed|I refactored)\b'; then
+        if grep -qiE '\b(I have|I'\''ve|I updated|I fixed|I added|I removed|I refactored)\b' <<<"$msg"; then
             _err "Self-referential language detected."
         fi
-        if printf '%s\n' "$msg" | grep -qiE '\b(Certainly|I'\''d be happy to|As an AI|Happy to help)\b'; then
+        if grep -qiE '\b(Certainly|I'\''d be happy to|As an AI|Happy to help)\b' <<<"$msg"; then
             _err "AI filler language detected."
         fi
-        if printf '%s\n' "$msg" | grep -qiE '\b(seamless|robust|powerful|elegant|streamlined|polished|enhanced|refined)\b'; then
+        if grep -qiE '\b(seamless|robust|powerful|elegant|streamlined|polished|enhanced|refined)\b' <<<"$msg"; then
             _err "Marketing adjective detected."
         fi
 
@@ -110,7 +110,12 @@ gates_message_check() { # <commit|pr> <text>
         local -a brand_terms=()
         if command -v gates_policy_path_list >/dev/null 2>&1; then
             while IFS= read -r phrase; do
-                [[ -n "$phrase" ]] && brand_msg="${brand_msg//"$phrase"/}"
+                # awk, not ${brand_msg//"$phrase"/}: bash 3.2 makes that
+                # quadratic in the number of matches (#117).
+                [[ -n "$phrase" ]] && brand_msg="$(awk -v p="$phrase" '{
+                    out = ""
+                    while ((i = index($0, p)) > 0) { out = out substr($0, 1, i - 1); $0 = substr($0, i + length(p)) }
+                    print out $0 }' <<<"$brand_msg")"
             done < <(gates_policy_path_list git ai_branding allow_phrases || true)
         fi
         if command -v gates_policy_path_list >/dev/null 2>&1 \
@@ -122,7 +127,7 @@ gates_message_check() { # <commit|pr> <text>
             brand_terms=(Anthropic GPT OpenAI Copilot)
         fi
         for term in ${brand_terms[@]+"${brand_terms[@]}"}; do
-            if printf '%s\n' "$brand_msg" | grep -qiwF -e "$term"; then
+            if grep -qiwF -e "$term" <<<"$brand_msg"; then
                 hits="${hits:+$hits, }$term"
             fi
         done
@@ -142,7 +147,7 @@ gates_message_check() { # <commit|pr> <text>
             | sed 's#\.claude/[^[:space:]]*##g' \
             | sed 's/[Cc]laude-[A-Za-z0-9._-]*//g' \
             | sed 's/([^)]*)//g')"
-        if printf '%s\n' "$cleaned" | grep -qiE '\bClaude\b'; then
+        if grep -qiE '\bClaude\b' <<<"$cleaned"; then
             _err "Standalone 'Claude' detected (use 'Claude Code' if needed)."
             echo "  A legitimate phrase (a product or model name your repo integrates) can be allowed via git.ai_branding.allow_phrases." >&2
         fi
@@ -151,18 +156,18 @@ gates_message_check() { # <commit|pr> <text>
     # A PR edit that changes only the body has no title to judge.
     if _gates_msg_policy_enabled conventional_commits \
         && ! [[ "$mode" == "pr" && -z "$subject" ]]; then
-        if ! printf '%s\n' "$subject" | grep -qE '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?: .+'; then
+        if ! grep -qE '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?: .+' <<<"$subject"; then
             _err "Subject does not match conventional commit format."
             echo "  Expected: type(scope)?: description" >&2
             echo "  Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert" >&2
         fi
     fi
 
-    if printf '%s\n' "$msg" | grep -qiE '\b(WIP|FIXME|TODO|XXX|DO NOT MERGE)\b'; then
+    if grep -qiE '\b(WIP|FIXME|TODO|XXX|DO NOT MERGE)\b' <<<"$msg"; then
         _warn "Draft marker detected."
     fi
 
-    if printf '%s\n' "$msg" | grep -qi 'Co-Authored-By:'; then
+    if grep -qi 'Co-Authored-By:' <<<"$msg"; then
         _err "Co-Authored-By trailer detected."
     fi
 

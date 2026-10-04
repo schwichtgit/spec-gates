@@ -238,7 +238,7 @@ if [[ "$SPEC_ENABLED" != "false" && -z "${GATES_SPEC_EXEC:-}" ]]; then
         record "spec" "planned" "spec conformance (accept blocks)"
     else
         if [[ -n "$ACCEPT_ARG" && "$ACCEPT_ARG" != "all" ]]; then
-            if ! gates_spec_features "$PROJECT_ROOT" | grep -qx "$ACCEPT_ARG"; then
+            if ! grep -qx -- "$ACCEPT_ARG" <<<"$(gates_spec_features "$PROJECT_ROOT")"; then
                 AVAILABLE="$(gates_spec_features "$PROJECT_ROOT" | tr '\n' ' ')"
                 echo "gates: --accept: unknown feature: $ACCEPT_ARG (available: ${AVAILABLE:-none})" >&2
                 exit 1
@@ -389,7 +389,8 @@ else
         for r in "${RESULTS[@]}"; do
             name="$(printf '%s' "$r" | jq -r '.name')"
             status="$(printf '%s' "$r" | jq -r '.status')"
-            detail="$(printf '%s' "$r" | jq -r '.detail' | head -n 1)"
+            detail="$(jq -r '.detail' <<<"$r")"
+            detail="${detail%%$'\n'*}"
             if [[ -n "$detail" ]]; then
                 echo "  [$status] $name -- $detail"
             else

@@ -248,7 +248,7 @@ gates_protected_check() { # <protected> <changed> <declared> <approvers>
     local protected="$1" changed="$2" declared="$3" approvers="$4" p n=0
     while IFS= read -r p; do
         [[ -z "$p" ]] && continue
-        if ! printf '%s\n' "$declared" | grep -qxF -e "$p"; then
+        if ! grep -qxF -e "$p" <<<"$declared"; then
             echo "ERROR: protected file changed without a declaration: $p" >&2
             echo "  Add the trailer:  Protected-Change: $p" >&2
             n=$((n + 1))
@@ -256,7 +256,7 @@ gates_protected_check() { # <protected> <changed> <declared> <approvers>
     done <<<"$protected"
     while IFS= read -r p; do
         [[ -z "$p" ]] && continue
-        if ! printf '%s\n' "$changed" | grep -qxF -e "$p"; then
+        if ! grep -qxF -e "$p" <<<"$changed"; then
             echo "ERROR: Protected-Change names a path this change does not touch: $p" >&2
             n=$((n + 1))
         fi

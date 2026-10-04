@@ -189,7 +189,7 @@ gates_contract_fetch() { # <source> <version> <file> <out>
         echo "contract: fetch: missing argument" >&2
         return 2
     fi
-    if git ls-remote --heads "$source" "refs/heads/$version" 2>/dev/null | grep -q .; then
+    if [[ -n "$(git ls-remote --heads "$source" "refs/heads/$version" 2>/dev/null)" ]]; then
         echo "contract: '$version' is a branch on $source -- pin a tag or commit instead (a moving pin is not a pin)" >&2
         return 2
     fi

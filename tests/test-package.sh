@@ -141,6 +141,19 @@ else
     echo "SKIP: no bash 3.x at /bin/bash (the macOS CI job covers this)"
 fi
 
+# Every script runs under pipefail. `echo "$x" | grep -q` (or `| head`)
+# stops reading at the first match, the writer dies of SIGPIPE once $x
+# outgrows the pipe buffer, and pipefail turns the match into a miss: the
+# secret scan let a key through in any staged file over 64 KB (#117). Feed
+# grep -q from a here-string instead.
+echo ""
+echo "=== no pipe into grep -q or head in shipped shell (#117) ==="
+PIPED="$(grep -rnE '(^|[^|])[|][[:space:]]*grep[[:space:]]+-[A-Za-z]*q|(echo|printf)[^|]*[|][[:space:]]*head' \
+    "$REPO_ROOT/extension/runtime" 2>/dev/null | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)"
+expect "no shipped line pipes into grep -q or head" "${PIPED:-none}" "none"
+# shellcheck disable=SC2001  # sed, not ${PIPED//...}: the slow form in bash 3.2
+[[ -n "$PIPED" ]] && sed "s|$REPO_ROOT/||; s/^/    /" <<<"$PIPED"
+
 echo ""
 echo "test-package: $PASS/$TOTAL passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]

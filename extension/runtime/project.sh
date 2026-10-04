@@ -39,7 +39,7 @@ refuse() { # <message...>: exit 2 before anything is written
     for l in "$@"; do printf 'project: %s\n' "$l" >&2; done
     exit 2
 }
-inlist() { [[ -n "$1" ]] && printf '%s\n' "$1" | grep -qxF -- "$2"; }
+inlist() { [[ -n "$1" ]] && grep -qxF -- "$2" <<<"$1"; }
 addline() { if [[ -z "$1" ]]; then printf '%s' "$2"; else printf '%s\n%s' "$1" "$2"; fi; }
 
 ARGS="$*" # for the projected copy's hand-off to the installed one

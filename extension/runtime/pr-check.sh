@@ -149,7 +149,7 @@ if [[ -n "$DESCRIPTION_UNCHECKABLE" ]]; then
     # truncated tail.
     echo "pr-check: ERROR -- $DESCRIPTION_UNCHECKABLE" >&2
     FAILED=$((FAILED + 1))
-elif [[ -n "$TITLE" || -n "${BODY//[[:space:]]/}" ]]; then
+elif [[ -n "$TITLE" ]] || [[ "$BODY" =~ [^[:space:]] ]]; then
     if gates_message_check pr "$TITLE"$'\n\n'"$BODY"; then
         echo "pr-check: PR/MR title and description pass the message rules"
     else

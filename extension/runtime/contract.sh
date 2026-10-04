@@ -241,7 +241,7 @@ $delta"
     echo "contract: update $current -> $target committed on branch $branch"
     printf '%s\n' "$delta"
     if command -v gh >/dev/null 2>&1 \
-        && git -C "$PROJECT_ROOT" remote get-url origin 2>/dev/null | grep -q github; then
+        && grep -q github <<<"$(git -C "$PROJECT_ROOT" remote get-url origin 2>/dev/null)"; then
         if git -C "$PROJECT_ROOT" push -q -u origin "$branch" 2>/dev/null \
             && (cd "$PROJECT_ROOT" && gh pr create --head "$branch" \
                 --title "chore: update policy baseline $current -> $target" \
@@ -344,7 +344,7 @@ $(printf '%s\n' "$deviations" | awk -F'\t' '{ printf "- %s: %s: %s -> %s\n", $1,
         echo "contract: could not commit the proposal" >&2
         return 2
     }
-    if command -v gh >/dev/null 2>&1 && printf '%s' "$CONTRACT_SOURCE" | grep -q github; then
+    if command -v gh >/dev/null 2>&1 && grep -q github <<<"$CONTRACT_SOURCE"; then
         if (cd "$work/src" && git push -q origin "$branch" 2>/dev/null \
             && gh pr create --head "$branch" \
                 --title "policy: proposal from $consumer" --body "$body" 2>/dev/null); then

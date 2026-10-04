@@ -35,11 +35,14 @@ raw_field() {
         | sed -nE 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)".*/=\1/p')"
     if [[ -z "$v" ]]; then
         # The key is there but its value is not a plain string: undecidable.
-        printf '%s' "$INPUT" | grep -qE '"'"$1"'"[[:space:]]*:' && return 2
+        grep -qE '"'"$1"'"[[:space:]]*:' <<<"$INPUT" && return 2
         return 1
     fi
     v="${v#=}"
     [[ "$v" == *'\u'* ]] && return 2
+    # bash 3.2's ${v//...} is quadratic in the number of matches: a long
+    # value would hang the decode below, so it is undecidable here (#117).
+    [[ "${#v}" -gt 16384 ]] && return 2
     v="${v//\\\\/$'\001'}"
     v="${v//\\\"/\"}"
     v="${v//\\\//\/}"
@@ -123,7 +126,7 @@ if [[ -z "$BLOCKED" ]]; then
 fi
 
 # Cloud configs
-if echo "$BASENAME" | grep -qE '^(gcloud-.*\.json|service-account.*\.json|aws-credentials)$'; then
+if grep -qE '^(gcloud-.*\.json|service-account.*\.json|aws-credentials)$' <<<"$BASENAME"; then
     BLOCKED="Cloud credentials file"
 fi
 
@@ -145,7 +148,7 @@ case "$BASENAME" in
 esac
 
 # Sensitive directories
-if echo "$FILE_PATH" | grep -qE '/(\.ssh|\.gnupg|\.aws|\.gcloud)/'; then
+if grep -qE '/(\.ssh|\.gnupg|\.aws|\.gcloud)/' <<<"$FILE_PATH"; then
     BLOCKED="File in sensitive directory"
 fi
 
@@ -161,7 +164,7 @@ if [[ -z "$BLOCKED" ]]; then
         # The policy reader needs jq. With entries declared, the edit may be
         # protected and nothing here can tell: ask rather than guess.
         if [[ -f "$POLICY_FILE" ]] \
-            && tr '\n' ' ' <"$POLICY_FILE" | grep -qE '"extra"[[:space:]]*:[[:space:]]*\[[[:space:]]*"'; then
+            && grep -qE '"extra"[[:space:]]*:[[:space:]]*\[[[:space:]]*"' <<<"$(tr '\n' ' ' <"$POLICY_FILE")"; then
             ASK="policy protected_files.extra cannot be checked ($DEGRADED); confirm $FILE_PATH is not protected"
         fi
     elif [[ -f "$POLICY_LIB" ]]; then

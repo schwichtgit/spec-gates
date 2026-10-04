@@ -109,7 +109,7 @@ gates_manifest_load() { # <root>
             ;;
     esac
     GATES_MANIFEST_VERSION="${header#\# spec-gates-manifest v1 version=}"
-    if ! printf '%s' "$GATES_MANIFEST_VERSION" | grep -qE '^[0-9]+(\.[0-9]+)*$'; then
+    if ! grep -qE '^[0-9]+(\.[0-9]+)*$' <<<"$GATES_MANIFEST_VERSION"; then
         GATES_MANIFEST_ERROR="unparseable version in the header"
         return 0
     fi
@@ -157,7 +157,7 @@ gates_holds_load() { # <root>
 
 gates_is_held() { # <target-rel>
     [[ -n "$GATES_HOLDS" ]] || return 1
-    printf '%s\n' "$GATES_HOLDS" | grep -qxF -- "$1"
+    grep -qxF -- "$1" <<<"$GATES_HOLDS"
 }
 
 GATES_KNOWN_FILE="${GATES_KNOWN_FILE:-}"
@@ -250,7 +250,7 @@ gates_ci_missing() { # <root>
     while IFS=$'\t' read -r id re; do
         [[ -n "$id" ]] || continue
         if ! printf '%s\n' "$body" | grep -E "$re" >/dev/null; then
-            if [[ -z "$acks" ]] || ! printf '%s\n' "$acks" | grep -qxF "$id"; then
+            if [[ -z "$acks" ]] || ! grep -qxF "$id" <<<"$acks"; then
                 printf '%s\n' "$id"
             fi
         fi

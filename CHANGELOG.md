@@ -109,6 +109,15 @@ add` forms at the agent boundary. `project.sh` lists new settings like
 
 ### Fixed
 
+- **Checks no longer miss matches on large input** (#117). Under
+  `pipefail`, `echo "$x" | grep -q` read a match as a miss once the input
+  outgrew the pipe buffer, so the pre-commit secret scan let a key through
+  in any staged file over 64 KB (since v0.1.0), and a large commit touching
+  a protected path could not be committed at all. Every such check now
+  reads from a here-string, and a package test refuses the pipe form.
+  Under the stock macOS bash 3.2 the commit-message checks also no longer
+  hang on long messages, and the agent hooks without jq ask on a command
+  too long to decode instead of stalling.
 - **The format hooks no longer format without a policy** (#111). When
   `policy.json` is missing or the policy loader cannot load, post-edit and
   format-changed print one line saying so and format nothing, instead of

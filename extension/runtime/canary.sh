@@ -323,9 +323,9 @@ run_prhook_canary() {
         | CLAUDE_PROJECT_DIR="$d" "$script" 2>&1 >/dev/null)" || rc_nf=$?
     if [[ "$rc_ok" -ne 0 ]]; then
         record prhook accepted "validate-pr.sh exit $rc_ok on a CLEAN PR — the hook is broken (it blocks every PR command)" 1
-    elif [[ "$rc_bad" -ne 2 ]] || ! printf '%s' "$out_bad" | grep -q 'PR validation failed'; then
+    elif [[ "$rc_bad" -ne 2 ]] || ! grep -q 'PR validation failed' <<<"$out_bad"; then
         record prhook accepted "validate-pr.sh exit $rc_bad on an AI-ism PR body — the PR hook did not block" 1
-    elif [[ "$rc_nf" -ne 2 ]] || ! printf '%s' "$out_nf" | grep -q 'cannot read --body-file'; then
+    elif [[ "$rc_nf" -ne 2 ]] || ! grep -q 'cannot read --body-file' <<<"$out_nf"; then
         record prhook accepted "validate-pr.sh exit $rc_nf on an unreadable --body-file — the body went unchecked" 1
     else
         record prhook blocked "validate-pr.sh allowed a clean PR and refused an AI-ism body and an unreadable body file" 0
@@ -346,7 +346,7 @@ run_bulk_canary() {
         || setup_fail "bulk policy"
     out="$(printf '{"cwd":"%s","tool_input":{"command":"git add -A"}}' "$d" \
         | CLAUDE_PROJECT_DIR="$d" "$script" 2>&1 >/dev/null)" || rc=$?
-    if [[ "$rc" -eq 2 ]] && printf '%s' "$out" | grep -q 'block_bulk_staging'; then
+    if [[ "$rc" -eq 2 ]] && grep -q 'block_bulk_staging' <<<"$out"; then
         record bulk blocked "validate-bash refused git add -A under git.block_bulk_staging" 0
     else
         record bulk accepted "validate-bash.sh exit $rc on git add -A with git.block_bulk_staging on — bulk staging was not refused" 1
@@ -370,7 +370,7 @@ run_local_canary() {
     out="$(printf '%s' '{"tool_input":{"command":"echo gates-local-canary"}}' \
         | CLAUDE_PROJECT_DIR="$d" "$script" 2>&1 >/dev/null)" || rc_hit=$?
     printf '%s' '{"tool_input":{"command":"ls"}}' | CLAUDE_PROJECT_DIR="$d" "$script" >/dev/null 2>&1 || rc_ok=$?
-    if [[ "$rc_hit" -ne 2 ]] || ! printf '%s' "$out" | grep -q 'gates(local validate-bash/10-canary.sh)'; then
+    if [[ "$rc_hit" -ne 2 ]] || ! grep -q 'gates(local validate-bash/10-canary.sh)' <<<"$out"; then
         record local accepted "validate-bash.sh exit $rc_hit on a command a local rule refuses — hooks.local.d rules do not run" 1
     elif [[ "$rc_ok" -ne 0 ]]; then
         record local accepted "validate-bash.sh exit $rc_ok on a plain command with a local rule present — the local rule plumbing blocks everything" 1
@@ -409,7 +409,7 @@ run_secret_canary() {
     printf 'AKIA%s\n' "ABCDEFGHIJKLMNOP" >"$d/leak.txt"
     local out rc=0
     out="$(cd "$d" && git add leak.txt && git commit -q -m 'canary secret probe' 2>&1)" || rc=$?
-    if [[ "$rc" -ne 0 ]] && printf '%s' "$out" | grep -q 'SECRET'; then
+    if [[ "$rc" -ne 0 ]] && grep -q 'SECRET' <<<"$out"; then
         record secret blocked "pre-commit secret scan refused the staged AWS-key-shaped string" 0
     elif [[ "$rc" -ne 0 ]]; then
         record secret accepted "commit was refused, but not by the secret scan — the pre-commit secret scan did not block" 1
@@ -469,7 +469,7 @@ run_credential_canary() {
     d="$(git_sandbox credential '{ "hooks": {} }' "$hook")"
     printf "token: '%s'\n" "abcdefgh12" >"$d/conf.yml"
     out="$(cd "$d" && git add conf.yml && CLAUDE_PROJECT_DIR="$d" git commit -q -m 'chore: canary credential probe' 2>&1)" || rc=$?
-    if [[ "$rc" -ne 0 ]] && printf '%s' "$out" | grep -q 'credential assignment'; then
+    if [[ "$rc" -ne 0 ]] && grep -q 'credential assignment' <<<"$out"; then
         record credential blocked "pre-commit refused a staged token assignment" 0
     else
         record credential accepted "a staged token assignment was not refused by the generic credential scan (exit $rc)" 1
@@ -488,7 +488,7 @@ run_protected_canary() {
     d="$(git_sandbox protected '{ "hooks": {}, "protected_files": { "extra": ["charter.md"] } }' "$pre" "$msg")"
     printf '# charter\n' >"$d/charter.md"
     out="$(cd "$d" && git add charter.md && CLAUDE_PROJECT_DIR="$d" git commit -q -m 'chore: canary protected probe' 2>&1)" || rc=$?
-    if [[ "$rc" -ne 0 ]] && printf '%s' "$out" | grep -q 'protected file changed without a declaration'; then
+    if [[ "$rc" -ne 0 ]] && grep -q 'protected file changed without a declaration' <<<"$out"; then
         record protected blocked "commit-msg refused a protected file staged without a Protected-Change trailer" 0
     else
         record protected accepted "a protected file was committed without a Protected-Change trailer (exit $rc)" 1
@@ -506,7 +506,7 @@ run_branding_canary() {
     d="$(git_sandbox branding '{ "hooks": {} }' "$msg")"
     printf 'x\n' >"$d/x.txt"
     out="$(cd "$d" && git add x.txt && CLAUDE_PROJECT_DIR="$d" git commit -q -m 'feat: written with Copilot' 2>&1)" || rc=$?
-    if [[ "$rc" -ne 0 ]] && printf '%s' "$out" | grep -q 'AI branding detected'; then
+    if [[ "$rc" -ne 0 ]] && grep -q 'AI branding detected' <<<"$out"; then
         record branding blocked "commit-msg refused a message naming a default AI-branding term" 0
     else
         record branding accepted "a message naming a default AI-branding term was accepted (exit $rc)" 1
@@ -545,9 +545,9 @@ run_pr_canary() {
     out1="$(cd "$d" && "${clean[@]}" bash .specify/gates/pr-check.sh --range "$base..HEAD" 2>&1)" || rc1=$?
     out2="$(cd "$d" && "${clean[@]}" GATES_PR_TITLE='feat: canary' GATES_PR_BODY='I have made this seamless.' \
         bash .specify/gates/pr-check.sh 2>&1)" || rc2=$?
-    if [[ "$rc1" -ne 1 ]] || ! printf '%s' "$out1" | grep -q 'changed without a declaration'; then
+    if [[ "$rc1" -ne 1 ]] || ! grep -q 'changed without a declaration' <<<"$out1"; then
         record pr accepted "pr-check.sh exit $rc1 on an undeclared protected change in the PR range — the CI protected check did not block" 1
-    elif [[ "$rc2" -ne 1 ]] || ! printf '%s' "$out2" | grep -q 'Self-referential'; then
+    elif [[ "$rc2" -ne 1 ]] || ! grep -q 'Self-referential' <<<"$out2"; then
         record pr accepted "pr-check.sh exit $rc2 on a PR description with an AI-ism — the CI text check did not block" 1
     else
         record pr blocked "pr-check.sh refused an undeclared protected change and an AI-ism PR description" 0

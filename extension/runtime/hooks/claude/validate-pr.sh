@@ -20,7 +20,7 @@ refuse() {
 INPUT=$(cat /dev/stdin)
 
 # Not a PR command (a cheap raw-text test that needs no tooling): allow.
-if ! printf '%s' "$INPUT" | grep -qE "$PR_RE"; then
+if ! grep -qE "$PR_RE" <<<"$INPUT"; then
     exit 0
 fi
 
@@ -34,7 +34,7 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 COMMAND=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null) \
     || refuse "ERROR: the hook input is not valid JSON."
-if ! printf '%s' "$COMMAND" | grep -qE "$PR_RE"; then
+if ! grep -qE "$PR_RE" <<<"$COMMAND"; then
     exit 0 # the match was outside the command (e.g. in a description)
 fi
 
