@@ -122,6 +122,63 @@ else
     skip "gitignored-file checks" "shellcheck not installed"
 fi
 
+# --- candidate collection starts no process per file (#169) ---
+# A jq and a git shim count their invocations while check mode walks a tree
+# twice: once small, once with ten times the files (matching, gitignored, and
+# matching no include glob). The counts must not grow with the tree. A
+# stubbed linter keeps the test independent of installed tools; the meta
+# line shows the candidate count is still exact.
+echo ""
+echo "=== candidate collection does not scale processes with files ==="
+SHIM="$WORKDIR/shim"
+mkdir -p "$SHIM"
+for t in jq git; do
+    printf '#!/bin/sh\necho %s >>"%s/calls"\nexec "%s" "$@"\n' \
+        "$t" "$SHIM" "$(command -v "$t")" >"$SHIM/$t"
+    chmod +x "$SHIM/$t"
+done
+printf '#!/bin/sh\nexit 0\n' >"$SHIM/shellcheck"
+chmod +x "$SHIM/shellcheck"
+D="$WORKDIR/scan"
+project "$D" '{ "hooks": { "shellcheck": { "include": ["**/*.sh"], "exclude": ["vendor/**", ".specify/**"], "orchestrator": "none", "severity": "error" }, "verify-quality": { "orchestrator": "none", "severity": "error" } } }'
+git -C "$D" init -q
+printf 'build/\n' >"$D/.gitignore"
+# Out of scope as before: a tracked file under dist/ (the find walk pruned
+# it) and a symlink (find -type f skipped it).
+mkdir -p "$D/dist"
+: >"$D/dist/d.sh"
+ln -s src/s1.sh "$D/link.sh"
+git -C "$D" add dist/d.sh link.sh
+# In scope as before: a file in a nested repository, which git lists only
+# as a directory entry.
+mkdir -p "$D/nested"
+git -C "$D/nested" init -q
+: >"$D/nested/n.sh"
+# <count>: grow the tree to <count> files of each kind, print
+# "<jq calls> <git calls> <candidates>" for one check-mode run.
+scan_calls() {
+    local n="$1" i meta
+    mkdir -p "$D/src" "$D/build" "$D/notes" "$D/vendor"
+    for ((i = 1; i <= n; i++)); do
+        : >"$D/src/s$i.sh"
+        : >"$D/build/b$i.sh"
+        : >"$D/notes/n$i.txt"
+    done
+    : >"$D/vendor/v.sh"
+    : >"$SHIM/calls"
+    meta="$(PATH="$SHIM:$PATH" bash "$D/.specify/gates/lib/formatter-dispatch.sh" --check \
+        --tool shellcheck --project-root "$D" 2>&1 >/dev/null)"
+    printf '%s %s %s\n' "$(grep -c '^jq$' "$SHIM/calls")" \
+        "$(grep -c '^git$' "$SHIM/calls")" \
+        "$(sed -n 's/.*candidates=\([0-9]*\).*/\1/p' <<<"$meta")"
+}
+read -r JQ_S GIT_S CAND_S <<<"$(scan_calls 20)"
+read -r JQ_L GIT_L CAND_L <<<"$(scan_calls 200)"
+expect "jq calls do not grow with the tree ($JQ_S vs $JQ_L)" "$JQ_L" "$JQ_S"
+expect "git calls do not grow with the tree ($GIT_S vs $GIT_L)" "$GIT_L" "$GIT_S"
+expect "small tree: only matching, unignored, unexcluded files" "$CAND_S" 21
+expect "large tree: only matching, unignored, unexcluded files" "$CAND_L" 201
+
 # --- exclude globs are honored ---
 echo ""
 echo "=== exclude globs are honored ==="

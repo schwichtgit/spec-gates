@@ -222,43 +222,86 @@ format_file() {
 # what is committed, so linting what git ignores (husky's generated .husky/_/,
 # build output) fails locally where CI passes. A tracked file is checked
 # even when an ignore pattern matches it, as it is in CI.
+#
+# One pass (#169): the globs are read once, git lists the files (ignored
+# untracked files never reach the loop), and matching stays in bash. Nothing
+# in the loop starts a process, so the cost per file is a few string tests.
 _gates_collect_files() { # <tool> <root>
-    local tool="$1" root="$2" rel i=0
-    local cands=() ign=()
+    local tool="$1" root="$2" g rel abs prel matched
+    local incs=() excs=() proot
+    while IFS= read -r g; do
+        [[ -n "$g" ]] && incs+=("$g")
+    done < <(gates_policy_list "$tool" include 2>/dev/null || true)
+    [[ "${#incs[@]}" -eq 0 ]] && return 0
+    while IFS= read -r g; do
+        [[ -n "$g" ]] && excs+=("$g")
+    done < <(gates_policy_list "$tool" exclude 2>/dev/null || true)
+    # Excludes match the path relative to the project root and the absolute
+    # path, as format_file's exclude check does.
+    proot="$(_gates_dispatch_project_root)"
     while IFS= read -r -d '' rel; do
-        cands+=("$rel")
-    done < <(_gates_collect_candidates "$tool" "$root")
-    [[ "${#cands[@]}" -eq 0 ]] && return 0
-    # check-ignore answers in input order, so one merge pass filters. Outside
-    # a work tree (or on a git error) it prints nothing and nothing is skipped.
-    while IFS= read -r -d '' rel; do
-        ign+=("$rel")
-    done < <(printf '%s\0' "${cands[@]}" | git -C "$root" check-ignore --stdin -z 2>/dev/null)
-    for rel in "${cands[@]}"; do
-        if [[ "$i" -lt "${#ign[@]}" && "$rel" == "${ign[$i]}" ]]; then
-            i=$((i + 1))
-            continue
-        fi
-        printf '%s\0' "$rel"
-    done
-}
-
-_gates_collect_candidates() { # <tool> <root>
-    local tool="$1" root="$2" f rel inc matched
-    while IFS= read -r -d '' f; do
-        rel="${f#"$root"/}"
+        # The directories the find walk prunes stay out of scope even when
+        # git tracks files under them.
+        case "/$rel/" in
+            */.git/* | */node_modules/* | */.venv/* | */target/* | */dist/*) continue ;;
+        esac
         matched=0
-        while IFS= read -r inc; do
-            [[ -z "$inc" ]] && continue
-            if _gates_glob_match "$rel" "$inc"; then
+        for g in "${incs[@]}"; do
+            if _gates_glob_match "$rel" "$g"; then
                 matched=1
                 break
             fi
-        done < <(gates_policy_list "$tool" include 2>/dev/null || true)
+        done
         [[ "$matched" -eq 1 ]] || continue
-        _gates_path_excluded_for_tool "$tool" "$f" && continue
+        abs="$root/$rel"
+        # Regular files only, like find -type f: git also lists symlinks and
+        # tracked files deleted from the work tree.
+        [[ -f "$abs" && ! -L "$abs" ]] || continue
+        prel="$abs"
+        if [[ -n "$proot" && "$abs" == "$proot/"* ]]; then
+            prel="${abs#"$proot"/}"
+        fi
+        matched=0
+        for g in "${excs[@]+"${excs[@]}"}"; do
+            if _gates_glob_match "$prel" "$g" || _gates_glob_match "$abs" "$g"; then
+                matched=1
+                break
+            fi
+        done
+        [[ "$matched" -eq 1 ]] && continue
         printf '%s\0' "$rel"
-    done < <(find "$root" \
+    done < <(_gates_list_files "$root")
+}
+
+# List the files under <root>, NUL-separated and relative to it. In a git
+# work tree: tracked files plus untracked files git does not ignore. Outside
+# one: every file, with the usual dependency and build directories pruned.
+_gates_list_files() { # <root>
+    local root="$1" f prev=""
+    if [[ "$(git -C "$root" rev-parse --is-inside-work-tree 2>/dev/null)" == "true" ]]; then
+        while IFS= read -r -d '' f; do
+            # Unmerged paths are listed once per stage, adjacent to each other.
+            [[ "$f" == "$prev" ]] && continue
+            prev="$f"
+            # git lists a submodule or a nested repository as one directory
+            # entry; walk it as find always did.
+            f="${f%/}"
+            if [[ -d "$root/$f" && ! -L "$root/$f" ]]; then
+                _gates_find_files "$root" "$root/$f"
+            else
+                printf '%s\0' "$f"
+            fi
+        done < <(git -C "$root" ls-files -co --exclude-standard -z 2>/dev/null)
+        return 0
+    fi
+    _gates_find_files "$root" "$root"
+}
+
+_gates_find_files() { # <root> <dir>: files under <dir>, relative to <root>
+    local root="$1" f
+    while IFS= read -r -d '' f; do
+        printf '%s\0' "${f#"$root"/}"
+    done < <(find "$2" \
         \( -name .git -o -name node_modules -o -name .venv -o -name target -o -name dist \) -prune \
         -o -type f -print0)
 }

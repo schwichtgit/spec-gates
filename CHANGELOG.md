@@ -125,6 +125,13 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   is missing (from an older holds file) fails `project.sh`, its `--check`
   and doctor (also `--ci`), naming `--take-upstream <path>` to restore
   it. Doctor recommends `doctor.sh --canary` while files are held.
+- **The lint gates no longer slow down with every file in the tree**
+  (#169). Collecting the files to check started a jq process per file
+  per tool, gitignored and unmatched files included, so a few thousand
+  build or note files added minutes to every commit and Stop hook. Each
+  tool's globs are now read once, git lists the files (tracked files
+  plus untracked ones it does not ignore), and matching stays in bash.
+  The same files are checked as before.
 - **The git hooks refuse a branch whose runtime was never projected**
   (#159). In a clone that tracks `policy.json` but gitignores the runtime,
   commit-msg took the missing `.runtime-version` for a pre-0.3.4 runtime
