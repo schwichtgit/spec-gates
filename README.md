@@ -204,9 +204,16 @@ its enforcement frontmatter — one registry, two consumers.
 
 ## Requirements
 
-- **jq** and **git**: the hooks and `verify.sh` require them. Without
-  jq, the file and command hooks fall back to a raw mode that keeps every
-  built-in block rule and asks you about anything it can't check.
+- **jq** and **git**: the hooks, `verify.sh` and `pr-check.sh` require
+  them; `verify.sh` and `pr-check.sh` refuse to run without either, so
+  `pre-commit` refuses commits and the CI job fails. Without jq, the file
+  and command hooks fall back to a raw mode that keeps every built-in
+  block rule, still checks `policy.json`, the constitution and the
+  project's rules, and asks you about anything it can't check; the PR
+  hook refuses PR commands. The Stop hook is the one exception, on
+  purpose: when `verify.sh` cannot run it lets the session end and says
+  why, so a missing tool never locks the agent in. Until jq is installed,
+  the quality gate holds at the git and CI boundaries only.
 - **python3** with the `json` module: the PR hook parses commands with it
   and refuses every PR command without it. The message rules' emoji check
   needs python3 or perl. `doctor` fails when either is missing.
@@ -367,10 +374,13 @@ if grep -q 'vendor/'; then echo "vendor/ is generated; run make vendor" >&2; exi
 Two settings in `.specify/gates/policy.json` cover the most common cases:
 
 - `git.block_bulk_staging: true` refuses `git add -A`, `--all`, `.`,
-  `:/`, `*` and directory arguments at the agent boundary, so an
-  untracked directory cannot be swept into a commit. Explicit files, `-u`
-  and `-p` stay allowed. The git boundary cannot tell how files were
-  staged, so this is an agent-boundary rule.
+  `:/` and other pathspec magic, globs (quoted or not), `"$PWD"` and
+  directory arguments at the agent boundary, so an untracked directory
+  cannot be swept into a commit. `git stage`, `env git add`,
+  `GIT_DIR=… git add` and `git --no-pager add` count too; an argument the
+  check cannot resolve (`"$f"`) asks. Explicit files, `-u` and `-p` stay
+  allowed. The git boundary cannot tell how files were staged, so this is
+  an agent-boundary rule.
 - The file hook blocks only on strong evidence: `.env` files, keys and
   certificates (`*.pem`, `*.key`, `*.p12`, `*.jks`, `*.keystore`, …),
   exact credential file names (`credentials.json`, `.netrc`, `.pypirc`,
@@ -424,9 +434,9 @@ default, and gates refuses both. Turn them off for the project in
 (`"includeCoAuthoredBy": false` is the older, deprecated form.)
 
 **A repo that integrates a provider** (an SDK client, a model name in a
-changelog) adds the exact phrases to `git.ai_branding.allow_phrases`. They
-are removed before both branding checks, and the refusal message points
-there:
+changelog) adds the phrases to `git.ai_branding.allow_phrases`. They are
+removed before both branding checks, matched literally but ignoring case
+like the terms, and the refusal message points there:
 
 ```json
 {

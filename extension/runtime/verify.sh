@@ -63,6 +63,13 @@ if ! command -v jq >/dev/null 2>&1; then
     echo "gates: jq not found — cannot evaluate policy (run /speckit.gates.doctor)" >&2
     exit 1
 fi
+# The spec gate proves with git that an accept block left the tree
+# unchanged; without git that check would pass blind (#121). Exit 1 like
+# jq: the Stop hook then lets the session end instead of locking it.
+if ! command -v git >/dev/null 2>&1; then
+    echo "gates: git not found — cannot check the working tree (run /speckit.gates.doctor)" >&2
+    exit 1
+fi
 if [[ ! -f "$POLICY_FILE" ]]; then
     echo "gates: no policy at $POLICY_FILE (run /speckit.gates.init)" >&2
     exit 1

@@ -112,7 +112,7 @@
                 "minLength": 1
               },
               "default": [],
-              "description": "Exact, case-sensitive phrases removed from the message before the branding and standalone 'Claude' checks, e.g. a product or branch name that contains a term."
+              "description": "Literal phrases, matched ignoring case, removed from the message before the branding and standalone 'Claude' checks, e.g. a product or branch name that contains a term."
             }
           }
         }

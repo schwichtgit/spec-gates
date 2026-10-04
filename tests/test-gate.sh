@@ -212,6 +212,20 @@ usage_err "--accept without a value" '--accept needs a feature name or all' --bo
 for b in agent git ci; do
     expect "--boundary $b accepted" "$(CLAUDE_PROJECT_DIR="$DE" bash "$DE/.specify/gates/verify.sh" --boundary "$b" >/dev/null 2>&1 && echo 0 || echo $?)" 0
 done
+# Without git the spec gate cannot prove an accept block left the tree
+# alone, so verify.sh refuses like it does without jq (#121): exit 1, the
+# "could not run" code the Stop hook lets through.
+echo ""
+echo "=== missing git (#121) ==="
+NOGIT="$WORKDIR/path-nogit"
+mkdir -p "$NOGIT"
+for t in bash sh jq cat grep sed awk head tail tr wc dirname basename mktemp rm cp env sort uniq cut date find; do
+    command -v "$t" >/dev/null 2>&1 && ln -sf "$(command -v "$t")" "$NOGIT/$t"
+done
+rc=0
+out="$(CLAUDE_PROJECT_DIR="$DE" PATH="$NOGIT" bash "$DE/.specify/gates/verify.sh" --boundary ci 2>&1)" || rc=$?
+expect "no git -> verify.sh exits 1" "$rc" 1
+expect "no git -> the refusal names git" "$(grep -c 'git not found' <<<"$out")" 1
 
 echo ""
 echo "$PASS passed, $FAIL failed, $SKIP skipped ($TOTAL total)"

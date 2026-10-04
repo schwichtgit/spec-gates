@@ -54,6 +54,14 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Both are required: without jq the policy reader returns no protected
+# paths, which would read as "nothing protected" and pass (#121).
+for _tool in jq git; do
+    if ! command -v "$_tool" >/dev/null 2>&1; then
+        echo "pr-check: $_tool not found -- install it in the CI image (apt-get install $_tool, apk add $_tool, brew install $_tool)" >&2
+        exit 2
+    fi
+done
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
     echo "pr-check: not inside a git repository" >&2
     exit 2

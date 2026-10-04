@@ -55,7 +55,7 @@ raw_field() {
 
 # The rules below test with grep/sed: without them each test is silently
 # false, which would allow every edit.
-for _tool in grep sed tr basename; do
+for _tool in grep sed tr basename awk; do
     command -v "$_tool" >/dev/null 2>&1 \
         || ask "$_tool not found, so protect-files cannot check this edit; run /speckit.gates.doctor"
 done
@@ -78,6 +78,27 @@ fi
 if [[ -z "$FILE_PATH" ]]; then
     exit 0
 fi
+
+# Normalize before any rule (#131): `.`, `..` and `//` are resolved
+# lexically, so .specify/gates/lib/../policy.json is policy.json. Every
+# match below ignores case: macOS APFS is case-insensitive by default, so
+# POLICY.json is the same file there, and a false refusal is cheap.
+ORIG_PATH="$FILE_PATH"
+FILE_PATH="$(printf '%s\n' "$FILE_PATH" | awk '{
+    abs = (substr($0, 1, 1) == "/"); n = split($0, c, "/"); k = 0
+    for (i = 1; i <= n; i++) {
+        if (c[i] == "" || c[i] == ".") continue
+        if (c[i] == "..") {
+            if (k > 0 && s[k] != "..") { k--; continue }
+            if (abs) continue
+        }
+        s[++k] = c[i]
+    }
+    out = ""
+    for (i = 1; i <= k; i++) out = out (i > 1 ? "/" : "") s[i]
+    print (abs ? "/" : "") out }')"
+[[ -n "$FILE_PATH" ]] || FILE_PATH="$ORIG_PATH"
+shopt -s nocasematch
 
 BASENAME=$(basename "$FILE_PATH")
 
@@ -126,7 +147,7 @@ if [[ -z "$BLOCKED" ]]; then
 fi
 
 # Cloud configs
-if grep -qE '^(gcloud-.*\.json|service-account.*\.json|aws-credentials)$' <<<"$BASENAME"; then
+if grep -qiE '^(gcloud-.*\.json|service-account.*\.json|aws-credentials)$' <<<"$BASENAME"; then
     BLOCKED="Cloud credentials file"
 fi
 
@@ -148,7 +169,7 @@ case "$BASENAME" in
 esac
 
 # Sensitive directories
-if grep -qE '/(\.ssh|\.gnupg|\.aws|\.gcloud)/' <<<"$FILE_PATH"; then
+if grep -qiE '(^|/)(\.ssh|\.gnupg|\.aws|\.gcloud)/' <<<"$FILE_PATH"; then
     BLOCKED="File in sensitive directory"
 fi
 
@@ -184,7 +205,8 @@ if [[ -z "$BLOCKED" ]]; then
             ask "$_pf is invalid (verify.sh refuses it), so protected_files.extra cannot be checked; run /speckit.gates.doctor"
         fi
         REL="$FILE_PATH"
-        [[ "$FILE_PATH" == "$PROJECT_ROOT/"* ]] && REL="${FILE_PATH#"$PROJECT_ROOT"/}"
+        # A case-insensitive match (nocasematch), so the cut is by length.
+        [[ "$FILE_PATH" == "$PROJECT_ROOT/"* ]] && REL="${FILE_PATH:$((${#PROJECT_ROOT} + 1))}"
         while IFS= read -r entry; do
             [[ -z "$entry" ]] && continue
             if gates_glob_match "$REL" "$entry" \
@@ -197,9 +219,10 @@ if [[ -z "$BLOCKED" ]]; then
     fi
 fi
 
+shopt -u nocasematch
 if [[ -n "$BLOCKED" ]]; then
     echo "BLOCKED: $BLOCKED" >&2
-    echo "File: $FILE_PATH" >&2
+    echo "File: $ORIG_PATH" >&2
     exit 2
 fi
 

@@ -155,6 +155,16 @@ expect "no curl, no python3: truncated description fails closed (exit 1)" \
     "$(run "${GL[@]}" PATH="$NOFETCH" CI_MERGE_REQUEST_DESCRIPTION="Adds a." CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED=true GATES_GITLAB_TOKEN=t)" 1
 expect "no curl, no python3: says the full text could not be fetched" \
     "$(grep -c 'could not be fetched' "$WORKDIR/out.txt")" 1
+# Without jq the protected list came out empty and an undeclared protected
+# change passed (#121); pr-check now refuses to run and names jq.
+NOJQ="$WORKDIR/path-nojq"
+mkdir -p "$NOJQ"
+for t in bash sh git python3 perl curl cat grep sed awk head tail tr wc dirname basename mktemp rm cp env sort uniq cut date; do
+    command -v "$t" >/dev/null 2>&1 && ln -sf "$(command -v "$t")" "$NOJQ/$t"
+done
+expect "no jq: undeclared protected commit -> setup error (exit 2)" \
+    "$(run "${GH[@]}" PATH="$NOJQ" GATES_PR_TITLE="feat: x" GATES_PR_BODY="Adds a.")" 2
+expect "no jq: the refusal names jq" "$(grep -c 'jq not found' "$WORKDIR/out.txt")" 1
 mr_api "Adds a."$'\n\n'"A long but clean tail."
 expect "GitLab < 16.7 (no description var), no token -> notice, title checked (exit 0)" \
     "$(run "${GL[@]}")" 0

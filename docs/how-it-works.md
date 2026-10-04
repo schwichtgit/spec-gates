@@ -33,7 +33,9 @@ spec-gates uses four of them:
   (`credentials.json`, `.netrc`, cloud service-account files), sensitive
   directories, lock files, the project's own rules in
   `.specify/gates/hooks.local.d/`, and every `protected_files.extra` entry
-  (by default the constitution and `policy.json`).
+  (by default the constitution and `policy.json`). It resolves `.`, `..`
+  and `//` in the path first and matches ignoring case, since macOS
+  filesystems are case-insensitive by default.
 - `PreToolUse(Bash)` → `validate-bash.sh`: refuses destructive commands
   (`rm` of root, home or a path outside the temp directories, force push,
   hard reset, `chmod 777`, piping a download into a shell, …). With
@@ -58,13 +60,29 @@ the PreToolUse `permissionDecision: ask` answer, which prompts in every
 permission mode. The hooks ask when a file name merely contains a word
 such as `secret` or `token` (a test like `test_no_secret_leak.py` is not a
 credential), when a Bash command appears to modify a protected path
-(`rm`, `mv`, `sed -i`, a redirect, `tee`, `git rm` naming one: telling a
-modification from a read by the command text is a heuristic, so it asks
-rather than blocks), and in any state they cannot evaluate. They never
+(`rm`, `mv`, `sed -i`, a redirect, `tee`, `find -delete`, `git rm` naming
+one, its parent directory, or a path relative to a `cd` into one; telling
+a modification from a read by the command text is a heuristic, so it asks
+rather than blocks), when a Bash command names a secret file the file hook
+refuses (`cat .env`), when it bypasses the git hooks (`--no-verify`,
+`git commit -n`, a `core.hooksPath` setting), and in any state they
+cannot evaluate. A project rule in `hooks.local.d` runs before any of
+these questions, so its refusal wins. They never
 silently allow. Without jq, or for input that is not valid JSON, they read
-the field in a raw mode that keeps every built-in block rule; an internal
-error, an undecodable value or an unreadable policy asks. Doctor keeps
-failing until jq is installed.
+the field in a raw mode that keeps every built-in block rule and still
+checks `policy.json`, the constitution and the project's rules; an
+internal error, an undecodable or missing value, or a
+`protected_files.extra` it cannot read asks. Doctor keeps failing until jq
+is installed.
+
+**The Stop hook does not fail closed.** When `verify.sh` cannot run (no
+jq, no git, no policy), `verify-quality.sh` lets the session end and says
+why. That is deliberate: a missing tool must never lock the agent in a
+session it cannot finish. The gate still holds where it can: `pre-commit`
+refuses every commit while `verify.sh` cannot run, `pr-check.sh` and
+`verify.sh` in CI exit with an error, and the Write/Edit and Bash hooks
+keep working in raw mode. Only a red gate, never a missing tool, keeps the
+session open.
 
 **Project rules.** A project adds its own refusals as scripts in
 `.specify/gates/hooks.local.d/<hook>/` for `protect-files`,
@@ -82,8 +100,9 @@ staged content for secrets and forbidden files, and runs the same verify
 entrypoint. `commit-msg` enforces Conventional Commits and refuses
 AI-isms, emoji, AI branding and `Co-Authored-By` trailers. The branding
 list is policy (`git.ai_branding.terms`); a legitimate phrase that contains
-a term, such as a product name a repository integrates, is allowed exactly
-via `git.ai_branding.allow_phrases`.
+a term, such as a product name a repository integrates, is allowed via
+`git.ai_branding.allow_phrases` (matched literally, ignoring case, like the
+terms).
 
 Subjects git writes itself are exempt from the Conventional Commits rule
 only: a merge commit (recognized by `MERGE_HEAD`, not by its subject) and
