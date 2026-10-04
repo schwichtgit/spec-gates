@@ -610,6 +610,16 @@ echo ""
 echo "=== upgrade safety section (#70) ==="
 # shellcheck source=/dev/null
 source "$REPO_ROOT/tests/lib/fixture.sh"
+lacks() { # <name> <dir> <fixed-string>: doctor output lacks the line
+    TOTAL=$((TOTAL + 1))
+    if grep -qF -- "$3" "$2/out.txt"; then
+        echo "FAIL: $1 (unexpected line containing: $3)"
+        FAIL=$((FAIL + 1))
+    else
+        echo "PASS: $1"
+        PASS=$((PASS + 1))
+    fi
+}
 has() { # <name> <dir> <fixed-string>: doctor output contains the line
     TOTAL=$((TOTAL + 1))
     if grep -qF -- "$3" "$2/out.txt"; then
@@ -633,6 +643,7 @@ has "an unheld local edit fails" "$U" "[MISSING] projected files were edited loc
 run_doctor "$U" >/dev/null
 has "a held edit is reported as kept" "$U" "[ok]  held: .specify/gates/canary.sh (differs from the installed extension, kept on purpose)"
 has "and the projection is current again" "$U" "[ok]  projection matches the installed extension"
+has "a held edit recommends the canary proof" "$U" "prove the gates still block: bash .specify/gates/doctor.sh --canary"
 # The installed extension changes the held file (an upgrade): the hold now
 # pins an old version, which doctor must say (#132).
 printf '\n# newer upstream\n' >>"$U/.specify/extensions/gates/runtime/canary.sh"
@@ -644,6 +655,20 @@ has "a hold equal to upstream is stale and fails" "$U" "[MISSING] stale hold: .s
 printf '.specify/gates/hooks.local.d/x/1.sh\n' >"$U/.specify/gates/.upgrade-holds"
 run_doctor "$U" >/dev/null
 has "a hold inside hooks.local.d is redundant" "$U" "hooks.local.d is never touched by upgrades"
+# A held deletion (#168) turns its check off: a missing agent hook exits
+# 127, which Claude Code does not treat as a block.
+printf '.claude/hooks/gates/protect-files.sh\n' >"$U/.specify/gates/.upgrade-holds"
+mv "$U/.claude/hooks/gates/protect-files.sh" "$U/pf.sh.bak"
+rc="$(run_doctor "$U")"
+has "a held deletion fails" "$U" "[MISSING] held file is missing: .claude/hooks/gates/protect-files.sh"
+has "and names the fix" "$U" "project.sh --take-upstream .claude/hooks/gates/protect-files.sh"
+lacks "it is not reported as kept" "$U" "held: .claude/hooks/gates/protect-files.sh"
+expect "doctor exits 1 on a held deletion" "$rc" "1"
+rc=0
+CLAUDE_PROJECT_DIR="$U" bash "$U/.specify/gates/doctor.sh" --ci >"$U/out.txt" 2>&1 || rc=$?
+has "--ci: a held deletion fails" "$U" "[MISSING] held file is missing: .claude/hooks/gates/protect-files.sh"
+expect "doctor --ci exits 1 on a held deletion" "$rc" "1"
+mv "$U/pf.sh.bak" "$U/.claude/hooks/gates/protect-files.sh"
 rm -f "$U/.specify/gates/.upgrade-holds"
 mkdir -p "$U/.github/workflows"
 printf 'steps:\n  - run: bash .specify/gates/verify.sh --boundary ci\n  - run: bash .specify/gates/canary.sh\n' >"$U/.github/workflows/gates.yml"
@@ -659,16 +684,6 @@ printf 'ci:canary\nci:bogus\n' >"$U/.specify/gates/.upgrade-holds"
 run_doctor "$U" >/dev/null
 has "a ci: hold for a step that runs is stale and fails" "$U" "[MISSING] stale hold: ci:canary but the pipeline runs the 'canary' step"
 has "an unknown ci: id is flagged" "$U" "[rec] hold ci:bogus names no template step"
-lacks() { # <name> <dir> <fixed-string>: doctor output lacks the line
-    TOTAL=$((TOTAL + 1))
-    if grep -qF -- "$3" "$2/out.txt"; then
-        echo "FAIL: $1 (unexpected line containing: $3)"
-        FAIL=$((FAIL + 1))
-    else
-        echo "PASS: $1"
-        PASS=$((PASS + 1))
-    fi
-}
 lacks "neither is reported as an omission" "$U" "omitted on purpose"
 rm -f "$U/.specify/gates/.upgrade-holds"
 # Commented-out and disabled steps are not wiring (#139).

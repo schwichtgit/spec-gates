@@ -59,7 +59,8 @@ SHA256SUMS`) and `cosign verify-blob` with the identity and issuer
    user the complete output.
 6. **Resolve local edits** (exit 3 lists them). For each listed file, ask
    the user: keep the local version (`--keep-local <path>`, recorded in
-   `.specify/gates/.upgrade-holds` so later upgrades leave it alone too),
+   `.specify/gates/.upgrade-holds` so later upgrades leave it alone too;
+   a deleted file cannot be kept, it must be restored),
    or take the new release's version (`--take-upstream <path>`, which
    also releases an existing hold; show
    `diff <path> .specify/extensions/gates/runtime/<source>` first).

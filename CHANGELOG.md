@@ -116,6 +116,15 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   in the caller's repository, so no commit could be made from a linked
   worktree. The canary suite clears those variables, and accept blocks run
   without them.
+- **A deletion can no longer be held** (#168). `--keep-local` on a
+  deleted projected file recorded a hold, which left the hook, library or
+  gate that needed it off (a missing agent hook exits 127, which Claude
+  Code does not treat as a block) while doctor reported it as kept on
+  purpose. Every projected file is needed by a hook, a gate, the canary
+  suite or CI, so `project.sh` now refuses the hold, and a held file that
+  is missing (from an older holds file) fails `project.sh`, its `--check`
+  and doctor (also `--ci`), naming `--take-upstream <path>` to restore
+  it. Doctor recommends `doctor.sh --canary` while files are held.
 - **The git hooks refuse a branch whose runtime was never projected**
   (#159). In a clone that tracks `policy.json` but gitignores the runtime,
   commit-msg took the missing `.runtime-version` for a pre-0.3.4 runtime
@@ -223,8 +232,8 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   link, passed. PR text (the agent's PR hook and `pr-check.sh`) now
   refuses it, matching the commit-side `Co-Authored-By` rule.
 - **Holds and project rules behave as documented** (#132).
-  `--take-upstream` on a held file replaces it and releases the hold; a
-  deleted projected file can be held as deleted; paths with spaces or a
+  `--take-upstream` on a held file replaces it and releases the hold;
+  paths with spaces or a
   leading `./` work, and naming one path for both flags is refused. The
   plan names each lost execute bit and what a wrong `.runtime-version`
   said. Doctor flags a held file whose upstream copy changed since the

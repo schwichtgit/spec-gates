@@ -415,6 +415,7 @@ if declare -f gates_ci_missing >/dev/null 2>&1 && [[ -d "$PROJECT_ROOT/.specify/
 
     gates_holds_load "$PROJECT_ROOT"
     gates_manifest_load "$PROJECT_ROOT"
+    HELD_EDITS=0
     if [[ -n "$GATES_HOLDS" ]]; then
         HTABLE=""
         [[ -d "$VEND_RT" ]] && HTABLE="$(gates_projection_table "$VEND_RT" 1)"
@@ -426,8 +427,20 @@ if declare -f gates_ci_missing >/dev/null 2>&1 && [[ -d "$PROJECT_ROOT/.specify/
                     ;;
             esac
             hsrc="$(printf '%s\n' "$HTABLE" | awk -F '\t' -v p="$hp" '$2 == p { print $1; exit }')"
+            # Without the installed table, the projected trees stand in for it.
+            hown="$hsrc"
+            [[ -z "$HTABLE" ]] && case "$hp" in .specify/gates/* | .claude/hooks/gates/*) hown=1 ;; esac
+            if [[ -n "$hown" && ! -e "$PROJECT_ROOT/$hp" ]]; then
+                # A held deletion (#168): the hook, gate or canary that runs
+                # this file is off, and a missing agent hook exits 127,
+                # which Claude Code does not treat as a block.
+                echo "${BAD}held file is missing: $hp — a deletion cannot be held; the check that runs it is off. Restore it: bash .specify/extensions/gates/runtime/project.sh --take-upstream $hp"
+                MISSING=$((MISSING + 1))
+                continue
+            fi
             if [[ -z "$HTABLE" ]]; then
                 echo "${OK}held: $hp"
+                HELD_EDITS=1
             elif [[ -z "$hsrc" ]]; then
                 echo "${REC}hold $hp names a file projection does not own (remove the line)"
             elif cmp -s "$VEND_RT/$hsrc" "$PROJECT_ROOT/$hp"; then
@@ -444,9 +457,14 @@ if declare -f gates_ci_missing >/dev/null 2>&1 && [[ -d "$PROJECT_ROOT/.specify/
                 else
                     echo "${OK}held: $hp (differs from the installed extension, kept on purpose)"
                 fi
+                HELD_EDITS=1
             fi
         done <<<"$GATES_HOLDS"
     fi
+    # A held edit is checked by nothing above: only the canary suite shows
+    # whether the gates still block with it in place.
+    [[ "$HELD_EDITS" -eq 1 ]] \
+        && echo "${REC}held files run in place of the released ones — prove the gates still block: bash .specify/gates/doctor.sh --canary"
 
     if CI_FILES="$(gates_ci_files "$PROJECT_ROOT")"; then
         CI_MISSING="$(gates_ci_missing "$PROJECT_ROOT")"

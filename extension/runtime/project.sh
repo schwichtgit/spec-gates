@@ -159,17 +159,20 @@ while IFS= read -r p; do
     inlist "$targets" "$p" || refuse "$p is not a projected file"
 done <<<"$(addline "$TAKE" "$KEEP")"
 
-WRITES="" CONFLICTS="" HELD="" STALE="" KEPT="" RELEASED="" NEWMAN="" CHANGES=""
+WRITES="" CONFLICTS="" HELD="" HELDGONE="" STALE="" KEPT="" RELEASED="" NEWMAN="" CHANGES=""
 while IFS=$'\t' read -r s r; do
     [[ -n "$s" ]] || continue
     st="$(gates_classify "$ROOT" "$SRC/$s" "$r")" || refuse "cannot hash $r"
     # --keep-local is honored for any existing file, edited or not: the
     # maintainer asked for a hold.
     if inlist "$KEEP" "$r" && [[ "$st" != "held" ]]; then
-        # A deleted file that projection wrote before can be held as
-        # deleted; one that was never projected has nothing to keep.
-        [[ "$st" == "absent" && -z "$(gates_manifest_hash "$r")" ]] \
-            && refuse "--keep-local $r: there is no local file to keep"
+        # A deletion is never held (#168): every projected file is run or
+        # read by a hook, a gate, the canary suite or CI, and a missing
+        # hook exits 127, which Claude Code treats as non-blocking.
+        [[ -e "$ROOT/$r" ]] \
+            || refuse "--keep-local $r: there is no local file to keep. A deletion cannot be held:" \
+                "every projected file is run by a hook, a gate, the canary suite or CI, and without it that check is off." \
+                "Restore it with --take-upstream $r (or opt out of a whole boundary with --no-agent-hooks / --no-git-hooks)."
         st=edited
     fi
     # --take-upstream on a held file replaces it and releases the hold.
@@ -182,6 +185,8 @@ while IFS=$'\t' read -r s r; do
         absent | pristine) WRITES="$(addline "$WRITES" "$s"$'\t'"$r")" ;;
         held)
             HELD="$(addline "$HELD" "$r")"
+            # A holds file written before #168 may hold a deletion.
+            [[ -e "$ROOT/$r" ]] || HELDGONE="$(addline "$HELDGONE" "$r")"
             cmp -s "$SRC/$s" "$ROOT/$r" && STALE="$(addline "$STALE" "$r")"
             ;;
         edited)
@@ -396,6 +401,11 @@ report_side() {
         say "held (never overwritten, see $GATES_HOLDS_REL):"
         printf '%s\n' "$HELD" | sed 's/^/project:   /'
     fi
+    if [[ -n "$HELDGONE" ]]; then
+        say "FAILED: held files that do not exist (a deletion cannot be held; the hook, gate or canary that runs it is off):" >&2
+        printf '%s\n' "$HELDGONE" | sed 's/^/project:   /' >&2
+        say "  restore each with: bash .specify/extensions/gates/runtime/project.sh --take-upstream <path>" >&2
+    fi
     if [[ -n "$STALE" ]]; then
         say "stale holds (the held file now equals $VERSION; remove the line from $GATES_HOLDS_REL):"
         printf '%s\n' "$STALE" | sed 's/^/project:   /'
@@ -460,7 +470,7 @@ if [[ "$DRY" -eq 1 ]]; then
     fi
     report_side
     # An unwired git hook is pending work too, even when no file changes.
-    if [[ "$CHECK" -eq 1 ]] && [[ -n "$CHANGES" || -n "$FOREIGN" || -n "$MGRPLAN" ]]; then exit 1; fi
+    if [[ "$CHECK" -eq 1 ]] && [[ -n "$CHANGES" || -n "$FOREIGN" || -n "$MGRPLAN" || -n "$HELDGONE" ]]; then exit 1; fi
     exit 0
 fi
 
@@ -572,5 +582,5 @@ if [[ "$GITHOOKS" -eq 1 && -z "$GITNOTE" && -z "$FOREIGN" && -z "$MGRPENDING" ]]
         fi
     done
 fi
-[[ -n "$FOREIGN" || -n "$MGRPENDING" ]] && RC=1
+[[ -n "$FOREIGN" || -n "$MGRPENDING" || -n "$HELDGONE" ]] && RC=1
 exit "$RC"

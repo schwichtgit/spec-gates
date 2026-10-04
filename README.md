@@ -373,8 +373,12 @@ zip, so they prove the download arrived intact, not who published it.
 of every file it projects in `.specify/gates/.projected.sha256`, so a file
 you changed locally is reported (exit 3) instead of overwritten: re-run
 with `--keep-local <path>` (it is added to `.specify/gates/.upgrade-holds`
-and left alone from then on; a deleted file can be held as deleted) or
-`--take-upstream <path>`, which also releases a hold. A project
+and left alone from then on) or `--take-upstream <path>`, which also
+releases a hold. A deletion cannot be held: every projected file is run
+by a hook, a gate, the canary suite or CI, and a missing agent hook exits
+127, which Claude Code does not treat as a block. `--keep-local` on a
+deleted file is refused, and a held file that is missing fails both
+`project.sh` and doctor until `--take-upstream <path>` restores it. A project
 projected by 0.3.x has no such record yet; there `project.sh` compares
 against the hashes of what the 0.3.x releases shipped, so only real
 edits stop it. It ends by running the canary suite and fails if any gate

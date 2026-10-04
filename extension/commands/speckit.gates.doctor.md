@@ -57,7 +57,9 @@ the checking; this command runs it, shows the output, and explains it.
    - **Upgrade safety**: whether `project.sh --check` finds the projection
      current; local edits that are not held fail; held files are listed,
      and a hold whose file now equals the installed copy is stale and
-     fails; CI pipelines must contain the template's `gates`, `canary` and
+     fails; a held file that is missing fails (a deletion cannot be held;
+     `--take-upstream <path>` restores it), and held edits get a `[rec]`
+     to prove them with `doctor.sh --canary`; CI pipelines must contain the template's `gates`, `canary` and
      `pr` steps unless `ci:<step>` in `.specify/gates/.upgrade-holds`
      records a deliberate omission. Commented-out steps and GitHub steps
      under `if: false` do not count; a `ci:<step>` hold for a step the

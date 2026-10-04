@@ -528,6 +528,12 @@ next upgrade, a file that no longer matches its hash is a local edit: it is
 reported (exit 3) and nothing is written until the maintainer keeps it,
 which holds it in `.specify/gates/.upgrade-holds` from then on, or takes
 the new version (`--take-upstream`, which also releases an existing hold).
+A deletion is never held: every projected file is run by a hook, a gate,
+the canary suite or CI, so `--keep-local` on a deleted file is refused,
+and a held file that is missing fails `project.sh` and doctor until
+`--take-upstream` restores it. Doctor recommends `doctor.sh --canary`
+while any file is held, since only the canaries show that a held edit
+still blocks.
 Doctor flags a held file whose upstream copy changed since the hold, so a
 hold never silently pins an old version of a hook. A project projected by 0.3.x has no manifest; there
 `project.sh` compares each file against the hashes of what the 0.3.x

@@ -191,10 +191,24 @@ ok "the refusal says to choose" grep -q 'choose one' <<<"$OUT"
 rc_is "a path with a space is one path, not two" 2 "$D" --skip-canary --keep-local ".specify/gates/no such file.sh"
 ok "the refusal names the whole path" grep -q 'no such file.sh is not a projected file' <<<"$OUT"
 rm -f "$D/.specify/gates/contract.sh"
-rc_is "a deleted projected file can be held as deleted" 0 "$D" --skip-canary --keep-local .specify/gates/doctor.sh --keep-local .specify/gates/contract.sh
-ok "the deletion stays deleted" test ! -e "$D/.specify/gates/contract.sh"
-rc_is "the held deletion is left alone on the next run" 0 "$D" --skip-canary
-ok "still deleted" test ! -e "$D/.specify/gates/contract.sh"
+before="$(treehash "$D")"
+rc_is "a deletion cannot be held (#168)" 2 "$D" --skip-canary --keep-local .specify/gates/doctor.sh --keep-local .specify/gates/contract.sh
+ok "the refusal says why and how to restore" bash -c "grep -q 'A deletion cannot be held' <<<\"\$1\" && grep -q -- '--take-upstream .specify/gates/contract.sh' <<<\"\$1\"" _ "$OUT"
+ok "nothing was written" test "$before" = "$(treehash "$D")"
+rm -f "$D/.claude/hooks/gates/protect-files.sh"
+rc_is "a deleted agent hook cannot be held" 2 "$D" --skip-canary --keep-local .claude/hooks/gates/protect-files.sh
+ok "the hook is not recorded as held" bash -c "! grep -qxF .claude/hooks/gates/protect-files.sh '$D/.specify/gates/.upgrade-holds'"
+rc_is "--take-upstream restores the deleted files" 0 "$D" --skip-canary --take-upstream .specify/gates/contract.sh --take-upstream .claude/hooks/gates/protect-files.sh --take-upstream .specify/gates/doctor.sh
+ok "the hook is back" cmp -s "$D/.specify/extensions/gates/runtime/hooks/claude/protect-files.sh" "$D/.claude/hooks/gates/protect-files.sh"
+# A holds file written before #168 may already hold a deletion.
+printf '.claude/hooks/gates/protect-files.sh\n.specify/gates/lib/attest.sh\n' >>"$D/.specify/gates/.upgrade-holds"
+rm -f "$D/.claude/hooks/gates/protect-files.sh" "$D/.specify/gates/lib/attest.sh"
+rc_is "an existing held deletion fails the run" 1 "$D" --skip-canary
+ok "it names each file and the fix" bash -c "grep -q 'held files that do not exist' <<<\"\$1\" && grep -q '^project:   .specify/gates/lib/attest.sh\$' <<<\"\$1\" && grep -q -- '--take-upstream <path>' <<<\"\$1\"" _ "$OUT"
+rc_is "--check fails on a held deletion" 1 "$D" --check
+rc_is "--take-upstream restores a held deletion" 0 "$D" --skip-canary --take-upstream .claude/hooks/gates/protect-files.sh --take-upstream .specify/gates/lib/attest.sh
+ok "the library is back" cmp -s "$D/.specify/extensions/gates/runtime/lib/attest.sh" "$D/.specify/gates/lib/attest.sh"
+ok "and both holds are released" bash -c "! grep -qE 'protect-files|attest' '$D/.specify/gates/.upgrade-holds'"
 chmod -x "$D/.specify/gates/verify.sh"
 rc_is "a lost execute bit is planned" 0 "$D" --skip-canary --dry-run
 ok "the plan names the file" grep -q 'restore the execute bit on .specify/gates/verify.sh' <<<"$OUT"
