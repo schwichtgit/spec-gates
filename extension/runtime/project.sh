@@ -280,7 +280,7 @@ fi
 # pre-commit framework) gets the gates entry in its own configuration --
 # never in the files it generates -- and only with --wire-manager.
 # Anything else that owns the hooks gets the call-through printed.
-HOOKPLAN="" FOREIGN="" GITNOTE="" MANAGER="" MGRPLAN="" MGRMANUAL="" MGRDONE=""
+HOOKPLAN="" FOREIGN="" GITNOTE="" MANAGER="" MGRPLAN="" MGRAPPLY="" MGRMANUAL="" MGRDONE=""
 STUB="$SRC/hooks/git/stub.sh"
 if [[ "$GITHOOKS" -eq 1 ]]; then
     if ! command -v git >/dev/null 2>&1 || ! git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -292,16 +292,27 @@ if [[ "$GITHOOKS" -eq 1 ]]; then
         for n in pre-commit commit-msg; do
             f="$HOOKSDIR/$n"
             if [[ "$MANAGER" == "husky" || "$MANAGER" == "lefthook" || "$MANAGER" == "pre-commit" ]]; then
-                gates_manager_wired "$ROOT" "$MANAGER" "$n" || MGRPLAN="$(addline "$MGRPLAN" "$n")"
+                if ! gates_manager_wired "$ROOT" "$MANAGER" "$n"; then
+                    MGRPLAN="$(addline "$MGRPLAN" "$n")"
+                    # --wire-manager appends only where that is safe (#128);
+                    # the rest is printed for the user to add.
+                    if [[ "$WIREMGR" -eq 1 ]]; then
+                        if gates_manager_appendable "$ROOT" "$MANAGER" "$n"; then
+                            MGRAPPLY="$(addline "$MGRAPPLY" "$n")"
+                        else
+                            MGRMANUAL="$(addline "$MGRMANUAL" "$n")"
+                        fi
+                    fi
+                fi
             elif [[ "$MANAGER" == "unknown" ]]; then
-                if [[ ! -f "$f" ]] || ! grep -qF ".specify/gates/hooks/$n" "$f"; then
+                if ! gates_calls_through "$f" "$n"; then
                     grep -qs 'spec-gates hook stub' "$f" || FOREIGN="$(addline "$FOREIGN" "$n")"
                 fi
             elif [[ ! -e "$f" ]] || cmp -s "$STUB" "$f"; then
                 { [[ -e "$f" ]] && [[ -x "$f" ]]; } || HOOKPLAN="$(addline "$HOOKPLAN" "$n")"
             elif grep -q 'spec-gates hook stub\|Git commit-msg hook\.\|Git pre-commit hook --' "$f"; then
                 HOOKPLAN="$(addline "$HOOKPLAN" "$n")" # an older stub or a copied gates hook
-            elif ! grep -qF ".specify/gates/hooks/$n" "$f"; then
+            elif ! gates_calls_through "$f" "$n"; then
                 FOREIGN="$(addline "$FOREIGN" "$n")"
             fi
         done
@@ -368,11 +379,9 @@ fi
 [[ -n "$HOOKPLAN" ]] && CHANGES="$(addline "$CHANGES" "$(printf '%s\n' "$HOOKPLAN" | sed 's/^/install the gates stub as git hook /')")"
 [[ -n "$VEXEC" ]] && CHANGES="$(addline "$CHANGES" "restore execute bits on $(printf '%s\n' "$VEXEC" | wc -l | tr -d ' ') vendored file(s)")"
 [[ "$NEED_MAN" -eq 1 ]] && CHANGES="$(addline "$CHANGES" "write $GATES_MANIFEST_REL")"
-if [[ "$WIREMGR" -eq 1 && -n "$MGRPLAN" ]]; then
-    for n in $MGRPLAN; do
-        CHANGES="$(addline "$CHANGES" "add the gates $n entry to $(gates_manager_file "$ROOT" "$MANAGER" "$n") ($MANAGER)")"
-    done
-fi
+for n in $MGRAPPLY; do
+    CHANGES="$(addline "$CHANGES" "add the gates $n entry to $(gates_manager_file "$ROOT" "$MANAGER" "$n") ($MANAGER)")"
+done
 [[ "$LINTIGN" -eq 1 && -n "$LINT_MISSING" ]] && CHANGES="$(addline "$CHANGES" "add $(printf '%s' "$LINT_MISSING" | tr '\n' ' ' | sed 's/ $//') to .prettierignore")"
 
 report_side() {
@@ -407,14 +416,21 @@ report_side() {
         say "$MANAGER owns the git hooks and does not run gates for: $(printf '%s' "$MGRPLAN" | tr '\n' ' ')"
         for n in $MGRPLAN; do
             mf="$(gates_manager_file "$ROOT" "$MANAGER" "$n")"
-            say "  $n: add to $mf (or re-run with --wire-manager to append it):"
+            if gates_manager_appendable "$ROOT" "$MANAGER" "$n"; then
+                say "  $n: add to $mf (or re-run with --wire-manager to append it):"
+            else
+                say "  $n: $GATES_MANAGER_WHY"
+            fi
             gates_manager_entry "$MANAGER" "$n" | sed 's/^/project:     /'
         done
     fi
     if [[ -n "$MGRMANUAL" ]]; then
         for n in $MGRMANUAL; do
             mf="$(gates_manager_file "$ROOT" "$MANAGER" "$n")"
-            say "  $n: $mf cannot be appended to safely (tabs, an existing $n key, or repos: not the last key); add this by hand:"
+            if gates_manager_appendable "$ROOT" "$MANAGER" "$n" || [[ -z "$GATES_MANAGER_WHY" ]]; then
+                GATES_MANAGER_WHY="$mf could not be written; add this by hand:"
+            fi
+            say "  $n: $GATES_MANAGER_WHY"
             gates_manager_entry "$MANAGER" "$n" | sed 's/^/project:     /'
         done
     fi
@@ -425,7 +441,7 @@ report_side() {
     if [[ -n "$FOREIGN" ]]; then
         say "another tool owns these git hooks, so they were not touched:"
         for n in $FOREIGN; do
-            say "  $n: add this line to it to run the gates hook:"
+            say "  $n: add this line to it, before any exit, to run the gates hook:"
             say "    bash \"\$(git rev-parse --show-toplevel)/.specify/gates/hooks/$n\" \"\$@\" || exit \$?"
         done
     fi
@@ -484,12 +500,13 @@ fi
 if [[ -n "$KEPT" ]]; then
     printf '%s\n' "$KEPT" >>"$ROOT/$GATES_HOLDS_REL" || fail_write "$GATES_HOLDS_REL"
 fi
-if [[ "$WIREMGR" -eq 1 && -n "$MGRPLAN" ]]; then
-    for n in $MGRPLAN; do
+if [[ -n "$MGRAPPLY" ]]; then
+    for n in $MGRAPPLY; do
         if gates_manager_apply "$ROOT" "$MANAGER" "$n"; then
             MGRDONE="$(addline "$MGRDONE" "$n")"
         else
             MGRMANUAL="$(addline "$MGRMANUAL" "$n")"
+            CHANGES="$(grep -vxF "add the gates $n entry to $(gates_manager_file "$ROOT" "$MANAGER" "$n") ($MANAGER)" <<<"$CHANGES" || true)"
         fi
     done
 fi

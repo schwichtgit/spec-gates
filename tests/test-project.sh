@@ -361,7 +361,7 @@ cfg="$(cksum <"$D/lefthook.yml")"
 printf '#!/bin/sh\n# lefthook generated\nexit 0\n' >"$D/.git/hooks/pre-commit"
 chmod +x "$D/.git/hooks/pre-commit"
 rc_is "lefthook: an existing pre-commit key is not edited -> exit 1" 1 "$D" --skip-canary --wire-manager
-ok "lefthook: the by-hand entry is printed" grep -q 'add this by hand' <<<"$OUT"
+ok "lefthook: the by-hand entry is printed" grep -q 'merge this spec-gates command into your existing pre-commit: block by hand' <<<"$OUT"
 ok "lefthook: the existing block is untouched" bash -c "head -n 4 '$D/lefthook.yml' | cksum | grep -q '$(printf '%s' "$cfg" | cut -d' ' -f1)'"
 ok "lefthook: the absent commit-msg key was still added" grep -q '^commit-msg:' "$D/lefthook.yml"
 if have_yaml; then
@@ -387,7 +387,57 @@ printf 'repos:\n- repo: local\n  hooks: []\nci:\n  autofix_prs: false\n' >"$D/.p
 cfg="$(cksum <"$D/.pre-commit-config.yaml")"
 rc_is "pre-commit: repos: not last -> not edited, exit 1" 1 "$D" --skip-canary --wire-manager
 ok "pre-commit: file untouched" test "$cfg" = "$(cksum <"$D/.pre-commit-config.yaml")"
-ok "pre-commit: by-hand entry printed" grep -q 'add this by hand' <<<"$OUT"
+ok "pre-commit: by-hand entry printed" grep -q 'add this item to repos: by hand' <<<"$OUT"
+
+# Wiring edge cases (#128).
+for q in '"' "'"; do
+    fixture
+    printf '%spre-commit%s:\n  commands:\n    lint:\n      run: npm run lint\n' "$q" "$q" >"$D/lefthook.yml"
+    rc_is "lefthook: a quoted ($q) pre-commit key is not appended to -> exit 1" 1 "$D" --skip-canary --wire-manager
+    ok "lefthook ($q): still one pre-commit key" test "$(grep -cE "^[\"']?pre-commit[\"']?:" "$D/lefthook.yml")" -eq 1
+    ok "lefthook ($q): the summary does not claim the pre-commit entry" bash -c "! grep -q 'add the gates pre-commit entry' <<<\"\$1\"" _ "$OUT"
+    ok "lefthook ($q): the summary names the commit-msg entry" grep -q 'add the gates commit-msg entry to lefthook.yml' <<<"$OUT"
+    ok "lefthook ($q): told to merge into the existing block" grep -q 'merge this spec-gates command into your existing pre-commit: block' <<<"$OUT"
+    if have_yaml; then
+        ok "lefthook ($q): the file still parses" test "$(yamlq "$D/lefthook.yml" 'doc["pre-commit"].commands.lint.run')" = "npm run lint"
+    fi
+done
+fixture
+printf 'pre-commit:\n  commands: {}\n' >"$D/lefthook.yml"
+rc_is "lefthook: dry run with an existing block" 0 "$D" --skip-canary --wire-manager --dry-run
+ok "lefthook: the dry-run plan does not list the pre-commit entry" bash -c "! grep -q 'add the gates pre-commit entry' <<<\"\$1\"" _ "$OUT"
+for body in 'repos: []\n' 'repos: [{repo: local, hooks: []}]\n'; do
+    fixture
+    # shellcheck disable=SC2059  # the body carries the newline escape
+    printf "$body" >"$D/.pre-commit-config.yaml"
+    cfg="$(cksum <"$D/.pre-commit-config.yaml")"
+    rc_is "pre-commit: a flow-style repos: is not appended to -> exit 1" 1 "$D" --skip-canary --wire-manager
+    ok "pre-commit (flow repos): file untouched" test "$cfg" = "$(cksum <"$D/.pre-commit-config.yaml")"
+    ok "pre-commit (flow repos): the reason is printed" grep -q 'not a block list' <<<"$OUT"
+done
+fixture
+mkdir -p "$D/.husky/_"
+printf 'npm test\nexit 0\n' >"$D/.husky/pre-commit"
+git -C "$D" config core.hooksPath .husky/_
+rc_is "husky: a script ending in exit 0 is not appended to -> exit 1" 1 "$D" --skip-canary --wire-manager
+ok "husky (exit 0): the script is untouched" test "$(cat "$D/.husky/pre-commit")" = "$(printf 'npm test\nexit 0')"
+ok "husky (exit 0): told to put the line before any exit" grep -q 'add this line by hand, before any exit' <<<"$OUT"
+# A call-through that never runs is not a call-through: commented out, or
+# after an unconditional exit.
+for body in '#!/bin/sh\n# bash .specify/gates/hooks/pre-commit "$@"\n' \
+    '#!/bin/sh\necho mine\nexit 0\nbash .specify/gates/hooks/pre-commit "$@"\n'; do
+    fixture
+    # shellcheck disable=SC2059  # the body carries the newline escapes
+    printf "$body" >"$D/.git/hooks/pre-commit"
+    chmod +x "$D/.git/hooks/pre-commit"
+    rc_is "a call-through that never runs is not counted -> exit 1" 1 "$D" --skip-canary
+    ok "the call-through is printed, to go before any exit" grep -q 'pre-commit: add this line to it, before any exit' <<<"$OUT"
+done
+fixture
+# shellcheck disable=SC2016  # the hook body is written literally
+printf '#!/bin/sh\nif [ -n "$SKIP" ]; then\n  exit 0\nfi\nbash .specify/gates/hooks/pre-commit "$@"\n' >"$D/.git/hooks/pre-commit"
+chmod +x "$D/.git/hooks/pre-commit"
+rc_is "an exit inside a block does not hide the call-through -> exit 0" 0 "$D" --skip-canary
 
 # Doctor reads the managers' config statically.
 fixture

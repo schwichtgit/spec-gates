@@ -217,8 +217,33 @@ format_file() {
 # ---------------------------------------------------------------------------
 
 # Print the project-relative paths (NUL-separated) that match <tool>'s include
-# globs and none of its exclude globs, under <root>.
+# globs and none of its exclude globs, under <root>. In a git work tree,
+# untracked files git ignores are skipped too (#126): CI checks out only
+# what is committed, so linting what git ignores (husky's generated .husky/_/,
+# build output) fails locally where CI passes. A tracked file is checked
+# even when an ignore pattern matches it, as it is in CI.
 _gates_collect_files() { # <tool> <root>
+    local tool="$1" root="$2" rel i=0
+    local cands=() ign=()
+    while IFS= read -r -d '' rel; do
+        cands+=("$rel")
+    done < <(_gates_collect_candidates "$tool" "$root")
+    [[ "${#cands[@]}" -eq 0 ]] && return 0
+    # check-ignore answers in input order, so one merge pass filters. Outside
+    # a work tree (or on a git error) it prints nothing and nothing is skipped.
+    while IFS= read -r -d '' rel; do
+        ign+=("$rel")
+    done < <(printf '%s\0' "${cands[@]}" | git -C "$root" check-ignore --stdin -z 2>/dev/null)
+    for rel in "${cands[@]}"; do
+        if [[ "$i" -lt "${#ign[@]}" && "$rel" == "${ign[$i]}" ]]; then
+            i=$((i + 1))
+            continue
+        fi
+        printf '%s\0' "$rel"
+    done
+}
+
+_gates_collect_candidates() { # <tool> <root>
     local tool="$1" root="$2" f rel inc matched
     while IFS= read -r -d '' f; do
         rel="${f#"$root"/}"

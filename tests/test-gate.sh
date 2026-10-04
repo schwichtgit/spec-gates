@@ -99,6 +99,29 @@ else
     skip "shellcheck none-orchestrator checks" "shellcheck not installed"
 fi
 
+# --- files git ignores are not linted (#126) ---
+# husky v9 generates .husky/_/husky.sh (no shebang, SC2148) and gitignores
+# it; CI never sees it, so the local gate must not lint it either. A tracked
+# file stays in scope even when an ignore pattern matches it.
+echo ""
+echo "=== untracked files git ignores are skipped ==="
+if command -v shellcheck >/dev/null 2>&1; then
+    D="$WORKDIR/ignored"
+    project "$D" "$NONE_SHELL"
+    git -C "$D" init -q
+    mkdir -p "$D/.husky/_"
+    printf '*\n' >"$D/.husky/_/.gitignore"
+    printf 'echo generated\n' >"$D/.husky/_/husky.sh"
+    expect "gitignored generated shell -> gate passes" "$(gate "$D")" 0
+    printf 'gen/\n' >"$D/.gitignore"
+    mkdir -p "$D/gen"
+    printf 'echo tracked\n' >"$D/gen/tracked.sh"
+    git -C "$D" add -f gen/tracked.sh
+    expect "tracked file under an ignore pattern -> still checked (exit 2)" "$(gate "$D")" 2
+else
+    skip "gitignored-file checks" "shellcheck not installed"
+fi
+
 # --- exclude globs are honored ---
 echo ""
 echo "=== exclude globs are honored ==="

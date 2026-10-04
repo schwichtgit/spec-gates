@@ -46,15 +46,31 @@ gates_git_probe() { # <root> <hook>
         GATES_PROBE_MSG="${f#"$root"/} is not executable, so git skips it"
         return 1
     fi
-    msg="$(mktemp 2>/dev/null || mktemp -t gates-probe)" || {
-        GATES_PROBE_MSG="cannot create a probe message file"
-        return 1
-    }
-    printf 'chore: gates probe\n' >"$msg"
-    out="$(cd "$root" && GATES_PROBE=1 "$f" "$msg" 2>&1 </dev/null)" || true
-    rm -f "$msg"
+    # Call the hook the way git does (#127): commit-msg gets the message
+    # file, pre-commit gets no arguments (the pre-commit framework's hook
+    # refuses any). lefthook skips every pre-commit job while nothing is
+    # staged, and its generated hook passes its arguments on to
+    # `lefthook run`, so its hook gets --force.
+    msg=""
+    if [[ "$hook" == "commit-msg" ]]; then
+        msg="$(mktemp 2>/dev/null || mktemp -t gates-probe)" || {
+            GATES_PROBE_MSG="cannot create a probe message file"
+            return 1
+        }
+        printf 'chore: gates probe\n' >"$msg"
+        out="$(cd "$root" && GATES_PROBE=1 "$f" "$msg" 2>&1 </dev/null)" || true
+        rm -f "$msg"
+    elif grep -qs 'lefthook' "$f"; then
+        out="$(cd "$root" && GATES_PROBE=1 "$f" --force 2>&1 </dev/null)" || true
+    else
+        out="$(cd "$root" && GATES_PROBE=1 "$f" 2>&1 </dev/null)" || true
+    fi
     if grep -q "gates-probe:$hook:" <<<"$out"; then
         return 0
+    fi
+    if grep -q 'no matching staged files' <<<"$out"; then
+        GATES_PROBE_MSG="git runs ${f#"$root"/}, but lefthook skipped the gates job because nothing is staged (stage a file and probe again)"
+        return 1
     fi
     GATES_PROBE_MSG="git runs ${f#"$root"/}, but it does not reach the gates $hook hook (no probe answer)"
     return 1
@@ -77,6 +93,28 @@ gates_hook_owner() { # <root> <hook>
     fi
 }
 
+# Does <file> call the projected gates <hook> on a line that can run (#128)?
+# Commented lines do not count, and nothing after an unconditional
+# top-level `exit` does (a line appended to a hook ending in `exit 0`
+# never runs). An indented `exit` sits inside a block and does not end the
+# scan. The rules hold for YAML too: `#` starts a comment there, and a
+# top-level YAML key is never a bare `exit`.
+gates_calls_through() { # <file> <hook>
+    [[ -f "$1" ]] || return 1
+    awk -v needle=".specify/gates/hooks/$2" '
+        /^[[:space:]]*#/ { next }
+        /^exit([[:space:];]|$)/ { exit 1 }
+        index($0, needle) { found = 1; exit 0 }
+        END { exit found ? 0 : 1 }
+    ' "$1"
+}
+
+# Does <file> end the script with a top-level `exit`? A line appended after
+# it would never run.
+gates_has_toplevel_exit() { # <file>
+    [[ -f "$1" ]] && grep -qE '^exit([[:space:];]|$)' "$1"
+}
+
 # Static check for a hook another tool owns: is the gates call-through in
 # the file that tool reads? Running such a hook would also run that tool's
 # own steps (husky's default pre-commit is `npm test`), with side effects
@@ -89,8 +127,9 @@ gates_hook_static() { # <root> <hook>
     needle=".specify/gates/hooks/$hook"
     dir="$(gates_hooks_dir "$root")" || { GATES_PROBE_MSG="not a git work tree"; return 1; }
     for f in "$dir/$hook" "$root/.husky/$hook" "$root/lefthook.yml" "$root/.lefthook.yml" \
-        "$root/lefthook-local.yml" "$root/.pre-commit-config.yaml"; do
-        [[ -f "$f" ]] && grep -qF "$needle" "$f" && return 0
+        "$root/lefthook.yaml" "$root/.lefthook.yaml" "$root/lefthook-local.yml" \
+        "$root/.pre-commit-config.yaml"; do
+        gates_calls_through "$f" "$hook" && return 0
     done
     GATES_PROBE_MSG="git runs ${dir#"$root"/}/$hook, owned by another tool, and no file it reads calls $needle"
     return 1
@@ -175,7 +214,7 @@ gates_manager_file() { # <root> <manager> <hook>
 gates_manager_wired() { # <root> <manager> <hook>
     local f
     f="$(gates_manager_file "$1" "$2" "$3")" || return 1
-    [[ -f "$1/$f" ]] && grep -qF ".specify/gates/hooks/$3" "$1/$f"
+    gates_calls_through "$1/$f" "$3"
 }
 
 gates_manager_entry() { # <manager> <hook>
@@ -201,34 +240,69 @@ gates_manager_entry() { # <manager> <hook>
     esac
 }
 
-# Append only where the result is certainly still valid: a husky script is
-# plain shell; a lefthook block only when its top-level key is absent; a
-# pre-commit item only when `repos:` is the last top-level key (so the item
-# lands in that list), at the indentation the file already uses. Tabs, an
-# existing key, or any other layout: return 1 and leave the file alone.
-gates_manager_apply() { # <root> <manager> <hook>
-    local root="$1" mgr="$2" hook="$3" rel f nl="" ind last
+# Append only where the result is certainly still valid: a husky script
+# without a top-level `exit` (a line after it never runs); a lefthook block
+# only when its top-level key, quoted or not, is absent; a pre-commit item
+# only when `repos:` is the last top-level key and a block list (so the item
+# lands in that list), at the indentation the file already uses. Tabs or
+# any other layout: leave the file alone. gates_manager_appendable says
+# whether the append is safe and, when not, sets GATES_MANAGER_WHY to the
+# instruction for adding the entry by hand.
+GATES_MANAGER_WHY=""
+gates_manager_appendable() { # <root> <manager> <hook>
+    local root="$1" mgr="$2" hook="$3" rel f last
+    GATES_MANAGER_WHY=""
     rel="$(gates_manager_file "$root" "$mgr" "$hook")" || return 1
     f="$root/$rel"
-    if [[ -f "$f" ]]; then
-        grep -q $'\t' "$f" && return 1
-        [[ -s "$f" && -n "$(tail -c 1 "$f")" ]] && nl=$'\n'
+    if [[ -f "$f" ]] && grep -q $'\t' "$f"; then
+        GATES_MANAGER_WHY="$rel contains tabs, so gates does not edit it; add this by hand:"
+        return 1
     fi
+    case "$mgr" in
+        husky)
+            if gates_has_toplevel_exit "$f"; then
+                GATES_MANAGER_WHY="$rel has a top-level exit, so an appended line would never run; add this line by hand, before any exit:"
+                return 1
+            fi
+            ;;
+        lefthook)
+            if [[ -f "$f" ]] && grep -qE "^[\"']?${hook}[\"']?[[:space:]]*:" "$f"; then
+                GATES_MANAGER_WHY="$rel already has a $hook: block; merge this spec-gates command into your existing $hook: block by hand:"
+                return 1
+            fi
+            ;;
+        pre-commit)
+            if [[ ! -f "$f" ]]; then
+                GATES_MANAGER_WHY="$rel does not exist; create it with a repos: list holding this item:"
+                return 1
+            fi
+            last="$(grep -E "^[\"']?[A-Za-z_][A-Za-z0-9_-]*[\"']?[[:space:]]*:" "$f" | tail -n 1 | cut -d: -f1 | tr -d "\"' ")"
+            if [[ "$last" != "repos" ]] || ! grep -qE "^[\"']?repos[\"']?[[:space:]]*:[[:space:]]*(#.*)?$" "$f"; then
+                GATES_MANAGER_WHY="$rel cannot be appended to safely (repos: is not the last top-level key, or is not a block list, as in repos: []); add this item to repos: by hand:"
+                return 1
+            fi
+            ;;
+        *) return 1 ;;
+    esac
+}
+
+gates_manager_apply() { # <root> <manager> <hook>
+    local root="$1" mgr="$2" hook="$3" rel f nl="" ind="  " first
+    gates_manager_appendable "$root" "$mgr" "$hook" || return 1
+    rel="$(gates_manager_file "$root" "$mgr" "$hook")" || return 1
+    f="$root/$rel"
+    [[ -s "$f" && -n "$(tail -c 1 "$f")" ]] && nl=$'\n'
     case "$mgr" in
         husky)
             mkdir -p "$root/.husky" || return 1
             printf '%s%s' "$nl" "$(gates_manager_entry husky "$hook")"$'\n' >>"$f" || return 1
             ;;
         lefthook)
-            [[ -f "$f" ]] && grep -qE "^${hook}:" "$f" && return 1
             printf '%s%s' "$nl" "$(gates_manager_entry lefthook "$hook")"$'\n' >>"$f" || return 1
             ;;
         pre-commit)
-            [[ -f "$f" ]] || return 1
-            last="$(grep -E '^[A-Za-z_][A-Za-z0-9_-]*:' "$f" | tail -n 1 | cut -d: -f1)"
-            [[ "$last" == "repos" ]] || return 1
-            ind="$(grep -E '^ *- +repo:' "$f" | head -n 1 | sed -E 's/^( *).*/\1/')"
-            [[ -n "$(grep -E '^ *- +repo:' "$f" | head -n 1)" ]] || ind="  "
+            first="$(sed -nE '/^ *- +repo:/{p;q;}' "$f")"
+            [[ -n "$first" ]] && ind="$(sed -E 's/^( *).*/\1/' <<<"$first")"
             printf '%s%s' "$nl" "$(gates_manager_entry pre-commit "$hook" | sed "s/^/$ind/")"$'\n' >>"$f" || return 1
             ;;
         *) return 1 ;;

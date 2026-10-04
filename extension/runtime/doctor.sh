@@ -194,6 +194,20 @@ echo "=== spec-gates doctor ==="
 echo "project: $PROJECT_ROOT"
 echo ""
 
+# A dormant install (#128): the extension is installed but nothing is
+# projected, so there is no policy loader, no hooks and no gate to check.
+# Reporting each linter as "not enabled in policy" would read as a policy
+# choice; say what is missing instead.
+if declare -f gates_install_state >/dev/null 2>&1 \
+    && [[ "$(gates_install_state "$PROJECT_ROOT")" == "dormant" ]]; then
+    echo "${BAD}the gates runtime is not projected: .specify/gates/ has no runtime, so no gate runs at any boundary"
+    echo "  project it:  bash .specify/extensions/gates/runtime/project.sh (or /speckit.gates.init)"
+    echo "  check the installed extension alone:  bash .specify/extensions/gates/runtime/doctor.sh --installed-only"
+    echo ""
+    echo "doctor: 1 required item(s) missing."
+    exit 1
+fi
+
 echo "Required:"
 if have jq; then
     echo "${OK}jq"
@@ -230,6 +244,10 @@ if [[ -f "$PROJECT_ROOT/.specify/gates/policy.json" ]] && have jq \
 fi
 if [[ ! -f "$PROJECT_ROOT/.specify/gates/policy.json" ]]; then
     echo "Policy: none found at .specify/gates/policy.json (run /speckit.gates.init)"
+elif ! declare -f gates_policy_list >/dev/null 2>&1; then
+    echo "Policy-enabled linters:"
+    echo "${BAD}.specify/gates/lib/policy.sh is missing, so the policy cannot be read and no gate runs — re-project the runtime (bash .specify/extensions/gates/runtime/project.sh)"
+    MISSING=$((MISSING + 1))
 elif [[ -n "$POLICY_ERR" ]]; then
     echo "Policy:"
     echo "${BAD}policy is invalid — verify.sh refuses to run any gate until it is fixed:"
@@ -554,13 +572,15 @@ if git -C "$PROJECT_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
                 echo "${BAD}$h stub installed but .specify/gates/hooks/$h is missing — the stub refuses every commit on this branch until it is restored (fix: /speckit.gates.upgrade)"
                 MISSING=$((MISSING + 1))
             fi
-        elif ! grep -q 'gates\|verify.sh' "$hf" 2>/dev/null; then
-            echo "${REC}$h is executable but does not reference the gates runtime — another tool owns it; gates checks may not run on commit"
         elif grep -q 'Git commit-msg hook\|Git pre-commit hook --' "$hf" 2>/dev/null; then
             echo "${OK}$h installed, executable, delegates to the gates runtime"
             echo "${REC}$h is a copied hook: it stays at the version it was installed with on every branch — run /speckit.gates.upgrade to install the branch-following stub"
-        else
+        elif declare -f gates_calls_through >/dev/null 2>&1 && gates_calls_through "$hf" "$h"; then
+            # The call-through to .specify/gates/hooks/<name> on a line that
+            # runs, not any mention of "gates" (#128).
             echo "${OK}$h installed, executable, delegates to the gates runtime"
+        else
+            echo "${REC}$h is executable but does not call .specify/gates/hooks/$h itself — another tool owns it; gates checks run on commit only if that tool calls the gates hook"
         fi
     done
     # Proof (#74). When gates owns the hook (the stub), run it the way git

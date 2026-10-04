@@ -55,6 +55,8 @@ eq "prettier.exclude from the template" "$(jq -c '.hooks.prettier.exclude' "$TEM
     "$(jq -c '.hooks.prettier.exclude' "$P/.specify/gates/policy.json")"
 eq "shellcheck.exclude from the template" "$(jq -c '.hooks.shellcheck.exclude' "$TEMPLATE")" \
     "$(jq -c '.hooks.shellcheck.exclude' "$P/.specify/gates/policy.json")"
+eq "shellcheck skips husky's generated .husky/_ (#126)" true \
+    "$(jq '.hooks.shellcheck.exclude | index(".husky/_/**") != null' "$P/.specify/gates/policy.json")"
 eq "no Taskfile -> orchestrator none" none "$(jq -r '.hooks["verify-quality"].orchestrator' "$P/.specify/gates/policy.json")"
 eq "the summary names the defaults" 3 "$(grep -c '<- bundled defaults' "$W/err")"
 eq "the summary is prefixed with the script's own name (#119)" 1 "$(grep -c '^policy-infer: synthesized policy at' "$W/err")"
