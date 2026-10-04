@@ -885,6 +885,62 @@ for h in pre-commit commit-msg; do
 done
 check "without GATES_PROBE the hook runs normally" 0 bash -c "cd '$GP' && printf 'anything\n' >'$MSGF' && '$GITHOOKS/commit-msg' '$MSGF'"
 
+# ===========================================================================
+# Part G: large inputs (#117). A check fed through `echo "$x" | grep -q`
+# under pipefail reads a match as a miss once $x outgrows the pipe buffer
+# (grep exits at the match, the writer dies of SIGPIPE). Every input here is
+# well past 64 KB, with the violation at the very start.
+# ===========================================================================
+echo ""
+echo "=== large inputs: a match is never lost (#117) ==="
+PAD="$WORKDIR/pad.txt"
+i=0
+while [[ $i -lt 3000 ]]; do
+    printf 'line %05d padding padding padding padding padding padding\n' "$i"
+    i=$((i + 1))
+done >"$PAD"
+
+LG="$WORKDIR/large"
+mkdir -p "$LG"
+git -C "$LG" init -q -b main
+git -C "$LG" config user.email t@example.com
+git -C "$LG" config user.name tester
+project_runtime "$LG" "true"
+cp "$GITHOOKS/pre-commit" "$GITHOOKS/commit-msg" "$LG/.git/hooks/"
+chmod +x "$LG/.git/hooks/pre-commit" "$LG/.git/hooks/commit-msg"
+printf '%s' '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error", "custom_command": "true" } }, "git": { "block_main_commits": false }, "protected_files": { "extra": ["const.md"] } }' \
+    >"$LG/.specify/gates/policy.json"
+( cd "$LG" && git add -A && git commit -q -m "chore: seed" ) >/dev/null 2>&1
+
+{ printf 'key = AKIA%s\n' ABCDEFGHIJKLMNOP; cat "$PAD"; } >"$LG/big.txt"
+check "secret on line 1 of a large staged file is blocked" 1 \
+    bash -c "cd '$LG' && git add big.txt && git commit -q -m 'feat: big'"
+( cd "$LG" && git reset -q -- . >/dev/null 2>&1; rm -f big.txt )
+
+mkdir -p "$LG/many"
+i=0
+while [[ $i -lt 1000 ]]; do
+    : >"$LG/many/generated-fixture-file-with-a-long-descriptive-name-for-the-pipe-buffer-$i.txt"
+    i=$((i + 1))
+done
+echo "# c" >"$LG/const.md"
+check "large commit with a declared protected path passes" 0 \
+    bash -c "cd '$LG' && git add -A && git commit -q -m 'chore: many' -m 'Protected-Change: const.md
+Approved-By: Reviewer'"
+
+LARGE_CMD="rm -rf / ; echo $(tr '\n' ' ' <"$PAD")"
+check "dangerous command followed by 100+ KB is blocked" 2 \
+    bash -c "jq -n --arg c \"\$1\" '{tool_input:{command:\$c}}' | '$HOOKS/validate-bash.sh'" _ "$LARGE_CMD"
+
+# Under the stock macOS bash 3.2, ${msg//[[:space:]]/} on such a message
+# ran for minutes; the hook runs by path, so this exercises 3.2 there.
+{ printf 'feat: add the exporter\n\nBuilt with Copilot.\n\n'; cat "$PAD"; } >"$WORKDIR/large-msg.txt"
+check "branding at the top of a long message is refused" 1 \
+    bash -c "cd '$LG' && '$GITHOOKS/commit-msg' '$WORKDIR/large-msg.txt'"
+# Raw mode (no jq) decodes escapes with ${v//...}: a long value asks instead.
+check "raw mode: a 100+ KB command asks, never hangs" 0 \
+    bash -c "out=\$(jq -n --arg c \"\$1\" '{tool_input:{command:\$c}}' | PATH='$NOJQ' '$HOOKS/validate-bash.sh') && grep -q '\"ask\"' <<<\"\$out\"" _ "echo $(sed 's/$/\\n/' "$PAD" | tr -d '\n')"
+
 # --- Summary ---
 echo ""
 echo "$PASS of $TOTAL tests passed."

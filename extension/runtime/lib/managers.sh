@@ -53,7 +53,7 @@ gates_git_probe() { # <root> <hook>
     printf 'chore: gates probe\n' >"$msg"
     out="$(cd "$root" && GATES_PROBE=1 "$f" "$msg" 2>&1 </dev/null)" || true
     rm -f "$msg"
-    if printf '%s\n' "$out" | grep -q "gates-probe:$hook:"; then
+    if grep -q "gates-probe:$hook:" <<<"$out"; then
         return 0
     fi
     GATES_PROBE_MSG="git runs ${f#"$root"/}, but it does not reach the gates $hook hook (no probe answer)"

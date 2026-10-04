@@ -329,7 +329,7 @@ gates_const_fragments() { # <corpus> <profile-json>
                         ;;
                     posture/*)
                         bare="${t#posture/}"
-                        if printf '%s\n' "$postures" | grep -qx "$bare"; then
+                        if grep -qx "$bare" <<<"$postures"; then
                             score=$((score + 1))
                         fi
                         ;;

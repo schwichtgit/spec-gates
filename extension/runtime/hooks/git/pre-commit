@@ -84,7 +84,7 @@ check_forbidden_files() {
         credentials.json | service-account*.json | aws-credentials) return 1 ;;
     esac
 
-    if echo "$file" | grep -qE '/(\.ssh|\.gnupg|\.aws|\.gcloud)/'; then
+    if grep -qE '/(\.ssh|\.gnupg|\.aws|\.gcloud)/' <<<"$file"; then
         return 1
     fi
 
@@ -102,31 +102,31 @@ check_for_secrets() {
     fi
 
     # AWS keys
-    if echo "$content" | grep -qE 'AKIA[0-9A-Z]{16}'; then
+    if grep -qE 'AKIA[0-9A-Z]{16}' <<<"$content"; then
         echo "  SECRET: AWS key pattern in $file" >&2
         return 1
     fi
 
     # OpenAI keys
-    if echo "$content" | grep -qE 'sk-[a-zA-Z0-9]{48}'; then
+    if grep -qE 'sk-[a-zA-Z0-9]{48}' <<<"$content"; then
         echo "  SECRET: OpenAI key pattern in $file" >&2
         return 1
     fi
 
     # GitHub tokens
-    if echo "$content" | grep -qE '(ghp_|gho_)[a-zA-Z0-9]{36}'; then
+    if grep -qE '(ghp_|gho_)[a-zA-Z0-9]{36}' <<<"$content"; then
         echo "  SECRET: GitHub token pattern in $file" >&2
         return 1
     fi
 
     # GitLab tokens
-    if echo "$content" | grep -qE 'glpat-[a-zA-Z0-9_-]{20}'; then
+    if grep -qE 'glpat-[a-zA-Z0-9_-]{20}' <<<"$content"; then
         echo "  SECRET: GitLab token pattern in $file" >&2
         return 1
     fi
 
     # Slack tokens
-    if echo "$content" | grep -qE 'xoxb-[0-9]{10,}'; then
+    if grep -qE 'xoxb-[0-9]{10,}' <<<"$content"; then
         echo "  SECRET: Slack token pattern in $file" >&2
         return 1
     fi
@@ -135,7 +135,7 @@ check_for_secrets() {
     # bracket expression `\s` and `\x27` are literal characters, so the old
     # `[^\s"']` matched spaces and flagged prose such as the runtime's own
     # `"unparseable token: " kv` (issue #50).
-    if echo "$content" | grep -qiE '(password|secret|api_key|token)[[:space:]]*[=:][[:space:]]*["'\''][^[:space:]"'\'']{8,}'; then
+    if grep -qiE '(password|secret|api_key|token)[[:space:]]*[=:][[:space:]]*["'\''][^[:space:]"'\'']{8,}' <<<"$content"; then
         echo "  SECRET: Possible credential assignment in $file" >&2
         return 1
     fi
