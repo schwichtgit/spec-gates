@@ -339,6 +339,12 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   gates check what CI checks; a tracked file is still checked when an
   ignore pattern matches it. New policies also seed `.husky/_/**` in
   `shellcheck.exclude`.
+- **`doctor --probe-git` works with the pre-commit framework and
+  lefthook** (#127). The probe passed the message file to both hooks, and
+  the pre-commit framework's `pre-commit` hook refuses any argument; now
+  only `commit-msg` gets it. lefthook skips its jobs while nothing is
+  staged, so the probe calls its hook with `--force`. A skip that still
+  happens is reported as such instead of "no probe answer".
 
 ## 0.3.6 — 2026-10-02
 

@@ -142,7 +142,10 @@ and `project.sh` run the stub that way and fail when the marker does not
 come back. A hook another tool owns is read, not run, because running it
 would also run that tool's steps (husky's default `pre-commit` is
 `npm test`, under `sh -e`); the check looks for the gates call-through in
-the tool's file, and `--probe-git` runs the full chain on request.
+the tool's file, and `--probe-git` runs the full chain on request. The
+probe calls each hook as git does: only `commit-msg` gets a message file.
+lefthook skips every `pre-commit` job while nothing is staged, so its
+hook is called with `--force`, which it passes on to `lefthook run`.
 
 **Protected files** get different treatment at the two local boundaries.
 The agent may never edit them. At the git boundary a human is the

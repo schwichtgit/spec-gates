@@ -46,15 +46,31 @@ gates_git_probe() { # <root> <hook>
         GATES_PROBE_MSG="${f#"$root"/} is not executable, so git skips it"
         return 1
     fi
-    msg="$(mktemp 2>/dev/null || mktemp -t gates-probe)" || {
-        GATES_PROBE_MSG="cannot create a probe message file"
-        return 1
-    }
-    printf 'chore: gates probe\n' >"$msg"
-    out="$(cd "$root" && GATES_PROBE=1 "$f" "$msg" 2>&1 </dev/null)" || true
-    rm -f "$msg"
+    # Call the hook the way git does (#127): commit-msg gets the message
+    # file, pre-commit gets no arguments (the pre-commit framework's hook
+    # refuses any). lefthook skips every pre-commit job while nothing is
+    # staged, and its generated hook passes its arguments on to
+    # `lefthook run`, so its hook gets --force.
+    msg=""
+    if [[ "$hook" == "commit-msg" ]]; then
+        msg="$(mktemp 2>/dev/null || mktemp -t gates-probe)" || {
+            GATES_PROBE_MSG="cannot create a probe message file"
+            return 1
+        }
+        printf 'chore: gates probe\n' >"$msg"
+        out="$(cd "$root" && GATES_PROBE=1 "$f" "$msg" 2>&1 </dev/null)" || true
+        rm -f "$msg"
+    elif grep -qs 'lefthook' "$f"; then
+        out="$(cd "$root" && GATES_PROBE=1 "$f" --force 2>&1 </dev/null)" || true
+    else
+        out="$(cd "$root" && GATES_PROBE=1 "$f" 2>&1 </dev/null)" || true
+    fi
     if grep -q "gates-probe:$hook:" <<<"$out"; then
         return 0
+    fi
+    if grep -q 'no matching staged files' <<<"$out"; then
+        GATES_PROBE_MSG="git runs ${f#"$root"/}, but lefthook skipped the gates job because nothing is staged (stage a file and probe again)"
+        return 1
     fi
     GATES_PROBE_MSG="git runs ${f#"$root"/}, but it does not reach the gates $hook hook (no probe answer)"
     return 1
