@@ -26,10 +26,13 @@ trap 'ask "protect-files.sh failed unexpectedly (line $LINENO); run /speckit.gat
 # from $INPUT without jq. A JSON string is a regular language, so the sed
 # match is exact for it; escapes are decoded below. Returns 1 when the
 # field is absent and 2 when the value uses an escape this decoder does not
-# handle (\uXXXX could spell a blocked word), which the caller turns into
-# "ask".
+# handle (\uXXXX could spell a blocked word) or the key appears more than
+# once (which one Claude Code acts on would be a guess, #148), which the
+# caller turns into "ask".
 raw_field() {
-    local v
+    local v n
+    n="$({ grep -oE '"'"$1"'"[[:space:]]*:' <<<"$INPUT" || true; } | awk 'END { print NR }')"
+    [[ "${n:-0}" -gt 1 ]] && return 2
     # The leading "=" tells an empty value ("") apart from no match.
     v="$(printf '%s' "$INPUT" | tr '\n' ' ' \
         | sed -nE 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)".*/=\1/p')"
@@ -73,6 +76,8 @@ else
     rc=0
     FILE_PATH="$(raw_field file_path)" || rc=$?
     [[ "$rc" -eq 2 ]] && ask "cannot read the file path without jq ($DEGRADED); confirm this edit"
+    # No file_path at all: nothing here says which file the edit touches.
+    [[ "$rc" -eq 1 ]] && ask "no file path found in the hook input without jq ($DEGRADED); confirm this edit"
 fi
 
 if [[ -z "$FILE_PATH" ]]; then

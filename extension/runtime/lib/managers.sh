@@ -47,7 +47,8 @@ gates_git_probe() { # <root> <hook>
         return 1
     fi
     # Call the hook the way git does (#127): commit-msg gets the message
-    # file, pre-commit gets no arguments (the pre-commit framework's hook
+    # file, pre-commit and pre-merge-commit get no arguments (the
+    # pre-commit framework's hook
     # refuses any). lefthook skips every pre-commit job while nothing is
     # staged, and its generated hook passes its arguments on to
     # `lefthook run`, so its hook gets --force.
@@ -230,8 +231,10 @@ gates_manager_entry() { # <manager> <hook>
             ;;
         pre-commit)
             printf -- '- repo: local\n  hooks:\n    - id: spec-gates-%s\n      name: spec-gates %s\n      entry: bash .specify/gates/hooks/%s\n      language: system\n' "$2" "$2" "$2"
-            if [[ "$2" == "pre-commit" ]]; then
-                printf '      pass_filenames: false\n      always_run: true\n      stages: [pre-commit]\n'
+            # pre-commit and pre-merge-commit (#148) take no file names and
+            # run on every commit; commit-msg gets the message file.
+            if [[ "$2" != "commit-msg" ]]; then
+                printf '      pass_filenames: false\n      always_run: true\n      stages: [%s]\n' "$2"
             else
                 printf '      stages: [commit-msg]\n'
             fi

@@ -405,6 +405,26 @@ false`, pre-commit refused the protected artifacts outright; it now
   when it mentions "gates". The full `doctor.sh` on a dormant install now
   fails and says the runtime is not projected, instead of reporting the
   policy's linters as not enabled.
+- **A local `git merge` runs the pre-commit checks** (#148). git runs
+  `pre-merge-commit` and `commit-msg` for a merge commit, never
+  `pre-commit`, so a merge into `main` skipped the protected-branch block
+  and the secret scan. The stub is now installed as `pre-merge-commit`
+  too, and the projected `pre-merge-commit` hook runs the pre-commit
+  checks. A branch whose runtime predates it falls back to its
+  `pre-commit` hook. `--wire-manager` adds the entry for husky, lefthook
+  and the pre-commit framework, and doctor says when git is older than
+  2.24, which never calls the hook.
+- **protect-files asks when raw mode cannot tell which file is edited**
+  (#148). Without jq, an input with two `file_path` keys was judged by the
+  last one and an input with none was allowed. Both now ask, as
+  validate-bash does for its command.
+- **`--wire-manager` reports a hook awaiting its install command as
+  pending** (#148). After adding a lefthook or pre-commit framework entry,
+  `project.sh` probed `.git/hooks/<hook>`, which only that tool's install
+  command creates, and printed `FAILED: git probe: ... does not exist`. It
+  now says the hook is pending until `lefthook install` or
+  `pre-commit install --hook-type <hook>` runs (exit 1: wiring needs the
+  maintainer), and doctor names that command until the hook exists.
 
 ## 0.3.6 — 2026-10-02
 

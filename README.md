@@ -387,7 +387,8 @@ Commented-out steps and GitHub steps under `if: false` do not count.
 Upgrades replace every projected file, so project-specific hardening goes
 in `.specify/gates/hooks.local.d/<hook>/*.sh`, which projection, upgrades
 and the manifest never touch. `<hook>` is `protect-files`,
-`validate-bash`, `validate-pr`, `pre-commit`, or `commit-msg`. Each rule
+`validate-bash`, `validate-pr`, `pre-commit` (which also runs for merge
+commits), or `commit-msg`. Each rule
 runs after the shipped checks, so it can add a refusal but never remove
 one. It reads the tool call JSON on stdin (agent hooks) or gets the hook's
 arguments (`commit-msg` gets the message file as `$1`). Exit 0 allows;

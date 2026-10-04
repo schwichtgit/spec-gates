@@ -1,6 +1,6 @@
 #!/bin/sh
-# spec-gates hook stub -- installed into .git/hooks as pre-commit and
-# commit-msg by /speckit.gates.init (issue #59).
+# spec-gates hook stub -- installed into .git/hooks as pre-commit,
+# pre-merge-commit and commit-msg by /speckit.gates.init (issue #59).
 #
 # .git/hooks is shared by every branch; the projected runtime is not. This
 # stub runs the CHECKED-OUT branch's projected hook
@@ -15,6 +15,14 @@ root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
     exit 1
 }
 hook="$root/.specify/gates/hooks/$name"
+# A branch projected before pre-merge-commit shipped (#148) has only the
+# pre-commit hook, and its checks are the ones a merge commit needs.
+if [ "$name" = "pre-merge-commit" ] && [ ! -f "$hook" ] \
+    && [ -f "$root/.specify/gates/hooks/pre-commit" ]; then
+    hook="$root/.specify/gates/hooks/pre-commit"
+    GATES_GIT_HOOK=pre-merge-commit
+    export GATES_GIT_HOOK
+fi
 if [ ! -f "$hook" ]; then
     # Adopted means git tracks something under .specify/gates, in HEAD or
     # in the index. The directory is no evidence: gitignored files
