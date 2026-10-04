@@ -543,15 +543,34 @@ the boundary that proves it."
 # (e.g. a ci ref with no CI configuration anywhere) — a gap that is not the
 # principle's fault. All read $2 (project root) explicitly.
 
-# policy: <section>.<key> present in the ENFORCED policy (effective when a 003
-# contract is live — the policy loader resolves that) and, if expect is given,
-# equal to it; an enabled-style key must not be false.
+# The policy path a policy ref names, as a full dotted path (#139). A ref
+# whose first segment is a top-level policy section (policy.schema.json
+# allows no others) is already one -- hooks.markdownlint.severity,
+# git.block_main_commits; any other ref is the <hook>.<key> shorthand for
+# hooks.<hook>.<key>.
+_gates_const_policy_path() { # <ref>
+    case "${1%%.*}" in
+        attestation | extends | git | hooks | protected_files | spec) printf '%s' "$1" ;;
+        *) printf 'hooks.%s' "$1" ;;
+    esac
+}
+
+# policy: the ref's full path is present in the ENFORCED policy (effective
+# when a 003 contract is live -- the policy loader resolves that) and, if
+# expect is given, equal to it; an enabled-style key must not be false.
 _gates_const_eval_policy() { # <ref> <expect>
     local ref="${1:-}" expect="${2:-}"
-    local section="${ref%%.*}" key="${ref#*.}"
-    local val
-    val="$(gates_policy_section_get "$section" "$key" 2>/dev/null)"
-    [[ -z "$val" ]] && val="$(gates_policy_get "$section" "$key" 2>/dev/null)"
+    local path file val
+    path="$(_gates_const_policy_path "$ref")"
+    file="$(gates_policy_file 2>/dev/null)"
+    val=""
+    # No `// ""`: a literal false must round-trip as "false", not as absent.
+    [[ -n "$file" && -f "$file" ]] && val="$(jq -r --arg p "$path" '
+        (try getpath($p | split(".")) catch null) as $v
+        | if $v == null then ""
+          elif ($v | type) == "array" or ($v | type) == "object" then ""
+          else ($v | tostring) end
+    ' "$file" 2>/dev/null)"
     if [[ -z "$val" ]]; then
         echo missing
         return 0
@@ -610,29 +629,36 @@ _gates_const_eval_git_hook() { # <ref> <root>
     grep -q 'gates\|verify.sh' "$hf" 2>/dev/null && echo active || echo missing
 }
 
-# ci: some CI configuration exists and names the check/job. No CI config at all
-# is pending-boundary (the CI boundary is simply not projected yet).
+# ci: a pipeline runs the gates (a live `verify.sh --boundary ci` step) and
+# the ref: a template step id (gates, canary, pr) must be a live step, any
+# other ref must appear in the live text. Live means comments and disabled
+# steps removed (lib/manifest.sh gates_ci_live, the reading doctor's drift
+# check uses), so a `# TODO: wire gates` line enforces nothing (#139). No
+# pipeline file at all is pending-boundary (the CI boundary is simply not
+# projected yet).
 _gates_const_eval_ci() { # <ref> <root>
     local ref="${1:-}" root="${2:-}"
-    local anyci=0
-    if [[ -d "$root/.github/workflows" ]]; then
-        anyci=1
-        grep -rqF "$ref" "$root/.github/workflows" 2>/dev/null && {
-            echo active
-            return 0
-        }
+    # Without the manifest library nothing can show a live step: fail closed.
+    declare -f gates_ci_body >/dev/null 2>&1 || {
+        echo missing
+        return 0
+    }
+    if [[ ! -d "$root/.github/workflows" && -z "$(gates_ci_candidates "$root")" ]]; then
+        echo pending-boundary
+        return 0
     fi
-    local f
-    for f in "$root/.gitlab-ci.yml" "$root/Jenkinsfile"; do
-        if [[ -f "$f" ]]; then
-            anyci=1
-            grep -qF "$ref" "$f" 2>/dev/null && {
-                echo active
-                return 0
-            }
-        fi
-    done
-    [[ "$anyci" == "0" ]] && echo pending-boundary || echo missing
+    local body re
+    body="$(gates_ci_body "$root")"
+    if [[ -z "$body" ]]; then
+        echo missing
+        return 0
+    fi
+    re="$(gates_ci_step_re "$ref")"
+    if [[ -n "$re" ]]; then
+        grep -qE "$re" <<<"$body" && echo active || echo missing
+    else
+        grep -qF -- "$ref" <<<"$body" && echo active || echo missing
+    fi
 }
 
 # accept: specs/<feature>/tasks.md carries an accept block whose "# verifies:"
@@ -697,7 +723,8 @@ _gates_const_proposed() { # <surface> <ref> <expect>
     case "$surface" in
         policy)
             local want="${expect:-non-false}"
-            printf 'edit policy.json (overlay): set %s = %s, then re-sync if a contract is live' "$ref" "$want"
+            printf 'edit policy.json (overlay): set %s = %s, then re-sync if a contract is live' \
+                "$(_gates_const_policy_path "$ref")" "$want"
             ;;
         agent-hook)
             printf 'wire .claude/hooks/gates/%s and reference it in settings.json (/speckit.gates.init)' "$ref"

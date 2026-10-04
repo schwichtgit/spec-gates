@@ -160,6 +160,19 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   Under the stock macOS bash 3.2 the commit-message checks also no longer
   hang on long messages, and the agent hooks without jq ask on a command
   too long to decode instead of stalling.
+- **Commented-out CI steps no longer count as wiring** (#139). Doctor's
+  CI drift check and the constitution `ci` surface read a pipeline without
+  its comments (`#` in YAML, `//` and `/* */` in a Jenkinsfile) and
+  without GitHub steps or jobs under `if: false`, so `# - bash
+.specify/gates/canary.sh` or `run: "true"  # bash ...` is a missing
+  step. A `ci` principle is enforced only by a pipeline with a live
+  `verify.sh --boundary ci` step, plus the named step for `ref=gates`,
+  `canary` or `pr` (any other ref must appear in that pipeline), not by
+  the word anywhere in a workflow. A `ci:<step>` hold for a step the
+  pipeline runs is now a stale hold that fails, and an unknown id gets a
+  recommendation to remove it. Policy refs resolve as full dotted paths
+  (`hooks.markdownlint.severity`; `markdownlint.severity` still means the
+  hook key), and `align` proposes the full path.
 - **The format hooks no longer format without a policy** (#111). When
   `policy.json` is missing or the policy loader cannot load, post-edit and
   format-changed print one line saying so and format nothing, instead of

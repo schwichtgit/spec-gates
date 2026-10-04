@@ -27,6 +27,8 @@ PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null 
 [[ -f "$GATES_DIR/lib/attest.sh" ]] && source "$GATES_DIR/lib/attest.sh"
 # shellcheck source=lib/contract.sh disable=SC1091
 [[ -f "$GATES_DIR/lib/contract.sh" ]] && source "$GATES_DIR/lib/contract.sh"
+# shellcheck source=lib/manifest.sh disable=SC1091
+[[ -f "$GATES_DIR/lib/manifest.sh" ]] && source "$GATES_DIR/lib/manifest.sh"
 # shellcheck source=lib/constitution.sh disable=SC1091
 source "$GATES_DIR/lib/constitution.sh"
 

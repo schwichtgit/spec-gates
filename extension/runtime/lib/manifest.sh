@@ -13,7 +13,12 @@
 #   gates_is_held <target-rel>
 #   gates_known_match <target-rel> <hash>  # 0 if a released version had it
 #   gates_holds_ci <root>                  # acknowledged CI step ids (ci:<id>)
+#   gates_ci_step_re <id>                  # a template step's regex; empty if unknown
+#   gates_ci_candidates <root>             # every pipeline file, gates or not
+#   gates_ci_live <file>                   # the file minus comments and disabled steps
 #   gates_ci_files <root>                  # pipeline files running the gates; 1 if none
+#   gates_ci_body <root>                   # live text of those files
+#   gates_ci_present <root>                # template step ids those files run
 #   gates_ci_missing <root>                # template step ids those files lack
 #   gates_classify <root> <src-abs> <target-rel>
 #       absent | upstream | pristine | edited | held
@@ -221,38 +226,127 @@ gates_ci_steps() {
     printf 'pr\tpr-check\\.sh\n'
 }
 
-# Pipeline files that run the gates (contain the `gates` step). A step may
-# live in any of them, so drift is judged over their union.
-gates_ci_files() { # <root>
-    local root="$1" f found=1 re
-    re="$(gates_ci_steps | awk -F '\t' '$1 == "gates" { print $2 }')"
+# The regex of one template step id; empty for an id the template lacks.
+gates_ci_step_re() { # <id>
+    gates_ci_steps | awk -F '\t' -v id="$1" '$1 == id { print $2 }'
+}
+
+# Every pipeline file a supported platform reads, gates or not.
+gates_ci_candidates() { # <root>
+    local root="$1" f
     for f in "$root"/.github/workflows/*.yml "$root"/.github/workflows/*.yaml \
         "$root"/.gitlab-ci.yml "$root"/*.gitlab-ci.yml "$root"/Jenkinsfile*; do
-        [[ -f "$f" ]] || continue
-        if grep -qE "$re" "$f"; then
-            printf '%s\n' "${f#"$root"/}"
+        [[ -f "$f" ]] && printf '%s\n' "${f#"$root"/}"
+    done
+    return 0
+}
+
+# The part of a pipeline file that runs (#139): comments removed (YAML `#`;
+# Groovy `//` and `/* */` in a Jenkinsfile), and in YAML every step or job
+# whose `if:` is literally false (`if: false`, `if: ${{ false }}`,
+# `if: false && ...`) dropped with its whole block. A step disabled by moving
+# its command into a comment (`run: "true"  # bash ...`) is then left without
+# the command. A comment marker needs a blank or the line start before it,
+# so `https://` and `dist/*` stay intact.
+gates_ci_live() { # <file>
+    case "${1##*/}" in
+        Jenkinsfile*)
+            awk '
+                {
+                    s = $0; out = ""
+                    while (1) {
+                        if (inc) {
+                            p = index(s, "*/")
+                            if (!p) { s = ""; break }
+                            s = substr(s, p + 2); inc = 0; continue
+                        }
+                        q = match(s, /(^|[ \t])\/\//) ? RSTART : 0
+                        p = match(s, /(^|[ \t])\/\*/) ? RSTART : 0
+                        if (q && (!p || q < p)) { out = out substr(s, 1, q - 1); break }
+                        if (p) { out = out substr(s, 1, p - 1) " "; s = substr(s, p + RLENGTH); inc = 1; continue }
+                        out = out s; break
+                    }
+                    print out
+                }' "$1"
+            ;;
+        *)
+            awk '
+                function indent(s) { return match(s, /[^ \t]/) ? RSTART - 1 : -1 }
+                /^[ \t]*#/ { next }
+                { sub(/[ \t]+#.*$/, ""); n++; line[n] = $0 }
+                END {
+                    for (i = 1; i <= n; i++) {
+                        if (line[i] !~ /^[ \t]*(-[ \t]+)?if:[ \t]*["\047]?(\$\{\{[ \t]*)?false[ \t]*(&&|\}\}|["\047]|$)/) continue
+                        c = match(line[i], /if:/) - 1
+                        start = 0; base = -1
+                        # The node the if: belongs to: the list item whose
+                        # content starts in its column, or the mapping key
+                        # it is indented under.
+                        for (j = i; j >= 1; j--) {
+                            if (match(line[j], /^[ \t]*-[ \t]+/) && RLENGTH == c) {
+                                start = j; base = indent(line[j]); break
+                            }
+                            d = indent(line[j])
+                            if (j < i && d >= 0 && d < c) { start = j; base = d; break }
+                        }
+                        if (!start) continue
+                        for (k = start; k <= n; k++) {
+                            if (k > start) { d = indent(line[k]); if (d >= 0 && d <= base) break }
+                            drop[k] = 1
+                        }
+                    }
+                    for (i = 1; i <= n; i++) if (!drop[i]) print line[i]
+                }' "$1"
+            ;;
+    esac
+}
+
+# Pipeline files that run the gates (a live `gates` step). A step may live
+# in any of them, so drift is judged over their union.
+gates_ci_files() { # <root>
+    local root="$1" f found=1 re
+    re="$(gates_ci_step_re gates)"
+    while IFS= read -r f; do
+        [[ -n "$f" ]] || continue
+        if grep -qE "$re" <<<"$(gates_ci_live "$root/$f")"; then
+            printf '%s\n' "$f"
             found=0
         fi
-    done
+    done <<<"$(gates_ci_candidates "$root")"
     return "$found"
 }
 
-gates_ci_missing() { # <root>
-    local root="$1" files id re acks body f
+# The live text of every gates pipeline, one after the other; empty if none.
+gates_ci_body() { # <root>
+    local root="$1" files f
     files="$(gates_ci_files "$root")" || return 0
-    acks="$(gates_holds_ci "$root")"
-    # Read the union once: `cat ... | grep -q` would let grep's early exit
-    # SIGPIPE cat, and under pipefail a present step would read as missing.
-    body=""
     while IFS= read -r f; do
-        body="$body$(cat "$root/$f")"$'\n'
+        gates_ci_live "$root/$f"
     done <<<"$files"
+}
+
+# Template step ids the gates pipelines run.
+gates_ci_present() { # <root>
+    local body id re
+    body="$(gates_ci_body "$1")"
+    [[ -n "$body" ]] || return 0
     while IFS=$'\t' read -r id re; do
         [[ -n "$id" ]] || continue
-        if ! printf '%s\n' "$body" | grep -E "$re" >/dev/null; then
-            if [[ -z "$acks" ]] || ! grep -qxF "$id" <<<"$acks"; then
-                printf '%s\n' "$id"
-            fi
+        if grep -qE "$re" <<<"$body"; then printf '%s\n' "$id"; fi
+    done < <(gates_ci_steps)
+    return 0
+}
+
+gates_ci_missing() { # <root>
+    local root="$1" id re acks present
+    gates_ci_files "$root" >/dev/null || return 0
+    acks="$(gates_holds_ci "$root")"
+    present="$(gates_ci_present "$root")"
+    while IFS=$'\t' read -r id re; do
+        [[ -n "$id" ]] || continue
+        [[ -n "$present" ]] && grep -qxF "$id" <<<"$present" && continue
+        if [[ -z "$acks" ]] || ! grep -qxF "$id" <<<"$acks"; then
+            printf '%s\n' "$id"
         fi
     done < <(gates_ci_steps)
 }

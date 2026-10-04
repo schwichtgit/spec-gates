@@ -48,7 +48,9 @@ the checking; this command runs it, shows the output, and explains it.
      and a hold whose file now equals the installed copy is stale and
      fails; CI pipelines must contain the template's `gates`, `canary` and
      `pr` steps unless `ci:<step>` in `.specify/gates/.upgrade-holds`
-     records a deliberate omission.
+     records a deliberate omission. Commented-out steps and GitHub steps
+     under `if: false` do not count; a `ci:<step>` hold for a step the
+     pipeline runs is stale and fails, and an unknown id gets a `[rec]`.
    - **Agent hooks**: each projected hook must be executable (Claude Code
      runs them by path).
    - **Attestations**: the latest record must not show a gate that passed
