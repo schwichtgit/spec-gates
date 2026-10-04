@@ -30,5 +30,7 @@ running — the baseline maintainer needs the why, not just the diff.
 5. Report the outcome: "nothing to propose" (the overlay only adds or
    strengthens), an opened upstream pull request, or the patch written
    under `.specify/gates/proposals/` with the apply instructions the
-   command printed. Do not retry a refused proposal by weakening the
+   command printed. The change applies only the deviating values to the
+   upstream file, keeping its key order and indentation, so the
+   maintainer reviews those lines and nothing else. Do not retry a refused proposal by weakening the
    rationale requirement — it exists for the reviewer.

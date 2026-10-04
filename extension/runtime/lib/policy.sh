@@ -311,9 +311,12 @@ gates_validate_policy() {
             if ($v | type) != "array" then ["\($what) must be an array of strings"]
             elif any($v[]; type != "string") then ["\($what) entries must be strings"]
             else [] end;
+        # A null hook is a removed one (a contract overlay drops a baseline
+        # hook with null) and reads as absent; any other non-object is named.
         def hook_errors:
             .hooks
             | to_entries[]
+            | select(.value != null)
             | . as $e
             | if ($e.value | type) != "object" then "\($e.key): must be an object"
               else

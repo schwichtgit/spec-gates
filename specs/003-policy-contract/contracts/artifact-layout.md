@@ -94,5 +94,12 @@ never affect the exit code.
   trailer per changed artifact plus `Approved-By: <name>` (commit-msg,
   re-checked by `pr-check.sh`). The offline proof cannot tell a
   consistent forgery from a sync; the review of that commit can.
-- `policy.json` remains the only user-edited policy file; sync never
-  writes it, and `upgrade` continues to never touch any of the four.
+- `policy.json` remains the only user-edited policy file; plain sync
+  never writes it, and `upgrade` continues to never touch any of the four.
+  `sync --update` sets `extends.version` in the copy of `policy.json` on
+  its `gates/baseline-<version>` branch (that value only), because
+  invariant 3 requires the declaration to move with the pin (#135).
+- The `sync --update` commit carries its own `Protected-Change` trailers
+  for the artifacts (and `policy.json` when protected) with
+  `Approved-By: <git committer name>`; approval proper is the review of
+  that branch.

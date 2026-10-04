@@ -147,15 +147,23 @@ any artifact by hand blocks the next run naming what drifted.
 
 Drift is reviewable in both directions:
 
-- **Overlays may deviate — transparently.** A repo can weaken a baseline
-  rule (disable, lower a severity, narrow its scope), but every weakening
+- **Overlays may deviate — transparently.** The local `policy.json` is
+  a partial policy: it may hold only `extends`, set just the fields a
+  hook changes, or remove a baseline hook with `null`. A repo can weaken a
+  baseline rule (disable, lower a severity, narrow its scope, turn off a
+  `git` protection, remove a hook), but every weakening
   is a named, attested deviation: `contract: deviation (weakened):
 hooks.shellcheck.severity: baseline "error" -> overlay "warning"`.
   Deviations never change the exit code; they change what the org can see.
 - **Updates arrive as changes, not surprises.** `sync --update` moves the
   pin to a newer baseline version on its own `gates/baseline-<v>` branch
-  with the classified enforcement delta in the commit body; enforcement
-  follows only when it merges.
+  with the classified enforcement delta in the commit body (weakened,
+  strengthened and changed rules, added and removed hooks); enforcement
+  follows only when it merges. That branch moves `extends.version` in
+  `policy.json` with the pin, so it passes its own gates, and its commit
+  carries the `Protected-Change` trailers with you, the person running
+  the update, as `Approved-By`. If a hook refuses the commit, the branch
+  is removed so a retry starts clean.
 - **Deviations can go home.** `/speckit.gates.propose` packages the
   deviation inventory as a change request against the baseline source —
   origin, pinned version, classification, and your rationale included.
