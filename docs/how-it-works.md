@@ -90,7 +90,9 @@ via `git.ai_branding.allow_phrases`.
 branch, so the stub runs the checked-out branch's
 `.specify/gates/hooks/<name>`. The hook version always matches the
 branch's runtime, and an upgrade needs no hook reinstall. A branch from
-before gates was adopted has no runtime and is skipped; a branch that has a
+before gates was adopted has no runtime and is skipped: git tracks nothing
+under `.specify/gates` there, in `HEAD` or in the index, and gitignored
+leftovers such as `attestations.jsonl` do not count. A branch that tracks a
 runtime but deleted its hooks is refused, so removing the hooks cannot
 quietly turn enforcement off.
 

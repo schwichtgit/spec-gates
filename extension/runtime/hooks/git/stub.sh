@@ -16,11 +16,16 @@ root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
 }
 hook="$root/.specify/gates/hooks/$name"
 if [ ! -f "$hook" ]; then
-    if [ -d "$root/.specify/gates" ]; then
+    # Adopted means git tracks something under .specify/gates, in HEAD or
+    # in the index. The directory is no evidence: gitignored files
+    # (attestations.jsonl, a runtime projected but never committed)
+    # survive a switch to a branch from before adoption (issue #125).
+    if git rev-parse -q --verify "HEAD:.specify/gates" >/dev/null 2>&1 \
+        || [ -n "$(git ls-files -- ':(top).specify/gates' 2>/dev/null)" ]; then
         # The branch has a gates runtime but its hook is gone (every
         # release projects hooks here): deleting it must not silently
         # turn enforcement off. Fail closed.
-        echo "gates: $name refused -- .specify/gates exists but $hook is missing" >&2
+        echo "gates: $name refused -- .specify/gates is tracked but $hook is missing" >&2
         echo "  Restore it (/speckit.gates.upgrade) rather than committing around it." >&2
         exit 1
     fi

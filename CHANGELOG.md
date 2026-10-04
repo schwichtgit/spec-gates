@@ -233,6 +233,12 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   marker outside Core Principles is now malformed (doctor and
   `constitution.sh check` fail and name the line), and a constitution
   without the section is reported as declaring no principles.
+- **Branches from before adoption can commit again** (#125). The git hook
+  stub treated the `.specify/gates` directory as proof of adoption, but the
+  gitignored `attestations.jsonl` survives a branch switch, so every commit
+  on an older branch was refused for a missing hook. The stub now asks git
+  whether anything under `.specify/gates` is tracked, in `HEAD` or in the
+  index.
 
 - **The file and command hooks never silently allow** (#83). Without jq,
   or for input that isn't valid JSON, `protect-files.sh` and

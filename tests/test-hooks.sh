@@ -542,7 +542,7 @@ check "stub: switching back restores this branch's hook" 1 \
 check "stub: deleting the branch's hooks fails closed, not open" 1 \
     bash -c "cd '$ST' && git rm -q .specify/gates/hooks/pre-commit .specify/gates/hooks/commit-msg && git commit -q -m 'chore: drop hooks' 2>'$WORKDIR/stub.err'"
 check "stub: the refusal names the missing hook" 0 \
-    grep -q "refused -- .specify/gates exists" "$WORKDIR/stub.err"
+    grep -q "refused -- .specify/gates is tracked" "$WORKDIR/stub.err"
 ( cd "$ST" && git reset -q --hard >/dev/null 2>&1 )
 (
     # --orphan empties the index and removes tracked files; drop leftovers.
@@ -550,6 +550,14 @@ check "stub: the refusal names the missing hook" 0 \
 ) >/dev/null 2>&1
 check "stub: a branch without a projected hook is skipped, not refused" 0 \
     bash -c "cd '$ST' && echo x >x.txt && git add x.txt && git commit -q -m 'any subject' 2>'$WORKDIR/stub.err' && grep -q 'skipped' '$WORKDIR/stub.err'"
+# Gitignored gate output survives a branch switch; it is not adoption (#125).
+mkdir -p "$ST/.specify/gates"
+echo '{}' >"$ST/.specify/gates/attestations.jsonl"
+check "stub: leftover attestations.jsonl on a pre-adoption branch is skipped" 0 \
+    bash -c "cd '$ST' && echo y >y.txt && git add y.txt && git commit -q -m 'another subject' 2>'$WORKDIR/stub.err' && grep -q 'skipped' '$WORKDIR/stub.err'"
+check "stub: a staged .specify/gates path counts as adopted" 1 \
+    bash -c "cd '$ST' && echo '{}' >.specify/gates/policy.json && git add .specify/gates/policy.json && git commit -q -m 'chore: adopt'"
+( cd "$ST" && git rm -q --cached .specify/gates/policy.json && rm -rf .specify ) >/dev/null 2>&1
 
 # ===========================================================================
 # Part E2d: linked worktrees. Hooks live in the shared hooks directory
