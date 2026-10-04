@@ -104,10 +104,10 @@ gates_message_check() { # <commit|pr> <text> [generated]
             _err "Marketing adjective detected."
         fi
 
-        # AI branding (policy: git.ai_branding). Allow phrases are exact text
-        # removed before both branding checks; terms match as literal whole
-        # words, case-insensitive. Absent keys keep the built-in list;
-        # terms: [] disables it.
+        # AI branding (policy: git.ai_branding). Allow phrases are literal
+        # text removed before both branding checks, ignoring case like the
+        # terms (#130); terms match as literal whole words, case-insensitive.
+        # Absent keys keep the built-in list; terms: [] disables it.
         local brand_msg="$msg" phrase term terms hits=""
         local -a brand_terms=()
         if command -v gates_policy_path_list >/dev/null 2>&1; then
@@ -115,8 +115,8 @@ gates_message_check() { # <commit|pr> <text> [generated]
                 # awk, not ${brand_msg//"$phrase"/}: bash 3.2 makes that
                 # quadratic in the number of matches (#117).
                 [[ -n "$phrase" ]] && brand_msg="$(awk -v p="$phrase" '{
-                    out = ""
-                    while ((i = index($0, p)) > 0) { out = out substr($0, 1, i - 1); $0 = substr($0, i + length(p)) }
+                    out = ""; lp = tolower(p)
+                    while ((i = index(tolower($0), lp)) > 0) { out = out substr($0, 1, i - 1); $0 = substr($0, i + length(p)) }
                     print out $0 }' <<<"$brand_msg")"
             done < <(gates_policy_path_list git ai_branding allow_phrases || true)
         fi

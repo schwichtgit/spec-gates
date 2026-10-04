@@ -367,10 +367,13 @@ if grep -q 'vendor/'; then echo "vendor/ is generated; run make vendor" >&2; exi
 Two settings in `.specify/gates/policy.json` cover the most common cases:
 
 - `git.block_bulk_staging: true` refuses `git add -A`, `--all`, `.`,
-  `:/`, `*` and directory arguments at the agent boundary, so an
-  untracked directory cannot be swept into a commit. Explicit files, `-u`
-  and `-p` stay allowed. The git boundary cannot tell how files were
-  staged, so this is an agent-boundary rule.
+  `:/` and other pathspec magic, globs (quoted or not), `"$PWD"` and
+  directory arguments at the agent boundary, so an untracked directory
+  cannot be swept into a commit. `git stage`, `env git add`,
+  `GIT_DIR=… git add` and `git --no-pager add` count too; an argument the
+  check cannot resolve (`"$f"`) asks. Explicit files, `-u` and `-p` stay
+  allowed. The git boundary cannot tell how files were staged, so this is
+  an agent-boundary rule.
 - The file hook blocks only on strong evidence: `.env` files, keys and
   certificates (`*.pem`, `*.key`, `*.p12`, `*.jks`, `*.keystore`, …),
   exact credential file names (`credentials.json`, `.netrc`, `.pypirc`,
@@ -424,9 +427,9 @@ default, and gates refuses both. Turn them off for the project in
 (`"includeCoAuthoredBy": false` is the older, deprecated form.)
 
 **A repo that integrates a provider** (an SDK client, a model name in a
-changelog) adds the exact phrases to `git.ai_branding.allow_phrases`. They
-are removed before both branding checks, and the refusal message points
-there:
+changelog) adds the phrases to `git.ai_branding.allow_phrases`. They are
+removed before both branding checks, matched literally but ignoring case
+like the terms, and the refusal message points there:
 
 ```json
 {

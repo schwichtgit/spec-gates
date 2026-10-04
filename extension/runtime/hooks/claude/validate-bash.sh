@@ -55,7 +55,7 @@ raw_field() {
 
 # Every rule below is an `if ... | grep` test: without grep each one is
 # silently false, which would turn the hook into an allow-all.
-for _tool in grep sed tr; do
+for _tool in grep sed tr awk; do
     command -v "$_tool" >/dev/null 2>&1 \
         || ask "$_tool not found, so validate-bash cannot check this command; run /speckit.gates.doctor"
 done
@@ -164,6 +164,18 @@ if grep -qE '(curl|wget)\s.*\|\s*(sh|bash)' <<<"$COMMAND"; then
     BLOCKED="Pipe remote content to shell"
 fi
 
+# A shipped "ask" waits until the project's rules have run: a local refusal
+# is stronger than a question (#130). defer_ask keeps the first reason.
+ASK=""
+defer_ask() { [[ -n "$ASK" ]] || ASK="$1"; }
+
+if [[ -z "$DEGRADED" ]]; then
+    CWD="$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null || true)"
+else
+    CWD="$(raw_field cwd || true)"
+fi
+[[ -n "$CWD" ]] || CWD="$LROOT"
+
 # Bulk staging (#71): with policy git.block_bulk_staging on, refuse a
 # `git add` that stages everything or a whole directory, so an untracked
 # directory cannot be swept into a commit. Explicit files, -u and -p stay
@@ -180,55 +192,162 @@ bulk_staging_on() {
     grep -qE '"block_bulk_staging"[[:space:]]*:[[:space:]]*true' <<<"$(tr '\n' ' ' <"$pf")" && return 0
     return 1
 }
-# bulk_add_arg: print the first argument of a `git add` segment that stages
-# in bulk; nothing when every argument is an explicit file or a flag.
-bulk_add_arg() {
-    local cwd seg a
-    if [[ -z "$DEGRADED" ]]; then
-        cwd="$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null || true)"
-    else
-        cwd="$(raw_field cwd || true)"
-    fi
-    [[ -n "$cwd" ]] || cwd="$LROOT"
+
+# git_scan: read every simple command of $COMMAND that runs git -- behind
+# environment assignments, env, command, sudo, exec, nohup, time or nice,
+# and after git's global options (-C, -c, --no-pager, ...) -- and print one
+# finding per line:
+#   BULK <arg>   `git add`/`git stage` staging in bulk: -A, --all, `.`, a
+#                directory (quoted or not), "$PWD", a glob or a pathspec
+#                with magic (`:/`, `:(top)`), which git expands itself
+#   BULKQ <arg>  an argument this check cannot resolve (an unbalanced quote,
+#                an escaped space, a variable or a command substitution)
+#   HOOKS <what> a git hook bypass: --no-verify, `commit -n`, or a
+#                core.hooksPath setting
+git_scan() {
+    local seg t t2 q a base cdir sub n i dashdash
+    local asg='^[A-Za-z_][A-Za-z0-9_]*='
+    local -a w
     while IFS= read -r seg; do
-        grep -qE '^[[:space:]]*(sudo[[:space:]]+)?git([[:space:]]+-[Cc][[:space:]]+[^[:space:]]+)*[[:space:]]+add([[:space:]]|$)' <<<"$seg" \
-            || continue
-        set -f # word split the arguments without glob expansion
-        # shellcheck disable=SC2086  # deliberate word split of the arguments
-        for a in ${seg#*add}; do
-            a="${a#[\"\']}"
-            a="${a%[\"\']}"
-            case "$a" in
-                -A | --all | --no-ignore-removal | . | ./ | :/ | ':/*' | '*' | '.*' | */)
-                    printf '%s\n' "$a"
-                    set +f
-                    return 0
+        w=()
+        read -r -a w <<<"$seg" || true
+        n="${#w[@]}"
+        i=0
+        while [[ "$i" -lt "$n" ]]; do
+            t="${w[i]}"
+            if [[ ! "$t" =~ $asg ]]; then
+                case "$t" in
+                    sudo | env | command | exec | nohup | time | nice) ;;
+                    -*) [[ "$i" -gt 0 ]] || break ;;
+                    *) break ;;
+                esac
+            fi
+            i=$((i + 1))
+        done
+        [[ "$i" -lt "$n" ]] || continue
+        t="${w[i]}"
+        [[ "$t" == git || "$t" == */git ]] || continue
+        if grep -qiF 'core.hookspath' <<<"$seg"; then
+            printf 'HOOKS %s\n' "core.hooksPath"
+        fi
+        cdir=""
+        i=$((i + 1))
+        while [[ "$i" -lt "$n" ]]; do
+            t="${w[i]}"
+            case "$t" in
+                -C | -c | --git-dir | --work-tree | --namespace | --super-prefix | --config-env)
+                    [[ "$t" == -C ]] && cdir="${w[i + 1]:-}"
+                    i=$((i + 2))
+                    continue
                     ;;
                 -*) ;;
+                *) break ;;
+            esac
+            i=$((i + 1))
+        done
+        sub="${w[i]:-}"
+        i=$((i + 1))
+        base="$CWD"
+        if [[ -n "$cdir" ]]; then
+            cdir="${cdir#[\"\']}"
+            cdir="${cdir%[\"\']}"
+            if [[ "$cdir" == /* ]]; then base="$cdir"; else base="$CWD/$cdir"; fi
+        fi
+        dashdash=0
+        while [[ "$i" -lt "$n" ]]; do
+            a="${w[i]}"
+            i=$((i + 1))
+            if [[ "$dashdash" -eq 0 ]]; then
+                case "$a" in
+                    --) dashdash=1; continue ;;
+                    --no-veri*) printf 'HOOKS %s\n' "$a"; continue ;;
+                esac
+                # `-n` is --no-verify for commit, also inside a cluster
+                # (`-nm`), up to the first option that takes a value.
+                if [[ "$sub" == commit && "$a" == -* && "$a" != --* ]] \
+                    && [[ "${a%%[mFcCtSu]*}" == *n* ]]; then
+                    printf 'HOOKS git commit %s\n' "$a"
+                    continue
+                fi
+            fi
+            [[ "$sub" == add || "$sub" == stage ]] || continue
+            if [[ "$dashdash" -eq 0 ]]; then
+                case "$a" in
+                    -A | --all | --no-ignore-removal | --pathspec-from-file*)
+                        printf 'BULK %s\n' "$a"
+                        continue
+                        ;;
+                    --*) continue ;;
+                    -*A*)
+                        printf 'BULK %s\n' "$a"
+                        continue
+                        ;;
+                    -*) continue ;;
+                esac
+            fi
+            # Rejoin an argument the word split cut: a quoted name with a
+            # space ("src dir") or an escaped one (src\ dir).
+            while [[ "$i" -lt "$n" ]]; do
+                t="${a//[!\"]/}"
+                q="${a//[!\']/}"
+                if [[ "$a" == *\\ ]]; then
+                    a="${a%\\} ${w[i]}"
+                elif [[ $((${#t} % 2)) -ne 0 || $((${#q} % 2)) -ne 0 ]]; then
+                    a="$a ${w[i]}"
+                else
+                    break
+                fi
+                i=$((i + 1))
+            done
+            t="${a//\"/}"
+            t="${t//\'/}"
+            # Pathspec magic (`:/`, `:(top)`, `:!x`): git expands it, and
+            # the segment split may have cut it at the parenthesis.
+            if [[ "$t" == :* ]]; then
+                printf 'BULK %s\n' "$a"
+                continue
+            fi
+            q="${a//[!\"]/}"
+            t2="${a//[!\']/}"
+            if [[ "$t" == *\\ || $((${#q} % 2)) -ne 0 || $((${#t2} % 2)) -ne 0 ]]; then
+                printf 'BULKQ %s\n' "$a"
+                continue
+            fi
+            # The quoted patterns are literal command text, not expansions.
+            # shellcheck disable=SC2016,SC2088
+            case "$t" in
+                '$PWD' | '$PWD/'* | '${PWD}' | '${PWD}/'* | '~' | '~/'*)
+                    printf 'BULK %s\n' "$a"
+                    ;;
+                *'$'* | *'`'* | *\\*) printf 'BULKQ %s\n' "$a" ;;
+                . | ./ | :* | */ | *[*?[]*) printf 'BULK %s\n' "$a" ;;
                 *)
-                    if [[ "$a" == /* && -d "$a" ]] || [[ "$a" != /* && -d "$cwd/$a" ]]; then
-                        printf '%s\n' "$a"
-                        set +f
-                        return 0
+                    if [[ "$t" == /* && -d "$t" ]] || [[ "$t" != /* && -d "$base/$t" ]]; then
+                        printf 'BULK %s\n' "$a"
                     fi
                     ;;
             esac
         done
-        set +f
-    done < <(printf '%s\n' "$COMMAND" | awk '{ gsub(/&&|\|\||;|\||&/, "\n"); print }')
+    done < <(printf '%s\n' "$COMMAND" | awk '{ gsub(/&&|\|\||;|\||&|\(|\)|`/, "\n"); print }')
     return 0
 }
-if [[ -z "$BLOCKED" ]]; then
-    BULK="$(bulk_add_arg)"
-    if [[ -n "$BULK" ]]; then
-        rc=0
-        bulk_staging_on || rc=$?
-        if [[ "$rc" -eq 0 ]]; then
-            BLOCKED="Bulk staging (git add $BULK) refused by policy git.block_bulk_staging; stage explicit paths"
-        elif [[ "$rc" -eq 2 ]]; then
-            ask "git add $BULK stages in bulk, and .specify/gates/policy.json cannot be read to check git.block_bulk_staging; run /speckit.gates.doctor"
-        fi
+GIT_SCAN="$(git_scan)"
+if [[ -z "$BLOCKED" ]] && grep -q '^BULK' <<<"$GIT_SCAN"; then
+    rc=0
+    bulk_staging_on || rc=$?
+    BULK="$(awk '/^BULK / { sub(/^BULK /, ""); print; exit }' <<<"$GIT_SCAN")"
+    BULKQ="$(awk '/^BULKQ / { sub(/^BULKQ /, ""); print; exit }' <<<"$GIT_SCAN")"
+    if [[ "$rc" -eq 0 && -n "$BULK" ]]; then
+        BLOCKED="Bulk staging (git add $BULK) refused by policy git.block_bulk_staging; stage explicit paths"
+    elif [[ "$rc" -eq 0 ]]; then
+        defer_ask "git add $BULKQ may stage in bulk, which policy git.block_bulk_staging refuses, and this check cannot resolve the argument; confirm it names files"
+    elif [[ "$rc" -eq 2 ]]; then
+        defer_ask "git add ${BULK:-$BULKQ} stages in bulk, and .specify/gates/policy.json cannot be read to check git.block_bulk_staging; run /speckit.gates.doctor"
     fi
+fi
+HOOKS="$(awk '/^HOOKS / { sub(/^HOOKS /, ""); print; exit }' <<<"$GIT_SCAN")"
+if [[ -n "$HOOKS" ]]; then
+    defer_ask "this command bypasses the git hooks ($HOOKS), so the commit checks would not run; confirm it"
 fi
 
 if [[ -n "$BLOCKED" ]]; then
@@ -238,12 +357,18 @@ if [[ -n "$BLOCKED" ]]; then
 fi
 
 # Protected paths through Bash (#95): Write/Edit to a protected path is
-# refused by protect-files, but `rm`, `mv`, `sed -i`, a redirect or
-# `git rm` reach it through here. Telling a modification from a read by
-# the command text alone is a heuristic, so a command that appears to
-# modify one asks the human instead of blocking; reads stay allowed. The
-# paths: the project's rules (hooks.local.d) plus protected_files.extra
-# (glob entries by their literal prefix; with jq only).
+# refused by protect-files, but `rm`, `mv`, `sed -i`, a redirect,
+# `find -delete` or `git rm` reach it through here. Telling a modification
+# from a read by the command text alone is a heuristic, so a command that
+# appears to modify one asks the human instead of blocking; reads stay
+# allowed. The paths: the project's rules (hooks.local.d) plus
+# protected_files.extra (glob entries by their literal prefix; with jq
+# only). A path counts as named when it appears in the command, when one
+# of its parent directories appears as a whole argument (`rm -rf
+# .specify/gates`), or when the command first changes into it or a parent
+# (`cd .specify/gates && ...`, `git -C`). Matching ignores case, after
+# `./`, `//`, `/./`, "$PWD/" and the project root are normalized away
+# (#130).
 protected_prefixes() {
     printf '%s\n' ".specify/gates/hooks.local.d"
     local pf="$LROOT/.specify/gates/policy.json"
@@ -252,21 +377,93 @@ protected_prefixes() {
         | sed -e 's/[*?[].*$//' -e 's:/*$::' | awk 'length($0) > 0' || true
 }
 # shellcheck disable=SC2016  # the backtick is a literal command separator
-MUTATE_VERB='(^|[;&|(`[:space:]])(rm|rmdir|unlink|shred|mv|cp|ln|install|truncate|tee|chmod|chown|dd)[[:space:]]'
+MUTATE_VERB='(^|[;&|(`[:space:]])(rm|rmdir|unlink|shred|mv|cp|ln|install|truncate|tee|chmod|chown|dd|rsync)[[:space:]]'
 # shellcheck disable=SC2016
 MUTATE_EDIT='(^|[;&|(`[:space:]])(sed|perl)[[:space:]]+([^;&|]*[[:space:]])?-[a-zA-Z]*i|(^|[;&|(`[:space:]])git[[:space:]]+(rm|mv|checkout|restore|reset|clean|stash)([[:space:]]|$)'
+# shellcheck disable=SC2016
+MUTATE_FIND='(^|[;&|(`[:space:]])find[[:space:]]([^;&|]*[[:space:]])?-(delete|exec|execdir|ok|okdir)([[:space:]]|$)'
+# The command with path spellings normalized, lowercased.
+# shellcheck disable=SC2016  # $PWD is literal command text here
+NCMD="$(printf '%s\n' "$COMMAND" | awk -v root="$LROOT" '
+    function strip(s, p,    i, out) {
+        out = ""
+        while ((i = index(s, p)) > 0) { out = out substr(s, 1, i - 1); s = substr(s, i + length(p)) }
+        return out s
+    }
+    { s = strip($0, root "/"); s = strip(s, "\"$PWD\"/"); s = strip(s, "\"${PWD}\"/")
+      s = strip(s, "$PWD/"); s = strip(s, "${PWD}/"); print s }' \
+    | sed -E -e 's#//+#/#g' -e 's#/(\./)+#/#g' -e "s#(^|[[:space:]\"'=<>;&|(\`])(\./)+#\1#g" \
+    | tr '[:upper:]' '[:lower:]')"
+# A write redirect other than to /dev/null, /dev/std* or a file descriptor.
+WRITE_REDIRECT=1
+grep -q '>' <<<"$(sed -E -e 's#[0-9]*>>?[[:space:]]*/dev/(null|stdout|stderr|tty)##g' \
+    -e 's#[0-9]*>&[0-9-]+##g' -e 's#&>>?[[:space:]]*/dev/null##g' <<<"$NCMD")" || WRITE_REDIRECT=0
+MUTATES=0
+if grep -qE "$MUTATE_VERB|$MUTATE_EDIT|$MUTATE_FIND" <<<"$NCMD"; then
+    MUTATES=1
+fi
+ere_escape() { printf '%s' "$1" | sed 's/[][\.*^$+?(){}|/]/\\&/g'; }
+# shellcheck disable=SC2016
+TOKEN_START='(^|[[:space:]"'"'"'=<>;&|(`])'
+# shellcheck disable=SC2016
+TOKEN_END='(["'"'"'[:space:];&|)`]|$)'
 while IFS= read -r _pp; do
     [[ -n "$_pp" ]] || continue
-    grep -qF -- "$_pp" <<<"$COMMAND" || continue
-    _pre="$(printf '%s' "$_pp" | sed 's/[][\.*^$+?(){}|/]/\\&/g')"
-    if grep -qE "$MUTATE_VERB|$MUTATE_EDIT" <<<"$COMMAND" \
-        || grep -qE ">>?[[:space:]]*[\"']?[^[:space:];&|]*$_pre" <<<"$COMMAND"; then
-        ask "this command appears to modify the protected path $_pp; a human or a reviewed change makes that edit"
+    _pp="$(tr '[:upper:]' '[:lower:]' <<<"$_pp")"
+    _pre="$(ere_escape "$_pp")"
+    _named=0
+    _entered=0
+    grep -qF -- "$_pp" <<<"$NCMD" && _named=1
+    _dir="$_pp"
+    while :; do
+        _e="$(ere_escape "$_dir")"
+        if grep -qE "(^|[;&|(\`[:space:]])(cd|pushd)[[:space:]]+[\"']?$_e/?[\"']?$TOKEN_END|[[:space:]]-c[[:space:]]+[\"']?$_e/?[\"']?$TOKEN_END" <<<"$NCMD"; then
+            _entered=1
+        fi
+        # A parent directory counts only as a whole argument (or with a
+        # glob under it) in the same command as the change, so `ls .specify
+        # && rm build/x` stays allowed.
+        if [[ "$_dir" != "$_pp" && "$MUTATES" -eq 1 ]] \
+            && PAT="$TOKEN_START$_e(/[^[:space:];&|]*[*?[][^[:space:];&|]*)?/?$TOKEN_END" \
+                MUT="$MUTATE_VERB|$MUTATE_EDIT|$MUTATE_FIND" awk '
+                    { n = split($0, part, /&&|\|\||;|&/)
+                      for (k = 1; k <= n; k++) if (part[k] ~ ENVIRON["PAT"] && part[k] ~ ENVIRON["MUT"]) hit = 1 }
+                    END { exit !hit }' <<<"$NCMD"; then
+            _named=1
+        fi
+        [[ "$_dir" == */* ]] || break
+        _dir="${_dir%/*}"
+    done
+    if { [[ "$_named" -eq 1 && "$MUTATES" -eq 1 ]]; } \
+        || { [[ "$_entered" -eq 1 ]] && [[ "$MUTATES" -eq 1 || "$WRITE_REDIRECT" -eq 1 ]]; } \
+        || grep -qE ">>?[[:space:]]*[\"']?[^[:space:];&|]*$_pre" <<<"$NCMD"; then
+        defer_ask "this command appears to modify the protected path $_pp; a human or a reviewed change makes that edit"
+        break
     fi
 done < <(protected_prefixes)
 
+# Secret files (#130): protect-files refuses Write/Edit of these; a command
+# that names one (`cat .env`, `cp id_rsa x`) asks, since reading it puts
+# the secret in the transcript. Same names and allowlist as protect-files.
+SECRET_FILE="$(printf '%s\n' "$COMMAND" | tr '<>|;&()=,' '         ' | awk '
+    { for (i = 1; i <= NF; i++) {
+        t = $i; gsub(/["'"'"'`]/, "", t)
+        n = split(t, parts, "/"); b = tolower(parts[n])
+        if (b ~ /\.(example|sample|template)$/) continue
+        if (b == ".env" || b ~ /^\.env\./ || b ~ /^(id_rsa|id_ed25519|id_ecdsa)/ \
+            || b == "authorized_keys" || b == "known_hosts" \
+            || b ~ /\.(pem|key|crt|p12|pfx|jks|keystore)$/ \
+            || b ~ /^(credentials|credentials\.json|credentials\.yml|credentials\.yaml|\.netrc|\.pypirc|aws-credentials)$/ \
+            || b ~ /^(gcloud-.*|service-account.*)\.json$/) { if (found == "") found = t }
+    } }
+    END { print found }')"
+if [[ -n "$SECRET_FILE" ]]; then
+    defer_ask "this command names the secret file $SECRET_FILE; confirm it does not expose a credential"
+fi
+
 # Project-owned rules (#71) run once every shipped rule allowed, so they
-# can add a refusal but never remove one.
+# can add a refusal but never remove one. They run before any "ask": a
+# project refusal is stronger than a question.
 if compgen -G "$LROOT/.specify/gates/hooks.local.d/validate-bash/*.sh" >/dev/null; then
     LLIB="$LROOT/.specify/gates/lib/local-hooks.sh"
     if [[ ! -f "$LLIB" ]] || ! bash -n "$LLIB" 2>/dev/null; then
@@ -280,6 +477,8 @@ if compgen -G "$LROOT/.specify/gates/hooks.local.d/validate-bash/*.sh" >/dev/nul
         exit 2
     fi
 fi
+
+[[ -n "$ASK" ]] && ask "$ASK"
 
 if [[ -n "$DEGRADED" ]]; then
     echo "gates: validate-bash checked in raw mode ($DEGRADED); run /speckit.gates.doctor" >&2

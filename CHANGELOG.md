@@ -270,6 +270,20 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   those states. A benign command is still allowed without jq, so the
   agent can install it. Doctor keeps failing until jq is installed, and
   the `bash` and `protect` canaries now also run without jq.
+- **The Bash hook catches more ways around its checks** (#130). A project
+  rule in `hooks.local.d/validate-bash` now runs before a shipped "ask",
+  so its refusal wins. A protected path changed through a parent
+  directory (`rm -rf .specify/gates`, `find … -delete`), after a `cd` or
+  `git -C` into one, or spelled with `./`, `//`, `/./`, `"$PWD"`, the
+  absolute project path or other letter case now asks. Under
+  `git.block_bulk_staging`, `git stage`, `env`/`command`/`GIT_DIR=…`
+  prefixes, `git --no-pager add`, quoted or escaped directory names,
+  `"$PWD"`, quoted globs and pathspec magic (`':(top)'`) are refused, and
+  an argument the check cannot resolve asks. A command that names a
+  secret file the file hook refuses (`cat .env`) asks, and so do hook
+  bypasses (`--no-verify`, `git commit -n`, a `core.hooksPath` setting).
+  `git.ai_branding.allow_phrases` now ignore case, as the terms always
+  did.
 
 ## 0.3.6 — 2026-10-02
 
