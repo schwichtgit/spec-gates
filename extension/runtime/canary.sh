@@ -1,6 +1,13 @@
 #!/bin/bash
 # shellcheck shell=bash
 set -uo pipefail
+# Every git call below works on a sandbox repository. Run from a git hook,
+# git's per-invocation variables (GIT_DIR, GIT_INDEX_FILE, absolute in a
+# linked worktree) would point those calls at the caller's repository:
+# `add -A` staged the caller's tree and a canary commit or tag could land
+# there (#173).
+unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_PREFIX GIT_COMMON_DIR \
+    GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_NAMESPACE GIT_QUARANTINE_PATH
 
 # spec-gates canary suite: prove the enforcement layer still blocks.
 #

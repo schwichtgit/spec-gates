@@ -109,6 +109,13 @@ add` forms at the agent boundary. `project.sh` lists new settings like
 
 ### Fixed
 
+- **Gate sandboxes no longer touch the caller's repository** (#173). Git
+  runs hooks with `GIT_DIR` and `GIT_INDEX_FILE` set (absolute in a linked
+  worktree); the canary sandboxes and accept blocks that build their own
+  git repository then staged, committed, tagged and even set `core.bare`
+  in the caller's repository, so no commit could be made from a linked
+  worktree. The canary suite clears those variables, and accept blocks run
+  without them.
 - **The git hooks refuse a branch whose runtime was never projected**
   (#159). In a clone that tracks `policy.json` but gitignores the runtime,
   commit-msg took the missing `.runtime-version` for a pre-0.3.4 runtime

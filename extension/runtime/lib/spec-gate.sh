@@ -258,7 +258,15 @@ gates_spec_run_block() { # <cmdfile> <timeout-s> <root> <outfile>
     # own, so stopping it takes its sleep along.
     (
         set -m
-        (cd "$root" && GATES_SPEC_EXEC=1 exec bash "$cmdfile") >"$outfile" 2>&1 </dev/null &
+        # A git hook runs this with GIT_DIR and GIT_INDEX_FILE set (absolute
+        # in a linked worktree): a block that builds a sandbox repository
+        # would then add, commit and tag in the caller's repository (#173).
+        # The block gets a clean git environment; it runs in the project
+        # directory, so its own git calls still find this repository.
+        (cd "$root" && GATES_SPEC_EXEC=1 exec env -u GIT_DIR -u GIT_INDEX_FILE \
+            -u GIT_WORK_TREE -u GIT_PREFIX -u GIT_COMMON_DIR -u GIT_OBJECT_DIRECTORY \
+            -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_NAMESPACE -u GIT_QUARANTINE_PATH \
+            bash "$cmdfile") >"$outfile" 2>&1 </dev/null &
         pid=$!
         trap 'kill -TERM -- -"$pid" 2>/dev/null' HUP INT TERM
         (

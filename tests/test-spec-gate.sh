@@ -505,6 +505,49 @@ expect "disabled spec gate does not run" "$(gate "$D")" 0
 expect "disabled gate leaves no attestation spec object" \
     "$(gate_json "$D" | jq -r '.attestation | has("spec")')" false
 
+# --- a git hook's environment never reaches the caller's repo (#173) --------
+# git runs hooks with GIT_DIR and GIT_INDEX_FILE set, absolute in a linked
+# worktree. An accept block (and the canary suite) that builds a sandbox
+# repository must not add, commit or tag in the caller's repository.
+echo ""
+echo "=== hook environment (#173) ==="
+HE="$WORKDIR/hookenv"
+project "$HE" "$MINIMAL"
+git -C "$HE" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "chore: base"
+WT="$WORKDIR/hookenv-wt"
+git -C "$HE" worktree add -q "$WT" -b feat/x >/dev/null 2>&1
+mkdir -p "$WT/.specify/gates/lib"
+cp "$REPO_ROOT/extension/runtime/verify.sh" "$WT/.specify/gates/"
+cp "$REPO_ROOT/extension/runtime/lib/"*.sh "$WT/.specify/gates/lib/"
+printf '%s' "$MINIMAL" >"$WT/.specify/gates/policy.json"
+mkfeature "$WT" 001-sandbox Complete <<'MD'
+- [x] T001 Build a sandbox repository
+
+  ```accept
+  d="$(mktemp -d)" && git init -q "$d" && echo x >"$d/f" && git -C "$d" add -A \
+    && git -C "$d" -c user.email=a@b -c user.name=n commit -qm sandbox && git -C "$d" tag v9.9.9 && rm -rf "$d"
+  ```
+MD
+echo staged >"$WT/staged.txt"
+git -C "$WT" add staged.txt
+GD="$(git -C "$WT" rev-parse --absolute-git-dir)"
+BEFORE="$(git -C "$WT" diff --cached --name-only | sort | tr '\n' ' ')"
+rc=0
+(cd "$WT" && GIT_DIR="$GD" GIT_INDEX_FILE="$GD/index" env -u GATES_SPEC_EXEC \
+    bash .specify/gates/verify.sh --boundary git >/dev/null 2>&1) || rc=$?
+expect "hook env: the sandbox block passes" "$rc" 0
+expect "hook env: no tag in the caller's repository" \
+    "$(git -C "$HE" tag -l v9.9.9 | wc -l | tr -d ' ')" 0
+expect "hook env: the caller's index is unchanged" \
+    "$(git -C "$WT" diff --cached --name-only | sort | tr '\n' ' ')" "$BEFORE"
+cp "$REPO_ROOT/extension/runtime/canary.sh" "$WT/.specify/gates/"
+(cd "$WT" && GIT_DIR="$GD" GIT_INDEX_FILE="$GD/index" GATES_TEST=1 \
+    bash .specify/gates/canary.sh --only contract,spec >/dev/null 2>&1) || true
+expect "hook env: the canary sandboxes leave no tag in the caller's repository" \
+    "$(git -C "$HE" tag -l | wc -l | tr -d ' ')" 0
+expect "hook env: the canary leaves the caller's index unchanged" \
+    "$(git -C "$WT" diff --cached --name-only | sort | tr '\n' ' ')" "$BEFORE"
+
 echo ""
 echo "$PASS of $TOTAL tests passed"
 if [[ "$FAIL" -eq 0 ]]; then
