@@ -109,6 +109,11 @@ add` forms at the agent boundary. `project.sh` lists new settings like
 
 ### Fixed
 
+- **The format hooks no longer format without a policy** (#111). When
+  `policy.json` is missing or the policy loader cannot load, post-edit and
+  format-changed print one line saying so and format nothing, instead of
+  formatting with no exclude lists under a "legacy mode" notice that
+  promised removal at v0.2.0.
 - **Only `###` headings under `## Core Principles` are principles** (#82).
   Sub-headings under Additional Constraints, Governance and other sections
   are no longer reported as unannotated principles. A `gates:enforce`

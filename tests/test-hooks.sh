@@ -638,6 +638,40 @@ if have_node_linters; then
     echo '{"stop_hook_active":false}' \
         | CLAUDE_PROJECT_DIR="$FC" "$HOOKS/format-changed.sh" >/dev/null 2>&1 || true
     check "format-changed: changed file is prettier-clean afterwards" 0 "$PRETTIER" --check "$FC/doc.md"
+
+    # Without a loadable policy there are no exclude lists: both hooks say
+    # so and format nothing (#111; they used to format anyway).
+    NP="$WORKDIR/nopolicy"
+    mkdir -p "$NP"
+    git -C "$NP" init -q -b main
+    git -C "$NP" config user.email t@example.com
+    git -C "$NP" config user.name tester
+    project_runtime "$NP" "true"
+    printf '# Title\n\nBody.\n' >"$NP/doc.md"
+    ( cd "$NP" && git add doc.md && git commit -q -m "seed" ) >/dev/null 2>&1
+    for setup in missing-policy unloadable-loader; do
+        project_runtime "$NP" "true"
+        if [[ "$setup" == missing-policy ]]; then
+            rm -f "$NP/.specify/gates/policy.json"
+            want="no .specify/gates/policy.json, not formatting"
+        else
+            printf 'gates_policy_get() {\n' >"$NP/.specify/gates/lib/policy.sh"
+            want="cannot load the policy loader, not formatting"
+        fi
+        for hook in post-edit format-changed; do
+            printf '#Bad\n\n\n- x\n' >"$NP/doc.md"
+            if [[ "$hook" == post-edit ]]; then
+                payload="{\"tool_input\":{\"file_path\":\"$NP/doc.md\"}}"
+            else
+                payload='{"stop_hook_active":false}'
+            fi
+            rc=0
+            err="$(echo "$payload" | CLAUDE_PROJECT_DIR="$NP" "$HOOKS/$hook.sh" 2>&1 >/dev/null)" || rc=$?
+            check "$hook ($setup): exits 0" 0 test "$rc" -eq 0
+            check "$hook ($setup): says why it did not format" 0 grep -qF "gates: $hook: $want" <<<"$err"
+            check "$hook ($setup): file left as it was" 1 "$PRETTIER" --check "$NP/doc.md"
+        done
+    done
 else
     echo "SKIP: auto-format hook checks (run npm ci to install pinned prettier)"
 fi
