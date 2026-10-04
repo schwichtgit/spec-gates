@@ -561,6 +561,58 @@ run_const draft --corpus "$CORPUS" --selections "$WORKDIR/scope4.json" \
 expect_parse "scope: augment numbers after Core Principles only (II, not III)" \
     "$(cparse "$WORKDIR/scope4-out.md")" "II. No Secrets" "scanner"
 
+# --- CLI: argument errors and explicit file flags (#98) ----------------------
+
+# Each malformed call exits 1 and names the problem; nothing is written.
+while IFS='|' read -r label want args; do
+    rc=0
+    # shellcheck disable=SC2086  # deliberate word split of the argument list
+    err="$(run_const $args 2>&1 >/dev/null)" || rc=$?
+    expect "cli: $label exits 1" "$rc" "1"
+    expect_contains "cli: $label says why" "$err" "$want"
+done <<'ROWS'
+no subcommand|usage: constitution.sh fragments|
+unknown subcommand|usage: constitution.sh fragments|bogus
+fragments unknown flag|fragments: unknown argument: --bogus|fragments --bogus
+fragments without --corpus|fragments needs --corpus DIR|fragments
+draft unknown flag|draft: unknown argument: --bogus|draft --bogus
+draft without --corpus|draft needs --corpus DIR|draft
+draft without --selections|draft needs --selections FILE|draft --corpus /nonexistent
+draft without --out|draft needs --out FILE|draft --corpus /nonexistent --selections /nonexistent
+detect unknown flag|detect: unknown argument: --bogus|detect --bogus
+align unknown flag|align: unknown argument: --bogus|align --bogus
+check unknown flag|check: unknown argument: --bogus|check --bogus
+ROWS
+
+# detect --constitution reads the named file, not the default path.
+expect "cli: detect --constitution reads that file" \
+    "$(run_const detect --constitution "$WORKDIR/no-such-constitution.md")" "absent"
+
+# check --policy evaluates policy surfaces against that file: the same
+# principle is enforced under the project policy and a gap under the override.
+CP="$WORKDIR/chk-policy"
+mkdir -p "$CP/.specify/gates" "$CP/.specify/memory"
+printf '{ "hooks": { "prettier": { "severity": "error" } } }\n' >"$CP/.specify/gates/policy.json"
+printf '{ "hooks": { "prettier": { "severity": "warning" } } }\n' >"$CP/override.json"
+cat >"$CP/.specify/memory/constitution.md" <<'MD'
+# C
+
+## Core Principles
+
+### I. Formatting Blocks
+<!-- gates:enforce surface=policy ref=prettier.severity expect=error -->
+x
+MD
+rc=0
+CLAUDE_PROJECT_DIR="$CP" bash "$CONST" check >/dev/null 2>&1 || rc=$?
+expect "cli: check under the project policy exits 0" "$rc" "0"
+rc=0
+CLAUDE_PROJECT_DIR="$CP" bash "$CONST" check --policy "$CP/override.json" >/dev/null 2>&1 || rc=$?
+expect "cli: check --policy uses the override (gap, exit 1)" "$rc" "1"
+rc=0
+CLAUDE_PROJECT_DIR="$CP" bash "$CONST" align --policy "$CP/override.json" >/dev/null 2>&1 || rc=$?
+expect "cli: align accepts --policy" "$rc" "0"
+
 # --- summary -----------------------------------------------------------------
 
 echo ""

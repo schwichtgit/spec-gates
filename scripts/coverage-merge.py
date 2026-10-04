@@ -90,6 +90,12 @@ def main():
         with open(f"{repo}/extension/runtime/{rel}") as fh:
             text = fh.read()
         n_lines = len(text.splitlines())
+        if text.startswith("#!/bin/sh"):
+            # bash tracing cannot follow /bin/sh; test-hooks covers it by
+            # behavior. Listed, but kept out of the total.
+            n = sum(1 for x in text.splitlines() if x.strip() and not x.strip().startswith("#"))
+            rows.append((rel, n, None, "not traceable (/bin/sh); tested by behavior"))
+            continue
         es = entries.get(rel, [])
         ref, covered = None, set()
         if es and es[0][2] is not None:
@@ -116,7 +122,7 @@ def main():
     def pct(h, n):
         return 100.0 * h / n if n else 100.0
 
-    rows.sort(key=lambda r: pct(r[2], r[1]))
+    rows.sort(key=lambda r: 101.0 if r[2] is None else pct(r[2], r[1]))
     overall = pct(hit, total)
     if markdown:
         print(f"### Runtime line coverage: {overall:.1f}% ({hit}/{total})\n")
@@ -124,12 +130,18 @@ def main():
         print("| ---: | ---: | --- |")
         for rel, n, h, note in rows:
             extra = f" ({note})" if note else ""
-            print(f"| {pct(h, n):.1f}% | {h}/{n} | `{rel}`{extra} |")
+            if h is None:
+                print(f"| n/a | {n} lines | `{rel}`{extra} |")
+            else:
+                print(f"| {pct(h, n):.1f}% | {h}/{n} | `{rel}`{extra} |")
         print("\nReport only (#98): this job never fails on the number. "
-              "`hooks/git/stub.sh` is /bin/sh, which bash tracing cannot follow.")
+              "/bin/sh files are not traceable and are left out of the total.")
     else:
         for rel, n, h, note in rows:
-            print(f"{pct(h, n):6.1f}%  {h:5d}/{n:<5d} {rel} {note}".rstrip())
+            if h is None:
+                print(f"{'n/a':>7}  {n:11d} {rel} {note}".rstrip())
+            else:
+                print(f"{pct(h, n):6.1f}%  {h:5d}/{n:<5d} {rel} {note}".rstrip())
         print(f"\nTOTAL {hit}/{total} = {overall:.1f}%")
 
 

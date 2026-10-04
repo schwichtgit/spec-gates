@@ -677,6 +677,57 @@ else
 fi
 
 # ===========================================================================
+# Part F2: the format hooks' severity contract (#98). A fake gofmt on PATH
+# fails on every file, so a .go edit is a real tool failure; no node needed.
+# ===========================================================================
+echo ""
+echo "=== format hooks: tool failure maps through severity ==="
+SV="$WORKDIR/severity"
+mkdir -p "$SV" "$WORKDIR/failfmt"
+printf '#!/bin/sh\necho "gofmt: cannot format" >&2\nexit 1\n' >"$WORKDIR/failfmt/gofmt"
+chmod +x "$WORKDIR/failfmt/gofmt"
+git -C "$SV" init -q -b main
+git -C "$SV" config user.email t@example.com
+git -C "$SV" config user.name tester
+project_runtime "$SV" "true"
+printf 'package main\n' >"$SV/main.go"
+( cd "$SV" && git add main.go && git commit -q -m "seed" ) >/dev/null 2>&1
+printf 'package  main\n' >"$SV/main.go"
+for sev in error warning info; do
+    printf '{ "hooks": { "post-edit": { "severity": "%s" }, "format-changed": { "severity": "%s" } } }' \
+        "$sev" "$sev" >"$SV/.specify/gates/policy.json"
+    case "$sev" in
+        error) want_rc=2 want_msg="(severity=error)" ;;
+        warning) want_rc=0 want_msg="WARNING" ;;
+        info) want_rc=0 want_msg="" ;;
+    esac
+    for hook in post-edit format-changed; do
+        if [[ "$hook" == post-edit ]]; then
+            payload="{\"tool_input\":{\"file_path\":\"$SV/main.go\"}}"
+        else
+            payload='{"stop_hook_active":false}'
+        fi
+        rc=0
+        err="$(echo "$payload" | PATH="$WORKDIR/failfmt:$PATH" CLAUDE_PROJECT_DIR="$SV" "$HOOKS/$hook.sh" 2>&1 >/dev/null)" || rc=$?
+        check "$hook severity=$sev: exit $want_rc" 0 test "$rc" -eq "$want_rc"
+        if [[ -n "$want_msg" ]]; then
+            check "$hook severity=$sev: reports the failure" 0 grep -qF -- "$want_msg" <<<"$err"
+        else
+            check "$hook severity=$sev: stays quiet" 1 grep -q "tool failure" <<<"$err"
+        fi
+    done
+done
+# Without a severity in the policy, a failure warns (the default).
+printf '{ "hooks": {} }' >"$SV/.specify/gates/policy.json"
+rc=0
+err="$(echo "{\"tool_input\":{\"file_path\":\"$SV/main.go\"}}" | PATH="$WORKDIR/failfmt:$PATH" CLAUDE_PROJECT_DIR="$SV" "$HOOKS/post-edit.sh" 2>&1 >/dev/null)" || rc=$?
+check "post-edit: no severity set -> warns, exit 0" 0 bash -c "[[ $rc -eq 0 ]] && grep -q WARNING <<<\"\$1\"" _ "$err"
+# Without jq both hooks say so and do nothing.
+for hook in post-edit format-changed; do
+    check "$hook: no jq -> exit 0, says jq is missing" 0 bash -c "echo '{}' | PATH='$NOJQ' '$HOOKS/$hook.sh' 2>&1 >/dev/null | grep -q 'jq not found'"
+done
+
+# ===========================================================================
 # Part F: local rules, bulk staging, and the protect-files split (#71)
 # ===========================================================================
 echo ""

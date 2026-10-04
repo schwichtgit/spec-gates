@@ -330,6 +330,100 @@ expect_contains "patch carries the rationale" "$(cat "$PATCH")" "docs-only repo:
 expect_contains "patch carries the classification" "$(cat "$PATCH")" "weakened: hooks.shellcheck.severity"
 expect_contains "patch applies the deviation to the baseline document" "$(cat "$PATCH")" '"severity": "warning"'
 
+# --- refusals and edge paths (#98): every one named, nothing half-written ---
+echo ""
+echo "=== refusals and edge paths ==="
+
+OUT="$(contract "$D" bogus)"
+expect_contains "unknown subcommand prints usage" "$OUT" "usage: contract.sh sync"
+expect_contains "unknown subcommand exits 1" "$OUT" "EXIT=1"
+OUT="$(contract "$D" sync --bogus)"
+expect_contains "sync: unknown flag named" "$OUT" "sync: unknown argument: --bogus"
+expect_contains "sync: unknown flag exits 1" "$OUT" "EXIT=1"
+OUT="$(contract "$DV" propose --bogus)"
+expect_contains "propose: unknown flag named" "$OUT" "propose: unknown argument: --bogus"
+OUT="$(contract "$DV" propose --rationale)"
+expect_contains "propose: --rationale without a value refused" "$OUT" "rationale needs a value"
+expect_contains "propose: --rationale without a value exits 1" "$OUT" "EXIT=1"
+
+# Repos without extends: propose is a no-op, like sync.
+DN="$WORKDIR/no-extends"
+project "$DN" '{"hooks":{"verify-quality":{"orchestrator":"none","severity":"error"}}}'
+OUT="$(contract "$DN" propose --rationale x)"
+expect_contains "propose without extends: nothing to propose, exit 0" "$OUT" "no extends declared"
+expect_contains "propose without extends exits 0" "$OUT" "EXIT=0"
+
+# An overlay that is itself invalid is refused before any fetch.
+DBAD="$WORKDIR/bad-overlay"
+project "$DBAD" "$(overlay_for "$B" '.hooks.shellcheck = {"severity":"catastrophic"}')"
+OUT="$(contract "$DBAD" sync)"
+expect_contains "invalid policy.json refused" "$OUT" "policy.json itself fails validation"
+expect_contains "invalid policy.json exits 2" "$OUT" "EXIT=2"
+expect "no artifacts written for an invalid policy.json" "$(artifact_count "$DBAD")" 0
+
+# A baseline whose policy.json is not JSON.
+BJ="$WORKDIR/base-notjson"
+git init -q "$BJ"
+printf '{ "hooks": \n' >"$BJ/policy.json"
+git -C "$BJ" add -A
+git -C "$BJ" -c user.email=b@test -c user.name=baseline commit -qm broken
+git -C "$BJ" tag v1.0.0
+DJ="$WORKDIR/notjson"
+project "$DJ" "$(overlay_for "$BJ" '.')"
+OUT="$(contract "$DJ" sync)"
+expect_contains "non-JSON baseline refused" "$OUT" "is not valid JSON"
+expect_contains "non-JSON baseline exits 2" "$OUT" "EXIT=2"
+expect "no artifacts written for a non-JSON baseline" "$(artifact_count "$DJ")" 0
+
+# Baseline and overlay each valid, the merge not: the baseline's custom
+# orchestrator loses its command to the overlay's empty one.
+BM="$WORKDIR/base-custom"
+mkbaseline "$BM" v1.0.0 '{"hooks":{"verify-quality":{"orchestrator":"custom","custom_command":"true","severity":"error"}}}'
+DM="$WORKDIR/bad-merge"
+project "$DM" "$(printf '%s' '{"hooks":{"verify-quality":{"custom_command":"","severity":"error"}}}' | jq -c --arg src "$BM" '. + {extends: {source: $src, version: "v1.0.0"}}')"
+OUT="$(contract "$DM" sync)"
+expect_contains "invalid effective policy refused" "$OUT" "merged effective policy fails validation"
+expect_contains "invalid effective policy exits 2" "$OUT" "EXIT=2"
+expect "no artifacts written for an invalid merge" "$(artifact_count "$DM")" 0
+
+# sync --update needs a pin; propose needs a sync.
+DNP="$WORKDIR/no-pin"
+project "$DNP" "$(overlay_for "$B" '.')"
+OUT="$(contract "$DNP" sync --update)"
+expect_contains "update without a pin refused" "$OUT" "needs an existing pin"
+expect_contains "update without a pin exits 2" "$OUT" "EXIT=2"
+OUT="$(contract "$DNP" propose --rationale x)"
+expect_contains "propose before sync refused" "$OUT" "not synced"
+expect_contains "propose before sync exits 2" "$OUT" "EXIT=2"
+
+# An update branch that already exists is never overwritten.
+OUT="$(contract "$UP" sync --update)"
+expect_contains "existing update branch refused" "$OUT" "already exists"
+expect_contains "existing update branch exits 2" "$OUT" "EXIT=2"
+
+# Outside a git work tree the update is printed, not committed.
+DNG="$WORKDIR/no-git"
+project "$DNG" "$(overlay_for "$B" '.')"
+CLAUDE_PROJECT_DIR="$DNG" bash "$DNG/.specify/gates/contract.sh" sync >/dev/null
+OUT="$(contract "$DNG" sync --update)"
+expect_contains "no work tree: update printed" "$OUT" "update available: v1.0.0 -> v1.10.0"
+expect_contains "no work tree exits 0" "$OUT" "EXIT=0"
+expect "no work tree: pin unchanged" "$(jq -r '.version' "$DNG/.specify/gates/baseline.lock.json")" "v1.0.0"
+
+# A source that lost its tags (or its pinned tag) is named, not guessed at.
+BT="$WORKDIR/base-tags"
+mkbaseline "$BT" v1.0.0 "$BASE_POLICY"
+DT="$WORKDIR/lost-tags"
+project "$DT" "$(overlay_for "$BT" '.hooks.shellcheck = {"severity":"warning"}')"
+CLAUDE_PROJECT_DIR="$DT" bash "$DT/.specify/gates/contract.sh" sync >/dev/null
+git -C "$BT" tag -d v1.0.0 >/dev/null
+OUT="$(contract "$DT" sync --update)"
+expect_contains "no tags at the source named" "$OUT" "no version tags found"
+expect_contains "no tags at the source exits 2" "$OUT" "EXIT=2"
+OUT="$(contract "$DT" propose --rationale "pinned tag gone")"
+expect_contains "propose: missing pinned version named" "$OUT" "pinned version v1.0.0 not found"
+expect_contains "propose: missing pinned version exits 2" "$OUT" "EXIT=2"
+
 echo ""
 echo "$PASS of $TOTAL tests passed"
 if [[ "$FAIL" -eq 0 ]]; then
