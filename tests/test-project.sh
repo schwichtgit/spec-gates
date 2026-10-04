@@ -73,10 +73,11 @@ while IFS=$'\t' read -r _ t; do
 done < <(source "$D/.specify/extensions/gates/runtime/lib/manifest.sh" \
     && gates_projection_table "$D/.specify/extensions/gates/runtime" 1)
 for t in .specify/gates/verify.sh .specify/gates/project.sh .specify/gates/lib/policy.sh \
-    .specify/gates/hooks/pre-commit .specify/gates/hooks/commit-msg .claude/hooks/gates/protect-files.sh; do
+    .specify/gates/hooks/pre-commit .specify/gates/hooks/pre-merge-commit .specify/gates/hooks/commit-msg \
+    .claude/hooks/gates/protect-files.sh; do
     ok "executable: $t" test -x "$D/$t"
 done
-for h in pre-commit commit-msg; do
+for h in pre-commit pre-merge-commit commit-msg; do
     ok "vendored git hook $h made executable (FR-005a)" test -x "$D/.specify/extensions/gates/runtime/hooks/git/$h"
     ok "stub installed as .git/hooks/$h" cmp -s "$D/.specify/extensions/gates/runtime/hooks/git/stub.sh" "$D/.git/hooks/$h"
     ok ".git/hooks/$h executable" test -x "$D/.git/hooks/$h"
@@ -115,7 +116,7 @@ vmodes() { (cd "$D/.specify/extensions/gates" && find . -type f -print | LC_ALL=
 before="$(vmodes)"
 rc_is "projection for the mode check" 0 "$D" --skip-canary
 changed="$({ diff <(printf '%s\n' "$before") <(vmodes) || true; } | { grep '^>' || true; } | sed 's/^> x //' | LC_ALL=C sort | tr '\n' ' ')"
-ok "only the two git hooks changed mode" test "$changed" = "./runtime/hooks/git/commit-msg ./runtime/hooks/git/pre-commit "
+ok "only the git hooks changed mode" test "$changed" = "./runtime/hooks/git/commit-msg ./runtime/hooks/git/pre-commit ./runtime/hooks/git/pre-merge-commit "
 
 echo ""
 echo "=== idempotence ==="
@@ -337,7 +338,7 @@ have_yaml() { [[ -d "$JSYAML" ]] && command -v node >/dev/null 2>&1; }
 # scripts in .husky/<hook>. The shim records that it ran.
 fixture
 mkdir -p "$D/.husky/_"
-for h in pre-commit commit-msg; do
+for h in pre-commit pre-merge-commit commit-msg; do
     # shellcheck disable=SC2016  # literal script or message text
     printf '#!/bin/sh\ntouch "$(git rev-parse --show-toplevel)/ran.txt"\ns="$(dirname "$(dirname "$0")")/$(basename "$0")"\n[ -f "$s" ] || exit 0\nsh -e "$s" "$@"\n' >"$D/.husky/_/$h"
     chmod +x "$D/.husky/_/$h"
@@ -364,7 +365,16 @@ rc_is "lefthook without --wire-manager -> exit 1" 1 "$D" --skip-canary
 rc_is "lefthook with --wire-manager" 1 "$D" --skip-canary --wire-manager
 # shellcheck disable=SC2016  # literal script or message text
 ok "lefthook: tells the user to run lefthook install" grep -q 'now run `lefthook install`' <<<"$OUT"
+# The generated hooks do not exist until lefthook install: pending, not a
+# failed probe (#148).
+ok "lefthook: no failed probe before lefthook install" bash -c "! grep -q 'FAILED: git' <<<\"\$1\"" _ "$OUT"
+# shellcheck disable=SC2016  # literal message text
+ok "lefthook: each hook is pending the install command" test "$(grep -c 'pending: lefthook.yml calls the gates .* hook, but git runs no .* hook until you run `lefthook install`' <<<"$OUT")" -eq 3
+OUT="$(cd "$D" && CLAUDE_PROJECT_DIR="$D" bash .specify/gates/doctor.sh 2>&1)" || true
+# shellcheck disable=SC2016  # literal message text
+ok "doctor: still flags the hook until lefthook install" grep -q 'pre-merge-commit not installed — lefthook.yml calls the gates hook, but git runs no pre-merge-commit hook until you run `lefthook install`' <<<"$OUT"
 if have_yaml; then
+    ok "lefthook: pre-merge-commit runs the gates hook" test "$(yamlq "$D/lefthook.yml" 'doc["pre-merge-commit"].commands["spec-gates"].run')" = "bash .specify/gates/hooks/pre-merge-commit"
     ok "lefthook: the result parses and runs the gates pre-commit" test "$(yamlq "$D/lefthook.yml" 'doc["pre-commit"].commands["spec-gates"].run')" = "bash .specify/gates/hooks/pre-commit"
     ok "lefthook: commit-msg passes the message file" test "$(yamlq "$D/lefthook.yml" 'doc["commit-msg"].commands["spec-gates"].run')" = "bash .specify/gates/hooks/commit-msg {1}"
     ok "lefthook: existing keys kept" test "$(yamlq "$D/lefthook.yml" 'doc.colors')" = "false"
@@ -392,11 +402,14 @@ for ind in "" "  "; do
         "$ind" "$ind" "$ind" "$ind" >"$D/.pre-commit-config.yaml"
     rc_is "pre-commit (indent '${#ind}') with --wire-manager" 1 "$D" --skip-canary --wire-manager
     if have_yaml; then
-        ok "pre-commit (indent '${#ind}'): parses with three repos" test "$(yamlq "$D/.pre-commit-config.yaml" 'doc.repos.length')" = "3"
+        ok "pre-commit (indent '${#ind}'): parses with four repos" test "$(yamlq "$D/.pre-commit-config.yaml" 'doc.repos.length')" = "4"
         ok "pre-commit (indent '${#ind}'): the gates pre-commit hook" test "$(yamlq "$D/.pre-commit-config.yaml" 'doc.repos[1].hooks[0].id + " " + doc.repos[1].hooks[0].stages')" = "spec-gates-pre-commit pre-commit"
-        ok "pre-commit (indent '${#ind}'): the gates commit-msg hook" test "$(yamlq "$D/.pre-commit-config.yaml" 'doc.repos[2].hooks[0].entry')" = "bash .specify/gates/hooks/commit-msg"
+        ok "pre-commit (indent '${#ind}'): the gates pre-merge-commit hook takes no file names" test "$(yamlq "$D/.pre-commit-config.yaml" 'doc.repos[2].hooks[0].stages + " " + doc.repos[2].hooks[0].pass_filenames + " " + doc.repos[2].hooks[0].always_run')" = "pre-merge-commit false true"
+        ok "pre-commit (indent '${#ind}'): the gates commit-msg hook" test "$(yamlq "$D/.pre-commit-config.yaml" 'doc.repos[3].hooks[0].entry')" = "bash .specify/gates/hooks/commit-msg"
     fi
     ok "pre-commit (indent '${#ind}'): install hint for commit-msg" grep -q 'pre-commit install --hook-type commit-msg' <<<"$OUT"
+    # shellcheck disable=SC2016  # literal message text
+    ok "pre-commit (indent '${#ind}'): pre-merge-commit pending its install" grep -q 'pending: .pre-commit-config.yaml calls the gates pre-merge-commit hook, but git runs no pre-merge-commit hook until you run `pre-commit install --hook-type pre-merge-commit`' <<<"$OUT"
 done
 fixture
 printf 'repos:\n- repo: local\n  hooks: []\nci:\n  autofix_prs: false\n' >"$D/.pre-commit-config.yaml"
@@ -459,7 +472,7 @@ rc_is "an exit inside a block does not hide the call-through -> exit 0" 0 "$D" -
 fixture
 printf 'colors: false\n' >"$D/lefthook.yml"
 rc_is "lefthook wired for doctor" 1 "$D" --skip-canary --wire-manager
-for h in pre-commit commit-msg; do
+for h in pre-commit pre-merge-commit commit-msg; do
     # shellcheck disable=SC2016  # literal script or message text
     printf '#!/bin/sh\n# lefthook\ntouch "$(git rev-parse --show-toplevel)/ran.txt"\n' >"$D/.git/hooks/$h"
     chmod +x "$D/.git/hooks/$h"
@@ -467,6 +480,52 @@ done
 OUT="$(cd "$D" && CLAUDE_PROJECT_DIR="$D" bash .specify/gates/doctor.sh 2>&1)" || true
 ok "doctor: lefthook entry found statically" grep -q 'commit-msg (static): another tool owns the hook and calls the gates commit-msg hook' <<<"$OUT"
 ok "doctor: lefthook hooks not run" test ! -e "$D/ran.txt"
+rc_is "lefthook after lefthook install: proven, exit 0" 0 "$D" --skip-canary --wire-manager
+ok "lefthook after install: nothing pending" bash -c "! grep -q 'pending:' <<<\"\$1\"" _ "$OUT"
+
+echo ""
+echo "=== git merge runs the pre-commit checks (#148) ==="
+# git merge runs pre-merge-commit and commit-msg, never pre-commit. History
+# is built before projection, so no hook runs while it is set up.
+fixture
+mg() { git -C "$D" "$@" >/dev/null 2>&1; }
+mg commit --allow-empty -m "chore: init"
+mg branch -M main
+mg switch -c topic
+printf 'x\n' >"$D/topic.txt"
+mg add topic.txt
+mg commit -m "feat: topic"
+mg switch -c leak main
+printf 'AKIA%s\n' "ABCDEFGHIJKLMNOP" >"$D/leak.txt"
+mg add leak.txt
+mg commit -m "feat: leak"
+mg switch main
+printf 'y\n' >"$D/main.txt"
+mg add main.txt
+mg commit -m "feat: main moves on"
+rc_is "projection for the merge cases" 0 "$D" --skip-canary
+merge_out() { # <expected-rc> <merge args...>: merge on the current branch
+    local want="$1" rc=0
+    shift
+    OUT="$(cd "$D" && GATES_SKIP=1 git merge --no-ff --no-edit "$@" 2>&1)" || rc=$?
+    [[ "$rc" -eq "$want" ]]
+}
+ok "merge into main is refused" merge_out 1 topic
+ok "merge into main: refused by the protected-branch block" grep -q "Merge commits into 'main' are blocked" <<<"$OUT"
+mg merge --abort || true
+ok "merge into main: no merge commit" test "$(git -C "$D" rev-list --count HEAD)" -eq 2
+mg switch -c integ
+ok "merge bringing in a secret is refused" merge_out 1 leak
+ok "merge with a secret: refused by the secret scan" grep -q 'SECRET' <<<"$OUT"
+mg merge --abort || true
+ok "a clean merge off main still commits" merge_out 0 topic
+# A branch projected before pre-merge-commit shipped: the stub falls back
+# to that branch's pre-commit hook rather than refusing every merge.
+mg switch main
+rm -f "$D/.specify/gates/hooks/pre-merge-commit"
+ok "older runtime: merge into main still refused" merge_out 1 topic
+ok "older runtime: by the pre-commit checks" grep -q "Merge commits into 'main' are blocked" <<<"$OUT"
+mg merge --abort || true
 
 echo ""
 echo "=== refusals before writing ==="

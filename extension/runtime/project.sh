@@ -291,7 +291,7 @@ if [[ "$GITHOOKS" -eq 1 ]]; then
         HOOKSDIR="$(cd "$ROOT" && git rev-parse --git-path hooks)"
         [[ "$HOOKSDIR" == /* ]] || HOOKSDIR="$ROOT/$HOOKSDIR"
         MANAGER="$(gates_detect_manager "$ROOT")"
-        for n in pre-commit commit-msg; do
+        for n in pre-commit pre-merge-commit commit-msg; do
             f="$HOOKSDIR/$n"
             if [[ "$MANAGER" == "husky" || "$MANAGER" == "lefthook" || "$MANAGER" == "pre-commit" ]]; then
                 if ! gates_manager_wired "$ROOT" "$MANAGER" "$n"; then
@@ -549,7 +549,17 @@ fi
 MGRPENDING="$MGRMANUAL"
 [[ "$WIREMGR" -eq 0 ]] && MGRPENDING="$MGRPLAN"
 if [[ "$GITHOOKS" -eq 1 && -z "$GITNOTE" && -z "$FOREIGN" && -z "$MGRPENDING" ]]; then
-    for n in pre-commit commit-msg; do
+    for n in pre-commit pre-merge-commit commit-msg; do
+        # The manager's config calls gates, but git runs no hook yet: the
+        # manager generates it on its install command (#148). That is the
+        # maintainer's next step, not a broken chain; doctor flags it until
+        # the hook exists.
+        if [[ "$MANAGER" == "husky" || "$MANAGER" == "lefthook" || "$MANAGER" == "pre-commit" ]] \
+            && [[ ! -e "$HOOKSDIR/$n" ]] && gates_manager_wired "$ROOT" "$MANAGER" "$n"; then
+            say "pending: $(gates_manager_file "$ROOT" "$MANAGER" "$n") calls the gates $n hook, but git runs no $n hook until you run \`$(gates_manager_install_hint "$MANAGER" "$n")\`; then check with /speckit.gates.doctor"
+            RC=1
+            continue
+        fi
         if gates_git_check "$ROOT" "$n" "$PROBEGIT"; then
             if [[ "$GATES_CHECK_KIND" == "probe" ]]; then
                 say "git probe: $n reaches the gates hook"

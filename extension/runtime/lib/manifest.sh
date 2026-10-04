@@ -68,7 +68,7 @@ gates_projection_table() { # <runtime-dir> <agent-hooks:0|1>
         n="${f##*/}"
         printf 'lib/%s\t.specify/gates/lib/%s\n' "$n" "$n"
     done
-    for n in pre-commit commit-msg stub.sh; do
+    for n in pre-commit pre-merge-commit commit-msg stub.sh; do
         [[ -f "$src/hooks/git/$n" ]] && printf 'hooks/git/%s\t.specify/gates/hooks/%s\n' "$n" "$n"
     done
     if [[ "$agent" == "1" ]]; then

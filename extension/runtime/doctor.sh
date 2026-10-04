@@ -620,9 +620,23 @@ elif git -C "$PROJECT_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
     if [[ -n "$HOOKS_PATH" ]]; then
         echo "${REC}core.hooksPath is set ($HOOKS_PATH) — a hook manager may own this boundary; the checks below inspect that path"
     fi
-    for h in pre-commit commit-msg; do
+    # pre-merge-commit (#148) is what `git merge` runs instead of
+    # pre-commit; git before 2.24 never calls it.
+    GIT_VER="$(git --version 2>/dev/null | awk '{ print $3 }')"
+    if declare -f gates_version_cmp >/dev/null 2>&1 && [[ -n "$GIT_VER" ]] \
+        && [[ "$(gates_version_cmp "$GIT_VER" 2.24)" == "-1" ]]; then
+        echo "${REC}git $GIT_VER is older than 2.24 and never runs pre-merge-commit — a local merge commit skips the pre-commit checks (upgrade git)"
+    fi
+    DOC_MGR=""
+    declare -f gates_detect_manager >/dev/null 2>&1 && DOC_MGR="$(gates_detect_manager "$PROJECT_ROOT")"
+    for h in pre-commit pre-merge-commit commit-msg; do
         hf="$HOOK_DIR/$h"
-        if [[ ! -f "$hf" ]]; then
+        if [[ ! -f "$hf" ]] && [[ "$DOC_MGR" == "husky" || "$DOC_MGR" == "lefthook" || "$DOC_MGR" == "pre-commit" ]] \
+            && gates_manager_wired "$PROJECT_ROOT" "$DOC_MGR" "$h"; then
+            # Wired in the manager's config, but its install command has
+            # not generated the hook yet (#148).
+            echo "${REC}$h not installed — $(gates_manager_file "$PROJECT_ROOT" "$DOC_MGR" "$h") calls the gates hook, but git runs no $h hook until you run \`$(gates_manager_install_hint "$DOC_MGR" "$h")\`"
+        elif [[ ! -f "$hf" ]]; then
             echo "${REC}$h not installed — the git boundary is not enforced here (run /speckit.gates.init to wire it)"
         elif [[ ! -x "$hf" ]]; then
             echo "${BAD}$h installed but NOT executable — git silently skips it (fix: chmod +x ${hf#"$PROJECT_ROOT"/})"
@@ -652,7 +666,7 @@ elif git -C "$PROJECT_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
     # run that tool's steps too (husky's default is `npm test`) -- unless
     # --probe-git asks for the full chain.
     if declare -f gates_git_check >/dev/null 2>&1; then
-        for h in pre-commit commit-msg; do
+        for h in pre-commit pre-merge-commit commit-msg; do
             [[ -x "$HOOK_DIR/$h" ]] || continue
             if gates_git_check "$PROJECT_ROOT" "$h" "$PROBE_GIT"; then
                 if [[ "$GATES_CHECK_KIND" == "probe" ]]; then

@@ -23,6 +23,7 @@ fx_project() {
             "$FX_REPO_ROOT/extension/ci" "$FX_REPO_ROOT/extension/commands" .specify/extensions/gates/
         # Like Spec Kit's zip extraction: only *.sh keep the execute bit.
         chmod 644 .specify/extensions/gates/runtime/hooks/git/pre-commit \
+            .specify/extensions/gates/runtime/hooks/git/pre-merge-commit \
             .specify/extensions/gates/runtime/hooks/git/commit-msg
         printf '{ "hooks": {} }\n' >.specify/gates/policy.json
     ) || return 1

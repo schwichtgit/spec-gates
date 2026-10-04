@@ -254,6 +254,11 @@ printf '%s' '{ "hooks": {}, "protected_files": { "extra": ["docs/internal.md"] }
 askcheck "raw mode: declared protected_files.extra asks" '{"tool_input":{"file_path":"src/a.ts"}}' protect-files.sh PATH="$NOJQ" CLAUDE_PROJECT_DIR="$PX"
 check "raw mode: built-in rule still blocks with extra declared" 2 bash -c "printf '%s' '{\"tool_input\":{\"file_path\":\".env\"}}' | PATH='$NOJQ' CLAUDE_PROJECT_DIR='$PX' '$HOOKS/protect-files.sh'"
 askcheck "raw mode: \\u escape in the path asks" '{"tool_input":{"file_path":"\u002eenv"}}' protect-files.sh PATH="$NOJQ" CLAUDE_PROJECT_DIR="$PX"
+# Two file_path keys: the sed match takes the last, Claude Code may act on
+# another (#148). No file_path at all: nothing says which file is edited.
+askcheck "raw mode: two file_path keys ask" '{"tool_input":{"file_path":".env","x":{"file_path":"src/a.ts"}}}' protect-files.sh PATH="$NOJQ" CLAUDE_PROJECT_DIR="$WORKDIR/none"
+askcheck "raw mode: no file_path asks" '{"tool_input":{"content":"x"}}' protect-files.sh PATH="$NOJQ" CLAUDE_PROJECT_DIR="$WORKDIR/none"
+check "raw mode: one file_path key is judged, not asked" 0 bash -c "out=\$(printf '%s' '{\"tool_input\":{\"file_path\":\"src/a.ts\",\"content\":\"x\"}}' | PATH='$NOJQ' CLAUDE_PROJECT_DIR='$WORKDIR/none' '$HOOKS/protect-files.sh') && [[ -z \"\$out\" ]]"
 PM="$WORKDIR/protect-malformed"
 project_runtime "$PM" "true"
 printf '{ "hooks": ' >"$PM/.specify/gates/policy.json"

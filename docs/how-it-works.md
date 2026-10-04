@@ -77,7 +77,7 @@ these questions, so its refusal wins. They never
 silently allow. Without jq, or for input that is not valid JSON, they read
 the field in a raw mode that keeps every built-in block rule and still
 checks `policy.json`, the constitution and the project's rules; an
-internal error, an undecodable or missing value, or a
+internal error, an undecodable, missing or repeated field, or a
 `protected_files.extra` it cannot read asks. Doctor keeps failing until jq
 is installed.
 
@@ -117,7 +117,13 @@ the `fixup!`, `squash!` and `amend!` subjects of `git commit --fixup` and
 runs no commit hooks at all (git's own behavior), so a revert is checked
 only at the CI boundary.
 
-`.git/hooks` holds two copies of a small stub, not the hooks themselves.
+A merge commit never runs `pre-commit`: git runs `pre-merge-commit` and
+`commit-msg` instead. The `pre-merge-commit` hook runs the `pre-commit`
+checks unchanged, so a local merge into `main` is refused and the secret
+scan sees what the merge brings in. git calls it from 2.24 on; doctor says
+so on an older git. A fast-forward creates no commit and runs no hook.
+
+`.git/hooks` holds three copies of a small stub, not the hooks themselves.
 `.git/hooks` is shared by every branch while the projected runtime is per
 branch, so the stub runs the checked-out branch's
 `.specify/gates/hooks/<name>`. The hook version always matches the
@@ -126,7 +132,8 @@ before gates was adopted has no runtime and is skipped: git tracks nothing
 under `.specify/gates` there, in `HEAD` or in the index, and gitignored
 leftovers such as `attestations.jsonl` do not count. A branch that tracks a
 runtime but deleted its hooks is refused, so removing the hooks cannot
-quietly turn enforcement off.
+quietly turn enforcement off. A branch whose runtime predates
+`pre-merge-commit` runs its `pre-commit` hook for a merge.
 
 **Other hook managers.** When husky, lefthook or the pre-commit framework
 owns the hooks, gates adds its entry to the file that tool reads, never to
@@ -134,12 +141,12 @@ the files it generates, which its next install would rewrite.
 `project.sh --wire-manager` appends the entry only where the result is
 certainly still valid; otherwise it prints it.
 
-| Owner                                                     | Where the gates entry goes                        | Notes                                                                                                                                                                                                     |
-| --------------------------------------------------------- | ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| husky (`core.hooksPath` under `.husky/`)                  | a line in `.husky/<hook>`                         | The script is created if missing; your existing lines stay first. A script with a top-level `exit` is left alone and the line printed, to go before the `exit`.                                           |
-| lefthook                                                  | a `<hook>:` block in `lefthook.yml`               | Appended only when that hook has no block yet; otherwise printed for you to merge. Run `lefthook install` if git does not run lefthook for that hook yet.                                                 |
-| pre-commit framework                                      | a `repo: local` item in `.pre-commit-config.yaml` | Appended only when `repos:` is the last top-level key and a block list (not `repos: []`); otherwise printed. Needs pre-commit 3.2+; run `pre-commit install --hook-type commit-msg` for the message hook. |
-| anything else (another `core.hooksPath`, a custom script) | nothing is written                                | `project.sh` prints the call-through line to add, before any `exit`.                                                                                                                                      |
+| Owner                                                     | Where the gates entry goes                        | Notes                                                                                                                                                                                                                    |
+| --------------------------------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| husky (`core.hooksPath` under `.husky/`)                  | a line in `.husky/<hook>`                         | The script is created if missing; your existing lines stay first. A script with a top-level `exit` is left alone and the line printed, to go before the `exit`.                                                          |
+| lefthook                                                  | a `<hook>:` block in `lefthook.yml`               | Appended only when that hook has no block yet; otherwise printed for you to merge. Run `lefthook install` if git does not run lefthook for that hook yet; until then the hook is reported as pending.                    |
+| pre-commit framework                                      | a `repo: local` item in `.pre-commit-config.yaml` | Appended only when `repos:` is the last top-level key and a block list (not `repos: []`); otherwise printed. Needs pre-commit 3.2+; run `pre-commit install --hook-type <hook>` for `commit-msg` and `pre-merge-commit`. |
+| anything else (another `core.hooksPath`, a custom script) | nothing is written                                | `project.sh` prints the call-through line to add, before any `exit`.                                                                                                                                                     |
 
 **Proving the hooks run.** A hook that exists is not a hook git runs. The
 projected hooks answer `GATES_PROBE=1` with a marker before reading any
@@ -151,6 +158,8 @@ would also run that tool's steps (husky's default `pre-commit` is
 the tool's file, on a line that can run (not commented out, not after a
 top-level `exit`), and `--probe-git` runs the full chain on request. The
 probe calls each hook as git does: only `commit-msg` gets a message file.
+A hook a manager's config calls but whose install command has not run yet
+is reported as pending that command, not as a failed probe.
 lefthook skips every `pre-commit` job while nothing is staged, so its
 hook is called with `--force`, which it passes on to `lefthook run`.
 

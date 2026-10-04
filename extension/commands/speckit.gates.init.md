@@ -10,8 +10,8 @@ this command completes, the same policy is enforced at three boundaries:
 1. **Agent boundary** — Claude Code hooks block protected-file edits and
    dangerous bash calls, auto-format on edit, and refuse to end a session
    with failing quality checks.
-2. **Git boundary** — pre-commit and commit-msg hooks block commits to
-   `main`, enforce conventional commits, and run the same lint policy.
+2. **Git boundary** — pre-commit, pre-merge-commit and commit-msg hooks
+   block commits (merge commits too) to `main`, enforce conventional commits, and run the same lint policy.
 3. **CI boundary** — (projected separately via `/speckit.gates.ci`) the
    identical `verify.sh` runs in CI, so CI is a backstop, never a surprise.
 
@@ -119,7 +119,8 @@ which zip extraction leaves non-executable), records
 `.specify/gates/.gitignore`, merges the agent hooks into
 `.claude/settings.json` (append-only: existing entries are never removed
 or reordered, and a command path already wired is skipped), installs the
-git hook stub as `pre-commit` and `commit-msg` in the hooks directory git
+git hook stub as `pre-commit`, `pre-merge-commit` and `commit-msg` in the
+hooks directory git
 reads, writes `.specify/gates/.projected.sha256`, and runs the canary
 suite. It never writes `policy.json` and refuses to run without one.
 
@@ -147,9 +148,10 @@ Read the exit code:
     on approval re-run with `--wire-manager` to append it. If it says the
     file cannot be appended to safely, give the user the entry and the
     instruction it printed (merge into an existing block, or put the line
-    before any `exit`). If it says to run `lefthook install` or `pre-commit install
---hook-type commit-msg`, tell the user to run it (never run another
-    tool's installer yourself).
+    before any `exit`). If it reports a hook as pending `lefthook install`
+    or `pre-commit install --hook-type <hook>`, tell the user to run that
+    command (never run another tool's installer yourself), then
+    `/speckit.gates.doctor`.
   - **any other owner**: give the user the call-through line it printed,
     to go before any `exit` in their hook.
   - Never edit the generated files in `.husky/_/` or `.git/hooks`.
@@ -209,7 +211,8 @@ show the results, so the user sees each boundary refuse something:
 
    ```sh
    HOOKS="$(git rev-parse --git-path hooks)"
-   test -x "$HOOKS/pre-commit" && test -x "$HOOKS/commit-msg"
+   test -x "$HOOKS/pre-commit" && test -x "$HOOKS/pre-merge-commit" \
+     && test -x "$HOOKS/commit-msg"
    printf 'bad subject with no conventional prefix\n' >/tmp/gates-msg-probe \
      && ! bash "$HOOKS/commit-msg" /tmp/gates-msg-probe
    ```

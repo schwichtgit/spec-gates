@@ -316,6 +316,19 @@ else
     FAIL=$((FAIL + 1))
 fi
 TOTAL=$((TOTAL + 1))
+# git before 2.24 never runs pre-merge-commit (#148): a git that reports
+# 2.23 gets the nudge, the real one does not.
+expect "current git: no pre-merge-commit version nudge" \
+    "$(grep -c 'never runs pre-merge-commit' "$GB/out.txt")" 0
+OLDGIT="$WORKDIR/oldgit"
+mkdir -p "$OLDGIT"
+REALGIT="$(command -v git)"
+# shellcheck disable=SC2016  # the wrapper script is written literally
+printf '#!/bin/sh\n[ "$1" = --version ] && { echo "git version 2.23.0"; exit 0; }\nexec "%s" "$@"\n' "$REALGIT" >"$OLDGIT/git"
+chmod +x "$OLDGIT/git"
+PATH="$OLDGIT:$PATH" run_doctor "$GB" >/dev/null
+expect "git 2.23: doctor says pre-merge-commit never runs" \
+    "$(grep -c 'git 2.23.0 is older than 2.24 and never runs pre-merge-commit' "$GB/out.txt")" 1
 # Linked worktree: hooks live in the shared directory, not the
 # worktree's .git/worktrees/<name>/hooks; doctor must look there.
 ( cd "$GB" && git config user.email t@example.com && git config user.name tester \
