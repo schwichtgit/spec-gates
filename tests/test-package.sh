@@ -56,6 +56,22 @@ expect "nested markdownlint config ships at the extension root" \
 expect "constitution corpus ships (issue #31 regression)" \
     "$(present "$STAGE/constitution/manifest.yml")" "yes"
 
+# release.yml probes the zip for the files the commands need: every probe
+# must exist in the staged package, and the probe list must cover the git
+# hooks and the shellcheck installer with its pins (#172).
+PROBES="$(sed -n 's/^ *for probe in \(.*\); do$/\1/p' "$REPO_ROOT/.github/workflows/release.yml" | tr ' ' '\n')"
+expect "release.yml has a probe list" "$([[ -n "$PROBES" ]] && echo yes || echo no)" "yes"
+MISSING_PROBES=""
+while IFS= read -r probe; do
+    [[ -n "$probe" && ! -e "$STAGE/${probe#gates/}" ]] && MISSING_PROBES="$MISSING_PROBES $probe"
+done <<<"$PROBES"
+expect "every release.yml probe is in the package" "$MISSING_PROBES" ""
+for f in hooks/git/pre-commit hooks/git/commit-msg hooks/git/pre-merge-commit hooks/git/stub.sh \
+    install-shellcheck.sh shellcheck.sha256; do
+    expect "release.yml probes runtime/$f" \
+        "$(grep -qxF "gates/runtime/$f" <<<"$PROBES" && echo yes || echo no)" "yes"
+done
+
 # Spec Kit's zip extraction keeps the execute bit only on *.sh files that
 # carry it in the zip, which carries the git modes. A shipped script that is
 # 100644 in git arrives 644, and project.sh then flips it to 755 inside the
@@ -252,6 +268,16 @@ if (cd "$IW/asset" && tar -cJf "$IW/good.tar.xz" shellcheck-v9.9.9) 2>/dev/null 
         "$(grep -c 'no pinned checksum for shellcheck-v9.9.9.darwin.aarch64.tar.xz' "$IW/out")" "1"
     expect "platform without a pinned checksum: nothing downloaded" "$(wc -l <"$IW/log" | tr -d ' ')" "0"
     expect "unsupported architecture: refused" "$(inst Linux riscv64 "$IW/good.tar.xz")" "1"
+    # An unknown flag is a usage error, never the install directory (#172).
+    for flag in --force --bogus -f; do
+        expect "$flag: usage error" "$(cd "$IW" && inst Linux x86_64 "$IW/good.tar.xz" "$flag")" "1"
+        expect "$flag: named as an unknown option" \
+            "$(grep -c "unknown option: $flag" "$IW/out")" "1"
+        expect "$flag: nothing downloaded" "$(wc -l <"$IW/log" | tr -d ' ')" "0"
+        expect "$flag: no directory of that name" "$(present "$IW/$flag")" "no"
+    done
+    expect "two arguments: usage error" "$(inst Linux x86_64 "$IW/good.tar.xz" "$IW/bin" extra)" "1"
+    expect "two arguments: says so" "$(grep -c 'too many arguments' "$IW/out")" "1"
     write_sums "$IW/proj/.specify/gates/shellcheck.local.sha256" darwin.aarch64
     expect "a project pin in shellcheck.local.sha256 is honoured" "$(inst Darwin arm64 "$IW/good.tar.xz")" "0"
     rm -f "$IW/proj/.specify/gates/shellcheck.local.sha256"

@@ -494,6 +494,22 @@ false`, pre-commit refused the protected artifacts outright; it now
   directory. CONTRIBUTING.md describes how a maintainer bumps the shipped
   pin. The coverage CI job installs the pinned, checksum-verified
   shellcheck instead of the distro package.
+- **Small RC2 findings** (#172). `verify.sh --json` prints one
+  `{"result":"refused",...}` object when it refuses to run (bad
+  arguments, no jq or git, a missing or invalid policy) instead of
+  nothing. `policy-infer` reports the synthesized policy only after
+  writing it and exits 5 when the write fails. `install-shellcheck.sh`
+  takes an unknown flag as a usage error, not an install directory. The
+  contract gate names a missing SHA-256 tool instead of claiming
+  tampering; doctor without jq no longer lists every linter as "not
+  enabled" and says that no gate runs; canary without git names git;
+  `project.sh --check` exits 1 when git is missing. The commit that turns
+  `git.protected_change_trailer` off passes with its trailers. In
+  `sync --update`, the update commit's gate sees the project's
+  `node_modules`, added `ai_branding.terms` count as strengthened,
+  `_`-prefixed keys are not an enforcement delta, and no `Source:` line
+  exceeds 100 characters. The release workflow probes the git hooks and
+  the shellcheck installer.
 
 ## 0.3.6 — 2026-10-02
 

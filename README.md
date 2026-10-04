@@ -186,7 +186,9 @@ changes plus `Approved-By: <name>`. Repos without an `extends`
 declaration are completely unaffected.
 
 With `git.protected_change_trailer` set to `false`, `pre-commit`
-refuses protected files outright, with one exception: the commit
+refuses protected files outright. The commit that sets it to `false` is
+still judged by `HEAD`'s policy, so it passes with its trailers; the
+refusal starts with the next commit. One exception remains: the commit
 `sync --update` makes. `pre-commit` lets it through only when, read
 from the index, the branch is `gates/baseline-<v>` and the lock pins
 `<v>`, nothing is staged but `policy.json` and the three artifacts,

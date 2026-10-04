@@ -245,10 +245,17 @@ echo "Required:"
 if have jq; then
     echo "${OK}jq"
 else
-    # Without jq the agent hooks run in raw mode (#83): they still block
-    # destructive commands and sensitive files, but ask for every edit when
-    # policy protected_files.extra is set.
-    echo "${BAD}jq — the agent hooks run in raw mode without it (built-in rules only; protected_files.extra asks for every edit). Install jq."
+    # Without jq verify.sh refuses (exit 1), so no gate runs: the git hook
+    # refuses every commit, CI fails, the Stop hook lets the session end
+    # unchecked. The agent hooks run in raw mode (#83): built-in rules only,
+    # and an "ask" for every edit only while protected_files.extra has
+    # entries, which they cannot read without jq (#172).
+    JQ_EXTRA=""
+    if [[ -f "$PROJECT_ROOT/.specify/gates/policy.json" ]] \
+        && grep -qE '"extra"[[:space:]]*:[[:space:]]*\[[[:space:]]*"' <<<"$(tr '\n' ' ' <"$PROJECT_ROOT/.specify/gates/policy.json")"; then
+        JQ_EXTRA="; protected_files.extra is set, so every edit asks for confirmation"
+    fi
+    echo "${BAD}jq — not installed: verify.sh refuses to run, so no gate runs (every commit is refused, CI fails); the agent hooks run in raw mode (built-in rules only$JQ_EXTRA). Install jq."
     MISSING=$((MISSING + 1))
 fi
 base_tool_checks
@@ -281,6 +288,11 @@ elif ! declare -f gates_policy_list >/dev/null 2>&1; then
     echo "Policy-enabled linters:"
     echo "${BAD}.specify/gates/lib/policy.sh is missing, so the policy cannot be read and no gate runs — re-project the runtime (bash .specify/extensions/gates/runtime/project.sh)"
     MISSING=$((MISSING + 1))
+elif ! have jq; then
+    # The policy reader needs jq; without it every linter would read as
+    # "not enabled in policy", a claim about the policy nobody checked (#172).
+    echo "Policy-enabled linters:"
+    echo "${SKIP}not checked: reading the policy needs jq (see above)"
 elif [[ -n "$POLICY_ERR" ]]; then
     echo "Policy:"
     echo "${BAD}policy is invalid — verify.sh refuses to run any gate until it is fixed:"

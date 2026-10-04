@@ -371,8 +371,8 @@ check "secret scan: constitution.sh:178 prose line passes" 0 \
 check "secret scan: api_key = \"AKIA...\" blocked" 1 \
     bash -c "cd '$GF' && printf 'api_key = \"%s\"\n' AKIAabcdefgh >k1.txt && git add k1.txt && git commit -q -m 'chore: k1'"
 ( cd "$GF" && git reset -q -- . >/dev/null 2>&1; rm -f k1.txt )
-check "secret scan: token: 'abcdefgh12' blocked" 1 \
-    bash -c "cd '$GF' && printf \"token: 'abcdefgh12'\\n\" >k2.txt && git add k2.txt && git commit -q -m 'chore: k2'"
+check "secret scan: token: '<10 chars>' blocked" 1 \
+    bash -c "cd '$GF' && printf \"token: '%s'\\n\" abcdefgh12 >k2.txt && git add k2.txt && git commit -q -m 'chore: k2'"
 ( cd "$GF" && git reset -q -- . >/dev/null 2>&1; rm -f k2.txt )
 
 # The scan reads the staged blobs in one batch per rule (issue #133): a name
@@ -389,7 +389,7 @@ check "secret scan: the staged copy is scanned, not the worktree" 1 \
 ( cd "$GF" && git reset -q -- . >/dev/null 2>&1; rm -f st.txt )
 printf 'BLOCKED: forbidden file: .env\n  SECRET: AWS key pattern in z.txt\n' >"$WORKDIR/sc.want"
 check "secret scan: one line per file, staged order, first rule wins" 0 \
-    bash -c "cd '$GF' && echo X=1 >.env && printf 'AKIA%s\nxoxb-1234567890\n' ABCDEFGHIJKLMNOP >z.txt && echo ok >m.txt && git add -f .env z.txt m.txt && ! git commit -q -m 'chore: z' 2>'$WORKDIR/sc.err' && grep -E '^(BLOCKED|  SECRET)' '$WORKDIR/sc.err' | diff - '$WORKDIR/sc.want' && grep -q 'failed: 2 issue' '$WORKDIR/sc.err'"
+    bash -c "cd '$GF' && echo X=1 >.env && printf 'AKIA%s\nxoxb-%s\n' ABCDEFGHIJKLMNOP 1234567890 >z.txt && echo ok >m.txt && git add -f .env z.txt m.txt && ! git commit -q -m 'chore: z' 2>'$WORKDIR/sc.err' && grep -E '^(BLOCKED|  SECRET)' '$WORKDIR/sc.err' | diff - '$WORKDIR/sc.want' && grep -q 'failed: 2 issue' '$WORKDIR/sc.err'"
 ( cd "$GF" && git reset -q -- . >/dev/null 2>&1; rm -f .env z.txt m.txt )
 # A git grep that fails is not a clean scan. The hook is run directly: git
 # puts its own exec path first on PATH for the hooks it runs.
@@ -516,6 +516,25 @@ check "protected: declared deletion passes" 0 bash -c "cd '$PT' && git commit -q
 printf 'chore: remove the const file\n\nProtected-Change: const.md\nApproved-By: Reviewer\n' >"$PTM"
 check "protected: message-only amend of a declared commit passes" 0 \
     bash -c "cd '$PT' && git commit -q --amend -F '$PTM'"
+
+# Turning git.protected_change_trailer off (#172): the commit that does it is
+# judged by HEAD's policy, where the trailer rule is on, so it passes with
+# its trailers instead of being refused by its own staged toggle. From the
+# next commit on the refusal applies, trailers or not.
+printf '%s' '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error", "custom_command": "true" } }, "git": { "block_main_commits": false, "protected_change_trailer": false }, "protected_files": { "extra": ["const.md", ".specify/gates/policy.json"] } }' \
+    >"$PT/.specify/gates/policy.json"
+printf 'chore: refuse protected files outright\n' >"$PTM"
+check "trailer off: the toggling commit without trailers is blocked" 1 \
+    bash -c "cd '$PT' && git add -A && git commit -q -F '$PTM'"
+printf 'chore: refuse protected files outright\n\nProtected-Change: .specify/gates/policy.json\nApproved-By: Reviewer\n' >"$PTM"
+check "trailer off: the toggling commit with trailers passes" 0 \
+    bash -c "cd '$PT' && git add -A && git commit -q -F '$PTM' 2>'$WORKDIR/pt-off.err'"
+printf 'docs: const again\n\nProtected-Change: const.md\nApproved-By: Reviewer\n' >"$PTM"
+check "trailer off: the next protected commit is refused despite trailers" 1 \
+    bash -c "cd '$PT' && echo c >const.md && git add const.md && git commit -q -F '$PTM' 2>'$WORKDIR/pt-off.err'"
+check "trailer off: refused by pre-commit's outright refusal" 0 \
+    grep -q "BLOCKED: policy-protected file staged: const.md" "$WORKDIR/pt-off.err"
+( cd "$PT" && git reset -q -- . >/dev/null 2>&1; rm -f const.md )
 
 # ===========================================================================
 # Part E2b: hook/runtime version skew. .git/hooks is shared by every branch,

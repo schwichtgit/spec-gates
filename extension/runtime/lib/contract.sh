@@ -68,9 +68,11 @@ gates_contract_merge() { # <snapshot> <overlay>
 # deviation on the list, not one per element. Defined-order fields classify
 # as "weakened" or "strengthened": enabled and the git toggles true->false,
 # severity/parity moving right, include losing globs or exclude gaining
-# them. A whole hook the effective side drops (null or absent) is ONE
-# weakened deviation marked "removed". Everything else that differs is
-# "changed". Strengthenings and additions are not deviations.
+# them, git.ai_branding.terms losing terms. A whole hook the effective side
+# drops (null or absent) is ONE weakened deviation marked "removed".
+# Everything else that differs is "changed". Strengthenings and additions
+# are not deviations. Keys starting with "_" (_comment) are annotations,
+# never enforcement, and are not compared.
 #
 # With mode "delta" (sync --update: old baseline vs new baseline) the
 # strengthenings are reported too, and a hook the new side adds is ONE
@@ -92,9 +94,11 @@ gates_contract_deviations() { # <snapshot> <effective> [delta]
         def sev_rank: { "error": 0, "warning": 1, "info": 2, "off": 3 };
         def git_toggles: ["block_main_commits", "conventional_commits", "forbid_ai_isms",
                           "protected_change_trailer", "block_bulk_staging"];
-        def leaves: [ paths(type != "object") | select(all(.[]; type == "string")) ];
+        def leaves: [ paths(type != "object") | select(all(.[]; type == "string"))
+                      | select(any(.[]; startswith("_")) | not) ];
         def hook_names: (.hooks // {}) | if type == "object" then
-            [ to_entries[] | select(.value | type == "object") | .key ] else [] end;
+            [ to_entries[] | select(.value | type == "object") | select(.key | startswith("_") | not)
+              | .key ] else [] end;
         def summary($leaf; $bv; $ev):
             def plain: type == "boolean" or type == "number" or type == "null";
             if ($bv | type) == "array" and ($ev | type) == "array" then
@@ -149,6 +153,12 @@ gates_contract_deviations() { # <snapshot> <effective> [delta]
                     | (if $leaf == "include" then [$lost, $gained] else [$gained, $lost] end) as $wl
                     | if $wl[0] > 0 and $wl[1] == 0 then "weakened"
                       elif $wl[1] > 0 and $wl[0] == 0 then "strengthened"
+                      else "changed" end )
+                elif $p == ["git", "ai_branding", "terms"]
+                     and ($bv | type) == "array" and ($ev | type) == "array" then
+                  ( ($ev - $bv | length) as $gained | ($bv - $ev | length) as $lost
+                    | if $gained > 0 and $lost == 0 then "strengthened"
+                      elif $lost > 0 and $gained == 0 then "weakened"
                       else "changed" end )
                 else "changed" end ) as $class
             | select($mode == "delta" or $class != "strengthened")
@@ -267,7 +277,12 @@ gates_contract_check() { # <root>
     # 2: snapshot matches the pinned digest.
     local want got
     want="$(jq -r '.digest // ""' "$CONTRACT_LOCK" 2>/dev/null)"
-    got="sha256:$(gates_sha256 "$CONTRACT_SNAPSHOT")" || got=""
+    # A failed hash is a missing tool, not a mismatch: say which (#172).
+    if ! got="sha256:$(gates_sha256 "$CONTRACT_SNAPSHOT" 2>/dev/null)"; then
+        CONTRACT_STATUS="fail"
+        CONTRACT_DETAIL="cannot hash baseline.json to check the pin: neither sha256sum nor shasum found -- install one (coreutils or perl)"
+        return 0
+    fi
     if [[ -z "$want" || "$got" != "$want" ]]; then
         CONTRACT_STATUS="fail"
         CONTRACT_DETAIL="baseline snapshot does not match the pin (baseline.json vs baseline.lock.json digest) -- tampering or a broken sync; re-run contract.sh sync"

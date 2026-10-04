@@ -83,7 +83,7 @@
         "protected_change_trailer": {
           "type": "boolean",
           "default": true,
-          "description": "Let a staged protected_files.extra path through the git boundary only when the commit message carries a 'Protected-Change: <path>' trailer for every staged protected path plus 'Approved-By: <name>' (checked in commit-msg). false restores the unconditional pre-commit refusal. The agent boundary refuses protected edits either way."
+          "description": "Let a staged protected_files.extra path through the git boundary only when the commit message carries a 'Protected-Change: <path>' trailer for every staged protected path plus 'Approved-By: <name>' (checked in commit-msg). false restores the unconditional pre-commit refusal, from the commit after the one that turns it off: that commit is judged by HEAD's policy and passes with its trailers. The agent boundary refuses protected edits either way."
         },
         "block_bulk_staging": {
           "type": "boolean",

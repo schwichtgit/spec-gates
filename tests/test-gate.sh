@@ -307,6 +307,43 @@ out="$(CLAUDE_PROJECT_DIR="$DE" PATH="$NOGIT" bash "$DE/.specify/gates/verify.sh
 expect "no git -> verify.sh exits 1" "$rc" 1
 expect "no git -> the refusal names git" "$(grep -c 'git not found' <<<"$out")" 1
 
+# --- --json refusals print one JSON object (#172) ---
+# A workflow step parsing --json output must get an object even when no
+# gate ran; the stderr message and exit 1 stay.
+echo ""
+echo "=== --json refusals ==="
+# <name> <needle-in-reason> <env-and-args...>: stdout is one refusal object.
+json_refused() {
+    local name="$1" needle="$2" out err rc=0
+    shift 2
+    out="$(env "$@" 2>"$WORKDIR/json-err")" || rc=$?
+    err="$(cat "$WORKDIR/json-err")"
+    expect "$name: exit 1" "$rc" 1
+    expect "$name: one line on stdout" "$(grep -c '' <<<"$out")" 1
+    expect "$name: result refused" "$(jq -r '.result' <<<"$out" 2>/dev/null)" refused
+    expect "$name: reason names the cause" \
+        "$(jq -r '.reason' <<<"$out" 2>/dev/null | grep -qF -- "$needle" && echo yes || echo no)" yes
+    expect "$name: stderr keeps the message" "$(grep -qF -- "$needle" <<<"$err" && echo yes || echo no)" yes
+}
+V="$DE/.specify/gates/verify.sh"
+json_refused "bad --boundary" 'invalid value: foo' CLAUDE_PROJECT_DIR="$DE" bash "$V" --boundary foo --json
+json_refused "--json before a bad --boundary" 'invalid value: foo' CLAUDE_PROJECT_DIR="$DE" bash "$V" --json --boundary foo
+json_refused "unknown argument" 'unknown argument: --nope' CLAUDE_PROJECT_DIR="$DE" bash "$V" --json --nope
+json_refused "no git" 'git not found' CLAUDE_PROJECT_DIR="$DE" PATH="$NOGIT" bash "$V" --boundary ci --json
+NOJQ="$WORKDIR/path-nojq"
+mkdir -p "$NOJQ"
+for t in bash sh git cat grep sed awk head tail tr wc dirname basename mktemp rm cp env sort uniq cut date find; do
+    command -v "$t" >/dev/null 2>&1 && ln -sf "$(command -v "$t")" "$NOJQ/$t"
+done
+json_refused "no jq" 'jq not found' CLAUDE_PROJECT_DIR="$DE" PATH="$NOJQ" bash "$V" --boundary ci --json
+json_refused "no policy" 'no policy at' CLAUDE_PROJECT_DIR="$WORKDIR/no-such-project" bash "$V" --boundary ci --json
+json_refused "invalid policy" 'invalid policy, no gate ran' \
+    CLAUDE_PROJECT_DIR="$WORKDIR/inv-malformed" bash "$WORKDIR/inv-malformed/.specify/gates/verify.sh" --boundary git --json
+expect "invalid policy: the refusal carries the boundary" \
+    "$(CLAUDE_PROJECT_DIR="$WORKDIR/inv-malformed" bash "$WORKDIR/inv-malformed/.specify/gates/verify.sh" --boundary git --json 2>/dev/null | jq -r '.boundary')" git
+expect "a quote in the reason stays valid JSON" \
+    "$(CLAUDE_PROJECT_DIR="$DE" bash "$V" --json --boundary 'a"b' 2>/dev/null | jq -r '.reason' | grep -c 'a"b')" 1
+
 echo ""
 echo "$PASS passed, $FAIL failed, $SKIP skipped ($TOTAL total)"
 [[ "$FAIL" -gt 0 ]] && exit 1

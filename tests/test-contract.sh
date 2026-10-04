@@ -174,6 +174,19 @@ expect_contains "tampered snapshot blocks" "$OUT" "EXIT=2"
 expect_contains "tampered snapshot named" "$OUT" "does not match the pin"
 CLAUDE_PROJECT_DIR="$D" bash "$D/.specify/gates/contract.sh" sync >/dev/null
 
+# Without a SHA-256 tool the pin cannot be checked: the gate still fails,
+# but names the missing tool instead of claiming tampering (#172).
+NOSHA="$WORKDIR/path-nosha"
+mkdir -p "$NOSHA"
+for t in bash sh jq git cat grep sed awk head tail tr wc dirname basename mktemp rm cp mv env sort uniq cut date find mkdir; do
+    p="$(type -P "$t" 2>/dev/null)" && ln -sf "$p" "$NOSHA/$t"
+done
+OUT="$(PATH="$NOSHA" gate_out "$D")"
+expect_contains "no SHA-256 tool: blocks" "$OUT" "EXIT=2"
+expect_contains "no SHA-256 tool: names the missing tool" "$OUT" "neither sha256sum nor shasum found"
+expect "no SHA-256 tool: no tampering claim" \
+    "$(grep -c 'does not match the pin' <<<"$OUT" || true)" 0
+
 jq '.extends.version = "v2.0.0"' "$D/.specify/gates/policy.json" >"$D/p.tmp" && mv "$D/p.tmp" "$D/.specify/gates/policy.json"
 OUT="$(gate_out "$D")"
 expect_contains "edited declaration blocks" "$OUT" "EXIT=2"
@@ -513,6 +526,16 @@ expect_contains "a hook the new side adds is one line" "$OUT" "- added (strength
 OUT="$(devs "")"
 expect "overlay mode reports no strengthenings or additions" \
     "$(grep -cE 'strengthened|hooks\.m' <<<"$OUT")" 0
+# More branding terms are stricter, fewer are weaker; a _comment is an
+# annotation, not enforcement (#172).
+printf '%s' '{"_comment":"old","hooks":{"_note":"a"},"git":{"ai_branding":{"terms":["x"]}}}' >"$CL/old.json"
+printf '%s' '{"_comment":"new","hooks":{"_note":"b"},"git":{"ai_branding":{"terms":["x","y"]}}}' >"$CL/new.json"
+OUT="$(devs delta)"
+expect_contains "added branding terms are a strengthening" "$OUT" "- strengthened: git.ai_branding.terms"
+expect "_-prefixed keys are no delta" "$(grep -c '_comment\|_note' <<<"$OUT" || true)" 0
+cp "$CL/new.json" "$CL/old.json"
+printf '%s' '{"git":{"ai_branding":{"terms":["x"]}}}' >"$CL/new.json"
+expect_contains "dropped branding terms are a weakening" "$(devs delta)" "- weakened: git.ai_branding.terms"
 
 echo ""
 echo "=== partial overlays (#135) ==="
@@ -592,7 +615,7 @@ OUT="$(contract "$WD" sync --update v2.0.0)"
 expect_contains "update adding a branding term commits" "$OUT" "EXIT=0"
 BODY="$(git -C "$WD" log -1 --format=%B gates/baseline-v2.0.0 2>/dev/null || true)"
 expect_contains "list change is summarized as counts" "$BODY" "- changed: git.ai_branding.terms: 2 added, 1 removed"
-expect_contains "a text value is described, not quoted" "$BODY" "- changed: _comment: value changed"
+expect "a _comment change is no enforcement delta (#172)" "$(grep -c '_comment' <<<"$BODY" || true)" 0
 expect "no branding term, AI-ism or trailer text from the baseline in the body" \
     "$(grep -ciE 'copilot|openai|gemini|seamless|co-authored-by' <<<"$BODY")" 0
 expect_contains "full message keeps the versions" "$BODY" "chore: update policy baseline v1.0.0 -> v2.0.0"
@@ -601,7 +624,7 @@ expect_contains "full message keeps the versions" "$BODY" "chore: update policy 
 OUT="$(contract "$WD" sync --update v3.0.0)"
 expect_contains "update whose paths trip the rules still commits" "$OUT" "EXIT=0"
 BODY="$(git -C "$WD" log -1 --format=%B gates/baseline-v3.0.0 2>/dev/null || true)"
-expect_contains "fallback message carries the counts" "$BODY" "Enforcement delta: 1 strengthened, 0 weakened, 2 changed"
+expect_contains "fallback message carries the counts" "$BODY" "Enforcement delta: 1 strengthened, 0 weakened, 1 changed"
 expect "fallback message names no path" "$(grep -ci 'copilot' <<<"$BODY")" 0
 expect_contains "fallback message keeps the trailers" "$BODY" "Protected-Change: .specify/gates/baseline.lock.json"
 
@@ -629,6 +652,33 @@ BODY="$(git -C "$WC" log -1 --format=%B gates/baseline-v2.0.0 2>/dev/null || tru
 expect_contains "the approver falls back to the fixed value" "$BODY" "Approved-By: the committer of this commit"
 expect "the committer's name is in the commit, not the message" \
     "$(git -C "$WC" log -1 --format=%cn gates/baseline-v2.0.0 2>/dev/null || true)" Claude
+
+echo ""
+echo "=== sync --update: the update commit's gate sees node_modules (#172) ==="
+# The update commit is made in a temporary worktree without node_modules; a
+# prettier gate there would be skipped. A stub prettier in the main tree's
+# node_modules records where it ran.
+# The baseline sits at a path too long for one 100-character body line.
+LONGB="$WORKDIR/a-baseline-repository-at-a-path-long-enough-to-overflow-the-commit-body-width-rule"
+cp -R "$BH" "$LONGB"
+NM="$WORKDIR/node-mods"
+hooked_repo "$NM" "$LONGB" v1.9.0 '.hooks.prettier = {"include": ["**/*.md"], "orchestrator": "none", "severity": "error"}'
+mkdir -p "$NM/node_modules/.bin"
+printf '#!/bin/sh\npwd >>"%s"\nexit 0\n' "$WORKDIR/node-mods.ran" >"$NM/node_modules/.bin/prettier"
+chmod +x "$NM/node_modules/.bin/prettier"
+printf '# doc\n' >"$NM/doc.md"
+git -C "$NM" add doc.md
+git -C "$NM" commit -q --no-verify -m "docs: add doc"
+OUT="$(contract "$NM" sync --update v1.10.0)"
+expect_contains "update with a node linter commits" "$OUT" "EXIT=0"
+expect "prettier ran in the update worktree" \
+    "$(grep -c '/wt$' "$WORKDIR/node-mods.ran" 2>/dev/null || true)" 1
+BODY="$(git -C "$NM" log -1 --format=%B gates/baseline-v1.10.0 2>/dev/null || true)"
+expect "no body line over 100 characters" "$(awk 'NR > 2 && length > 100' <<<"$BODY" | wc -l | tr -d ' ')" 0
+expect_contains "the baseline file has its own line" "$BODY" "Baseline file: policy.json"
+expect_contains "a source too long for a line is named by its field" "$BODY" "Source: extends.source in .specify/gates/policy.json"
+expect "the link is not committed" \
+    "$(git -C "$NM" ls-tree --name-only gates/baseline-v1.10.0 node_modules 2>/dev/null | wc -l | tr -d ' ')" 0
 
 echo ""
 echo "=== sync --update with git.protected_change_trailer false (#154) ==="

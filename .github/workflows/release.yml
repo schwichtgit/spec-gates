@@ -49,8 +49,11 @@ jobs:
           # must be present — the constitution corpus was silently missing
           # from the 0.3.0 asset (issue #31), leaving the guided session
           # unrunnable on stock installs.
-          for probe in gates/extension.yml gates/CHANGELOG.md gates/constitution/manifest.yml gates/runtime/constitution.sh gates/runtime/pr-check.sh gates/runtime/project.sh gates/runtime/lib/manifest.sh gates/runtime/lib/known-releases.sha256 gates/runtime/lib/message.sh gates/runtime/hooks/git/stub.sh gates/.markdownlint-cli2.jsonc; do
-            unzip -l "dist/gates-$VERSION.zip" | grep -q "$probe" \
+          # The listing is read once: `unzip -l | grep -q` can fail on
+          # SIGPIPE under pipefail (#117).
+          LISTING="$(unzip -l "dist/gates-$VERSION.zip")"
+          for probe in gates/extension.yml gates/CHANGELOG.md gates/constitution/manifest.yml gates/runtime/constitution.sh gates/runtime/pr-check.sh gates/runtime/project.sh gates/runtime/install-shellcheck.sh gates/runtime/shellcheck.sha256 gates/runtime/lib/manifest.sh gates/runtime/lib/known-releases.sha256 gates/runtime/lib/message.sh gates/runtime/hooks/git/stub.sh gates/runtime/hooks/git/pre-commit gates/runtime/hooks/git/commit-msg gates/runtime/hooks/git/pre-merge-commit gates/.markdownlint-cli2.jsonc; do
+            grep -qF "$probe" <<<"$LISTING" \
               || { echo "::error::package sanity check failed: $probe missing from zip"; exit 1; }
           done
 

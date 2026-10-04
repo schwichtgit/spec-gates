@@ -156,7 +156,13 @@ PROTECTED_STAGED=""
 PROTECTED_TRAILER=true
 if command -v gates_staged_protected_paths >/dev/null 2>&1; then
     PROTECTED_STAGED="$(gates_staged_protected_paths)"
-    gates_protected_trailer_enabled || PROTECTED_TRAILER=false
+    # The commit-level switch also reads HEAD's policy, so a commit turning
+    # the trailer rule off is checked for trailers, not refused (#172).
+    if command -v gates_protected_trailer_enabled_commit >/dev/null 2>&1; then
+        gates_protected_trailer_enabled_commit || PROTECTED_TRAILER=false
+    else
+        gates_protected_trailer_enabled || PROTECTED_TRAILER=false
+    fi
 elif command -v gates_policy_section_list >/dev/null 2>&1; then
     # This branch's runtime predates the trailer path (.git/hooks is shared
     # by every branch; the projected lib is not), so commit-msg cannot

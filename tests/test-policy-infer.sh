@@ -161,6 +161,13 @@ rc=0
 GATES_INFER_DEFAULT_POLICY="$W/bad-template.json" bash "$INFER" "$P" "$W/bad.json" 2>/dev/null || rc=$?
 eq "a result that fails validation -> 4" 4 "$rc"
 eq "nothing written when validation fails" no "$([[ -e "$W/bad.json" ]] && echo yes || echo no)"
+# The write itself can fail: the output is a directory whose policy.json is
+# a directory too, so mv cannot put the file there. The summary claims a
+# policy at the output path, so it must not appear (#172).
+mkdir -p "$W/blocked/policy.json"
+eq "a failed write -> 5" 5 "$(infer "$P" "$W/blocked")"
+eq "a failed write is named" 1 "$(grep -c '^ERROR: could not write the policy to' "$W/err")"
+eq "no summary after a failed write" 0 "$(grep -c '^policy-infer: synthesized policy at' "$W/err" || true)"
 jq '.hooks.prettier.include = ["only/**"]' "$TEMPLATE" >"$W/alt-template.json"
 GATES_INFER_DEFAULT_POLICY="$W/alt-template.json" bash "$INFER" "$P" "$W/alt.json" 2>/dev/null
 eq "GATES_INFER_DEFAULT_POLICY overrides the template" '["only/**"]' "$(jq -c '.hooks.prettier.include' "$W/alt.json")"

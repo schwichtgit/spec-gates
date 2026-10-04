@@ -98,6 +98,17 @@ expect "hook canaries all report status=blocked" \
 expect "hook canaries report failed=0" \
     "$(printf '%s' "$JSON" | jq -r '.failed')" 0
 
+# --- without git the suite cannot run, and says why (#172) ---
+NOGIT="$WORKDIR/path-nogit"
+mkdir -p "$NOGIT"
+for t in bash sh jq cat grep sed awk head tail tr wc dirname basename mktemp rm cp mv ln env sort uniq cut date find mkdir chmod; do
+    p="$(type -P "$t" 2>/dev/null)" && ln -sf "$p" "$NOGIT/$t"
+done
+rc=0
+OUT="$(PATH="$NOGIT" CLAUDE_PROJECT_DIR="$FIX" bash "$FIX/.specify/gates/canary.sh" 2>&1)" || rc=$?
+expect "no git: setup failure exit 2" "$rc" 2
+expect "no git: names git" "$(grep -c 'canary: git not found' <<<"$OUT" || true)" 1
+
 # --- full run + FR-006 isolation: nothing in the project tree is touched ---
 echo ""
 echo "=== full suite + sandbox isolation (FR-006) ==="

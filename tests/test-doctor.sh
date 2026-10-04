@@ -1013,6 +1013,16 @@ doctor_path "$WORKDIR/path-nojq" jq
 PATH="$WORKDIR/path-nojq" CLAUDE_PROJECT_DIR="$DNJ" bash "$DNJ/.specify/gates/doctor.sh" >"$DNJ/out.txt" 2>&1 || true
 has "no jq: the install state is reported as not checked" "$DNJ" "install state not checked: reading .specify/extensions/.registry needs jq"
 lacks "no jq: no interrupted-install claim" "$DNJ" "interrupted install"
+# Without jq the policy is unread, so no linter is "not enabled" (#172), and
+# the jq line names the refusal and the extra-asks state the policy has.
+lacks "no jq: no linter reported as not enabled" "$DNJ" "not enabled in policy"
+has "no jq: the linters are reported as not checked" "$DNJ" "not checked: reading the policy needs jq"
+has "no jq: the jq line says no gate runs" "$DNJ" "verify.sh refuses to run, so no gate runs"
+lacks "no jq, no extra entries: no every-edit-asks claim" "$DNJ" "every edit asks"
+jq '.protected_files.extra = ["docs/**"]' "$DNJ/.specify/gates/policy.json" >"$DNJ/p.tmp" \
+    && mv "$DNJ/p.tmp" "$DNJ/.specify/gates/policy.json"
+PATH="$WORKDIR/path-nojq" CLAUDE_PROJECT_DIR="$DNJ" bash "$DNJ/.specify/gates/doctor.sh" >"$DNJ/out.txt" 2>&1 || true
+has "no jq: extra entries make every edit ask" "$DNJ" "protected_files.extra is set, so every edit asks"
 PATH="$WORKDIR/path-nojq" CLAUDE_PROJECT_DIR="$DNJ" bash "$DNJ/.specify/gates/doctor.sh" --installed-only >"$DNJ/out.txt" 2>&1 || true
 has "no jq, --installed-only: install state not checked" "$DNJ" "install state not checked"
 lacks "no jq, --installed-only: no not-installed claim" "$DNJ" "the gates extension is not installed"

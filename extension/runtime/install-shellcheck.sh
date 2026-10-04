@@ -47,6 +47,19 @@ die() {
     exit 1
 }
 
+# One argument at most: --update or the install directory. Any other flag
+# is a usage error, never a directory to install into (#172).
+usage() {
+    echo "install-shellcheck: $*" >&2
+    echo "usage: install-shellcheck.sh [install-dir] | --update" >&2
+    exit 1
+}
+[[ $# -le 1 ]] || usage "too many arguments"
+case "${1:-}" in
+    --update) ;;
+    -*) usage "unknown option: $1" ;;
+esac
+
 VERSION=""
 [[ -f "$ROOT/.tool-versions" ]] \
     && VERSION="$(awk '$1 == "shellcheck" { print $2; exit }' "$ROOT/.tool-versions")"

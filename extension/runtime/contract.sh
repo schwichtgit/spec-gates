@@ -255,6 +255,12 @@ cmd_sync() {
         echo "contract: could not create a worktree for $branch" >&2
         return 2
     fi
+    # The commit's gate runs in the worktree, which has no node_modules: link
+    # the main tree's, so prettier and markdownlint run there instead of
+    # being skipped (#172). Never staged (only the four files below are).
+    if [[ -d "$PROJECT_ROOT/node_modules" && ! -e "$wt/node_modules" ]]; then
+        ln -s "$PROJECT_ROOT/node_modules" "$wt/node_modules" 2>/dev/null || true
+    fi
     mkdir -p "$wt/.specify/gates"
     cp "$work/policy.json" "$wt/.specify/gates/policy.json"
     cp "$work/baseline.json" "$wt/.specify/gates/baseline.json"
@@ -297,9 +303,16 @@ Approved-By: $cand"; then
         trailers="$(while IFS= read -r p; do printf 'Protected-Change: %s\n' "$p"; done <<<"$protected")
 Approved-By: ${approver:-the committer of this commit}"
     fi
+    # Body lines over 100 characters draw a commit-msg warning (#172): the
+    # file gets its own line, and a source too long for one is named by
+    # where it is recorded instead.
+    local source_line="Source: $CONTRACT_SOURCE"
+    [[ "${#source_line}" -le 100 ]] \
+        || source_line="Source: extends.source in .specify/gates/policy.json"
     msg="chore: update policy baseline $current -> $target
 
-Source: $CONTRACT_SOURCE ($CONTRACT_BASEFILE)
+$source_line
+Baseline file: $CONTRACT_BASEFILE
 New digest: $new_digest
 
 Enforcement delta (baseline $current -> $target):

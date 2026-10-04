@@ -100,6 +100,12 @@ if ! command -v jq >/dev/null 2>&1; then
     echo "canary: jq not found — cannot run canaries (run /speckit.gates.doctor)" >&2
     exit 2
 fi
+# verify.sh refuses without git (#121) and the sandboxes are git work trees,
+# so every probe would fail for that reason alone: name git instead (#172).
+if ! command -v git >/dev/null 2>&1; then
+    echo "canary: git not found — cannot run canaries (verify.sh refuses without it; run /speckit.gates.doctor)" >&2
+    exit 2
+fi
 
 WORKDIR="$(mktemp -d 2>/dev/null || mktemp -d -t gates-canary)" || {
     echo "canary: sandbox setup failed (mktemp)" >&2

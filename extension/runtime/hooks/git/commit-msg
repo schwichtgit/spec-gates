@@ -122,8 +122,13 @@ fi
 # path) and names an approver ("Approved-By: <name>"). The trailer is an
 # auditable declaration, not a credential: real approval is CODEOWNERS plus
 # branch protection on the server.
+TRAILER_ON=gates_protected_trailer_enabled
+# On when HEAD's policy has it on too, so the commit that turns the rule
+# off needs its trailers (#172); pre-commit applies the same switch.
+command -v gates_protected_trailer_enabled_commit >/dev/null 2>&1 \
+    && TRAILER_ON=gates_protected_trailer_enabled_commit
 if command -v gates_protected_check >/dev/null 2>&1 \
-    && gates_protected_trailer_enabled; then
+    && "$TRAILER_ON"; then
     PROTECTED_STAGED="$(gates_staged_protected_paths)"
     if [[ "$GENERATED" == merge && -n "$PROTECTED_STAGED" ]]; then
         # A merge brings in the other side's commits, which carry their own

@@ -150,6 +150,23 @@ gates_protected_trailer_enabled() {
     [[ "$(gates_policy_section_get git protected_change_trailer)" != "false" ]]
 }
 
+# The switch as the git hooks apply it to a commit (#172): on when the
+# working policy OR the policy committed at HEAD has it on. The commit that
+# turns it off is still judged by the trailer rule it removes, so it passes
+# with full trailers instead of being refused by its own staged toggle;
+# from the next commit on, the refusal applies.
+gates_protected_trailer_enabled_commit() {
+    gates_protected_trailer_enabled && return 0
+    local tmp rc=1
+    tmp="$(mktemp 2>/dev/null || mktemp -t gates-policy)" || return 1
+    if gates_policy_at_rev HEAD "$tmp" \
+        && GATES_POLICY_FILE="$tmp" gates_protected_trailer_enabled; then
+        rc=0
+    fi
+    rm -f "$tmp"
+    return "$rc"
+}
+
 # Write the policy committed at <rev> to <dest> -- its materialized effective
 # policy when the overlay extends a baseline. Returns 1 when <rev> carries no
 # policy (dest untouched).
