@@ -293,6 +293,8 @@ gates_validate_policy() {
             "include","exclude","orchestrator","severity",
             "on_missing_runner","on_missing_tests","custom_command"
         ];
+        # on_missing_runner/on_missing_tests: deprecated, read by no gate;
+        # still validated so existing policies pass (doctor flags them, #112).
         def orch_values:   ["none","task","custom"];
         def sev_values:    ["error","warning","info"];
         def runner_values: ["warn","skip"];
