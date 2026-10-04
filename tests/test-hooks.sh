@@ -521,7 +521,9 @@ check "protected: message-only amend of a declared commit passes" 0 \
 # Part E2b: hook/runtime version skew. .git/hooks is shared by every branch,
 # the projected runtime is not: a branch still on the v0.3.3 runtime must
 # keep committing under the current hooks (message rules skipped with a
-# warning) while protected files keep that runtime's refusal.
+# warning) while protected files keep that runtime's refusal. The leniency
+# is for a runtime whose .runtime-version names a release before 0.3.4;
+# an adopted branch with no runtime at all is refused (#159, below).
 # ===========================================================================
 echo ""
 echo "=== hook/runtime version skew (current hooks, v0.3.3 runtime) ==="
@@ -553,6 +555,46 @@ if git -C "$REPO_ROOT" rev-parse -q --verify v0.3.3 >/dev/null 2>&1; then
 else
     echo "SKIP: hook/runtime skew checks (tag v0.3.3 not available in this clone)"
 fi
+
+# A never-projected clone (#159): policy.json is tracked, the runtime is
+# gitignored and absent, so there is no lib/ and no .runtime-version. That
+# is not an older runtime: both hooks refuse a commit that would otherwise
+# pass, and name project.sh.
+echo ""
+echo "=== never-projected clone: hooks refuse without the runtime ==="
+NP="$WORKDIR/never-projected"
+mkdir -p "$NP/.specify/gates"
+git -C "$NP" init -q -b feat/clone
+git -C "$NP" config user.email t@example.com
+git -C "$NP" config user.name tester
+printf '%s' '{ "hooks": {} }' >"$NP/.specify/gates/policy.json"
+( cd "$NP" && git add -A && git commit -q --no-verify -m "chore: adopt gates" ) >/dev/null 2>&1
+cp "$GITHOOKS/pre-commit" "$GITHOOKS/commit-msg" "$NP/.git/hooks/"
+chmod +x "$NP/.git/hooks/pre-commit" "$NP/.git/hooks/commit-msg"
+check "never-projected: pre-commit refuses a plain commit" 1 \
+    bash -c "cd '$NP' && echo a >a.txt && git add a.txt && git commit -q -m 'feat: a' 2>'$WORKDIR/np.err'"
+check "never-projected: the pre-commit refusal names the missing library" 0 \
+    grep -q "pre-commit refused .*missing: lib/policy.sh" "$WORKDIR/np.err"
+check "never-projected: the refusal gives the projection command" 0 \
+    grep -q "Project it: bash .specify/extensions/gates/runtime/project.sh" "$WORKDIR/np.err"
+rm -f "$NP/.git/hooks/pre-commit"
+check "never-projected: commit-msg refuses a conventional message" 1 \
+    bash -c "cd '$NP' && git commit -q -m 'feat: a' 2>'$WORKDIR/np.err'"
+check "never-projected: commit-msg names both missing libraries" 0 \
+    grep -q "commit-msg refused .*missing: lib/policy.sh lib/message.sh" "$WORKDIR/np.err"
+check "never-projected: commit-msg gives the projection command" 0 \
+    grep -q "Project it: bash .specify/extensions/gates/runtime/project.sh" "$WORKDIR/np.err"
+check "never-projected: no 'unversioned' leniency" 1 \
+    grep -q "predates the installed commit-msg hook" "$WORKDIR/np.err"
+# A branch from before adoption tracks nothing under .specify/gates: the
+# hooks keep their old behavior there.
+(
+    cd "$NP" && git reset -q --hard && git switch -q --orphan pre-adoption && rm -rf .specify
+) >/dev/null 2>&1
+cp "$GITHOOKS/pre-commit" "$NP/.git/hooks/"
+chmod +x "$NP/.git/hooks/pre-commit"
+check "never-projected: a branch from before adoption still commits" 0 \
+    bash -c "cd '$NP' && echo x >x.txt && git add x.txt && git commit -q -m 'feat: x'"
 
 # ===========================================================================
 # Part E2c: hook stubs (issue #59). .git/hooks holds the stub, which runs

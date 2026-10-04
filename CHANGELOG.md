@@ -109,6 +109,21 @@ add` forms at the agent boundary. `project.sh` lists new settings like
 
 ### Fixed
 
+- **The git hooks refuse a branch whose runtime was never projected**
+  (#159). In a clone that tracks `policy.json` but gitignores the runtime,
+  commit-msg took the missing `.runtime-version` for a pre-0.3.4 runtime
+  and let a non-conventional message through with a warning, and
+  pre-commit skipped the protected-file check. Both hooks now refuse when
+  `.specify/gates` is tracked and their libraries are missing, and name
+  `bash .specify/extensions/gates/runtime/project.sh`. A runtime whose
+  `.runtime-version` is older than 0.3.4 still commits with the warning;
+  a branch from before adoption is still skipped.
+- **`sync --update` no longer fails on the committer's name** (#159). A
+  name the message rules refuse (a branding term, or a standalone
+  "Claude") went into the `Approved-By` trailer, so commit-msg refused the
+  update. The approver is now the first value the rules accept: the
+  committer name, the local part of the committer email, or
+  `the committer of this commit`.
 - **Degraded hosts get messages that name the cause** (#122). Without jq,
   doctor reported an interrupted install because it could not read the
   registry; it now says the install state was not checked. Without

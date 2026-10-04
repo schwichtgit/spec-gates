@@ -41,7 +41,10 @@ version.
    `--update`, nothing is committed on the current branch: the command
    commits the artifacts and the new `extends.version` in `policy.json`
    on its own branch, with the trailers already in place
-   (`Approved-By` names the git committer running it). Point at the created
+   (`Approved-By` names the git committer running it: the committer
+   name, or the local part of the committer email when the message
+   rules refuse the name, else `the committer of this commit`). Point at
+   the created
    `gates/baseline-<version>` branch or opened PR instead; enforcement
    follows only when it merges. The commit body names changed paths with
    counts or `from -> to` for booleans, numbers and severities, never

@@ -56,6 +56,27 @@ version_lt() {
     return 1
 }
 
+# --- The runtime this hook needs (issue #159) ---
+# A branch that tracks something under .specify/gates (in HEAD or the index,
+# the stub's adoption test) has adopted gates; without its libraries it was
+# never projected, as in a fresh clone of a repo that gitignores the
+# runtime. Every projection records .runtime-version, so a missing one is
+# no sign of an older runtime: refuse rather than skip the rules. Only a
+# runtime that names a version before 0.3.4 lacks lib/message.sh by design.
+MISSING=""
+[[ -f "$POLICY_LIB" ]] || MISSING="lib/policy.sh"
+if [[ ! -f "$MESSAGE_LIB" ]] \
+    && { [[ -z "$RUNTIME_VERSION" ]] || ! version_lt "$RUNTIME_VERSION" 0.3.4; }; then
+    MISSING="${MISSING:+$MISSING }lib/message.sh"
+fi
+if [[ -n "$MISSING" ]] \
+    && { git rev-parse -q --verify "HEAD:.specify/gates" >/dev/null 2>&1 \
+        || [[ -n "$(git ls-files -- ':(top).specify/gates' 2>/dev/null)" ]]; }; then
+    echo "ERROR: commit-msg refused -- .specify/gates is tracked but the runtime is not projected (missing: $MISSING)." >&2
+    echo "  Project it: bash .specify/extensions/gates/runtime/project.sh" >&2
+    exit 1
+fi
+
 # --- Subjects git writes itself (issue #129) ---
 # A merge commit ("Merge branch ..."), detected by MERGE_HEAD in the git dir
 # rather than by its subject, and the fixup!/squash!/amend! prefixes of
@@ -82,7 +103,8 @@ elif [[ -z "$RUNTIME_VERSION" ]] || version_lt "$RUNTIME_VERSION" 0.3.4; then
     # .git/hooks is shared by every branch, the projected runtime is not: a
     # branch still on a pre-0.3.4 runtime (cut before the upgrade landed) has
     # no lib/message.sh. Refusing every commit there would strand it, so the
-    # message rules that runtime never had are skipped, loudly.
+    # message rules that runtime never had are skipped, loudly. Unversioned
+    # gets here only on a branch that tracks nothing under .specify/gates.
     echo "WARN: this branch's gates runtime (${RUNTIME_VERSION:-unversioned}) predates the installed commit-msg hook;" >&2
     echo "  message rules skipped. Rebase onto the upgraded branch or run /speckit.gates.upgrade." >&2
     ERRORS=0

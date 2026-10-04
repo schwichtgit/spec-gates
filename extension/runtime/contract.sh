@@ -278,10 +278,24 @@ cmd_sync() {
     # this exact change through on its own shape (#154).
     protected="$(cd "$wt" && GATES_POLICY_FILE="" CLAUDE_PROJECT_DIR="$wt" gates_staged_protected_paths)"
     if [[ -n "$protected" ]]; then
-        local approver
-        approver="$(git -C "$wt" var GIT_COMMITTER_IDENT 2>/dev/null | sed 's/ <.*$//')"
+        # A committer name the message rules refuse (a branding term) would
+        # sink every message below (#159). Take the first approver the rules
+        # accept: the name, the local part of the committer email, then a
+        # fixed value pointing at the committer the commit records anyway.
+        local ident approver="" cand
+        ident="$(git -C "$wt" var GIT_COMMITTER_IDENT 2>/dev/null || true)"
+        for cand in "${ident%% <*}" "$(sed -n 's/^[^<]*<\([^@>]*\).*$/\1/p' <<<"$ident")" \
+            "the committer of this commit"; do
+            [[ -n "$cand" ]] || continue
+            if update_message_ok "$wt" "chore: update policy baseline
+
+Approved-By: $cand"; then
+                approver="$cand"
+                break
+            fi
+        done
         trailers="$(while IFS= read -r p; do printf 'Protected-Change: %s\n' "$p"; done <<<"$protected")
-Approved-By: ${approver:-unknown}"
+Approved-By: ${approver:-the committer of this commit}"
     fi
     msg="chore: update policy baseline $current -> $target
 

@@ -34,7 +34,7 @@ if [ ! -f "$hook" ]; then
         # release projects hooks here): deleting it must not silently
         # turn enforcement off. Fail closed.
         echo "gates: $name refused -- .specify/gates is tracked but $hook is missing" >&2
-        echo "  Restore it (/speckit.gates.upgrade) rather than committing around it." >&2
+        echo "  Project it (bash .specify/extensions/gates/runtime/project.sh) rather than committing around it." >&2
         exit 1
     fi
     # A branch from before gates was adopted has nothing to enforce.

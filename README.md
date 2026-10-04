@@ -167,8 +167,11 @@ hooks.shellcheck.severity: baseline "error" -> overlay "warning"`.
   a branding term), it falls back to counts only. That branch moves
   `extends.version` in `policy.json` with the pin, so it passes its own
   gates, and its commit carries the `Protected-Change` trailers with
-  you, the person running the update, as `Approved-By`. If a hook
-  refuses the commit, the branch is removed so a retry starts clean.
+  you, the person running the update, as `Approved-By`: your git
+  committer name, or the local part of your committer email when the
+  message rules refuse the name, else a fixed
+  `the committer of this commit`. If a hook refuses the commit, the
+  branch is removed so a retry starts clean.
 - **Deviations can go home.** `/speckit.gates.propose` packages the
   deviation inventory as a change request against the baseline source —
   origin, pinned version, classification, and your rationale included.
