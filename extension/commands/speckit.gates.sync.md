@@ -43,7 +43,15 @@ version.
    on its own branch, with the trailers already in place
    (`Approved-By` names the git committer running it). Point at the created
    `gates/baseline-<version>` branch or opened PR instead; enforcement
-   follows only when it merges.
+   follows only when it merges. The commit body names changed paths with
+   counts or `from -> to` for booleans, numbers and severities, never
+   quoted policy text, so a baseline that adds a branding term cannot
+   make commit-msg refuse it. In a repo with
+   `git.protected_change_trailer: false`, pre-commit still lets this one
+   commit through: it verifies that the staged change is exactly
+   `policy.json` (its `extends.version` only) plus the three artifacts,
+   consistent with the pin, on the matching `gates/baseline-<version>`
+   branch. Any other change to those files stays refused there.
 5. On failure, relay the named cause (branch-name version, chained
    baseline, schema-invalid baseline, unreachable source, or a git hook
    that refused the `--update` commit; the branch is then removed, so

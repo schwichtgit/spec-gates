@@ -159,11 +159,16 @@ hooks.shellcheck.severity: baseline "error" -> overlay "warning"`.
   pin to a newer baseline version on its own `gates/baseline-<v>` branch
   with the classified enforcement delta in the commit body (weakened,
   strengthened and changed rules, added and removed hooks); enforcement
-  follows only when it merges. That branch moves `extends.version` in
-  `policy.json` with the pin, so it passes its own gates, and its commit
-  carries the `Protected-Change` trailers with you, the person running
-  the update, as `Approved-By`. If a hook refuses the commit, the branch
-  is removed so a retry starts clean.
+  follows only when it merges. The delta names paths and never quotes
+  policy values: a list change reads `git.ai_branding.terms: 2 added,
+1 removed`, a text value `value changed`, so a new branding term or a
+  word the message rules forbid cannot make the repo refuse its own
+  update. Should the message still trip those rules (a hook named after
+  a branding term), it falls back to counts only. That branch moves
+  `extends.version` in `policy.json` with the pin, so it passes its own
+  gates, and its commit carries the `Protected-Change` trailers with
+  you, the person running the update, as `Approved-By`. If a hook
+  refuses the commit, the branch is removed so a retry starts clean.
 - **Deviations can go home.** `/speckit.gates.propose` packages the
   deviation inventory as a change request against the baseline source —
   origin, pinned version, classification, and your rationale included.
@@ -176,6 +181,21 @@ protected files: only `sync` writes them, and the commit that adds a
 sync needs a `Protected-Change: <path>` trailer for each artifact it
 changes plus `Approved-By: <name>`. Repos without an `extends`
 declaration are completely unaffected.
+
+With `git.protected_change_trailer` set to `false`, `pre-commit`
+refuses protected files outright, with one exception: the commit
+`sync --update` makes. `pre-commit` lets it through only when, read
+from the index, the branch is `gates/baseline-<v>` and the lock pins
+`<v>`, nothing is staged but `policy.json` and the three artifacts,
+`policy.json` differs from `HEAD` in `extends.version` alone, and the
+staged files pass the contract checks (snapshot digest equals the pin,
+declaration equals the lock, effective policy equals recomputation).
+Anything else stays refused. The exception follows the shape of the
+change, not who runs it: a hand-made commit of that exact shape passes
+too, and no hook can prove offline that the snapshot is what the source
+publishes. That proof is the review of the update branch, where
+`pr-check.sh` still requires the `Protected-Change` trailers the update
+commit carries.
 
 ## Constitution as an enforceable contract
 

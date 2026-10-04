@@ -258,6 +258,20 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   that appears to modify one asks, and a commit that changes one needs
   `Protected-Change` and `Approved-By` trailers, checked again by
   `pr-check`. Commit a sync with one `Protected-Change` line per artifact.
+- **`sync --update` commits when the delta touches branding terms, and in
+  repos with the trailer rule off** (#154). The commit body quoted the
+  changed values, so a baseline adding "Copilot" to
+  `git.ai_branding.terms` (or any value holding an AI-ism or a
+  `Co-Authored-By:` line) made the branch's commit-msg refuse the update.
+  Delta lines now name the path with a summary instead of values (`2
+added, 1 removed` for lists, `from -> to` for booleans, numbers and
+  severities, `value changed` for text); a message that still trips the
+  rules falls back to counts only. With `git.protected_change_trailer:
+false`, pre-commit refused the protected artifacts outright; it now
+  lets through exactly the update commit (on `gates/baseline-<v>`,
+  `policy.json` changing `extends.version` alone plus the three
+  artifacts, consistent with the pin), and the update always carries
+  the `Protected-Change` trailers that `pr-check` requires.
 - **Checks no longer miss matches on large input** (#117). Under
   `pipefail`, `echo "$x" | grep -q` read a match as a miss once the input
   outgrew the pipe buffer, so the pre-commit secret scan let a key through

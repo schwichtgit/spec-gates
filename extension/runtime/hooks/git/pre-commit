@@ -153,6 +153,23 @@ elif command -v gates_policy_section_list >/dev/null 2>&1; then
     PROTECTED_STAGED="$(printf '%s\n' "$PROTECTED_STAGED" | awk 'NF && !seen[$0]++')"
 fi
 
+# The one exception to the refusal with the trailer rule off (#154): the
+# commit `contract.sh sync --update` makes on its gates/baseline-<v>
+# branch -- policy.json changing extends.version only, plus the three
+# contract artifacts, consistent with the pin. lib/contract.sh checks that
+# shape against the index; without the libs the refusal stands.
+contract_update_staged() {
+    local lib="$PROJECT_ROOT/.specify/gates/lib"
+    [[ -f "$lib/attest.sh" && -f "$lib/contract.sh" ]] || return 1
+    (
+        set +eu
+        # shellcheck source=/dev/null disable=SC1091
+        source "$lib/attest.sh" && source "$lib/contract.sh" \
+            && command -v gates_contract_update_staged >/dev/null 2>&1 \
+            && gates_contract_update_staged "$PROJECT_ROOT"
+    )
+}
+
 # --- Git-specific safety pass over staged files ---
 echo "Pre-commit: scanning staged files for secrets and forbidden paths..."
 
@@ -204,6 +221,8 @@ if [[ -n "$PROTECTED_STAGED" ]]; then
             echo "    Protected-Change: $f"
         done <<<"$PROTECTED_STAGED"
         echo "    Approved-By: <name>"
+    elif contract_update_staged; then
+        echo "Pre-commit: staged change is exactly a policy baseline update (contract.sh sync --update shape and pin verified); protected contract files allowed"
     else
         while IFS= read -r f; do
             echo "BLOCKED: policy-protected file staged: $f" >&2

@@ -28,6 +28,8 @@ source "$GATES_DIR/lib/policy.sh"
 source "$GATES_DIR/lib/attest.sh"
 # shellcheck source=lib/contract.sh disable=SC1091
 source "$GATES_DIR/lib/contract.sh"
+# shellcheck source=lib/message.sh disable=SC1091
+source "$GATES_DIR/lib/message.sh"
 
 if ! command -v jq >/dev/null 2>&1; then
     echo "contract: jq not found (run /speckit.gates.doctor)" >&2
@@ -50,6 +52,14 @@ print_deviations() {
         return 0
     fi
     gates_contract_print_deviations "contract: deviation " <<<"$devs"
+}
+
+# Would the message rules of the update branch at <wt> accept <msg>, as
+# the commit message (commit-msg) and as the PR text (pr-check)? Judged by
+# the branch's own policy, like the hooks that will judge it.
+update_message_ok() { # <wt> <msg>
+    (cd "$1" && export GATES_POLICY_FILE="" CLAUDE_PROJECT_DIR="$1" \
+        && gates_message_check commit "$2" && gates_message_check pr "$2") >/dev/null 2>&1
 }
 
 # Fetch + validate + materialize <version> against <overlay> (default
@@ -262,10 +272,12 @@ cmd_sync() {
     # the commit declares each one it changes, judged by the branch's own
     # policy as commit-msg will judge it. The approver is the person running
     # the update (git committer name): they declare the change, the review
-    # of the branch approves it.
+    # of the branch approves it. The trailers go in even where
+    # git.protected_change_trailer is false: pr-check.sh still requires
+    # them for policy.json and the artifacts there, and pre-commit lets
+    # this exact change through on its own shape (#154).
     protected="$(cd "$wt" && GATES_POLICY_FILE="" CLAUDE_PROJECT_DIR="$wt" gates_staged_protected_paths)"
-    if [[ -n "$protected" ]] \
-        && (cd "$wt" && GATES_POLICY_FILE="" CLAUDE_PROJECT_DIR="$wt" gates_protected_trailer_enabled); then
+    if [[ -n "$protected" ]]; then
         local approver
         approver="$(git -C "$wt" var GIT_COMMITTER_IDENT 2>/dev/null | sed 's/ <.*$//')"
         trailers="$(while IFS= read -r p; do printf 'Protected-Change: %s\n' "$p"; done <<<"$protected")
@@ -280,6 +292,25 @@ Enforcement delta (baseline $current -> $target):
 $delta${trailers:+
 
 $trailers}"
+    # The delta quotes no policy values, but the source, the versions and
+    # hook names are still the repo's own text. Should the branch's message
+    # rules refuse the message (commit-msg here, pr-check for the PR body),
+    # fall back to one that carries none of it: counts only (#154).
+    if ! update_message_ok "$wt" "$msg"; then
+        local counts
+        counts="$(gates_contract_deviations "$CONTRACT_SNAPSHOT" "$work/baseline.json" delta 2>/dev/null \
+            | awk -F'\t' 'NF { n[$1]++ } END { printf "%d strengthened, %d weakened, %d changed", n["strengthened"], n["weakened"], n["changed"] }')"
+        msg="chore: update policy baseline
+
+New digest: $new_digest
+
+Enforcement delta: ${counts:-not available}
+(Versions, source and changed paths are left out because this repo's
+message rules refuse the full message. The branch name carries the new
+version; the diff of baseline.json shows every change.)${trailers:+
+
+$trailers}"
+    fi
     if ! (cd "$wt" && git -c commit.gpgsign=false commit -q -m "$msg"); then
         discard_update
         echo "contract: could not commit the update on $branch (cause above); branch and worktree removed -- fix the cause and re-run" >&2
@@ -294,7 +325,7 @@ $trailers}"
         && grep -q github <<<"$(git -C "$PROJECT_ROOT" remote get-url origin 2>/dev/null)"; then
         if git -C "$PROJECT_ROOT" push -q -u origin "$branch" 2>/dev/null \
             && (cd "$PROJECT_ROOT" && gh pr create --head "$branch" \
-                --title "chore: update policy baseline $current -> $target" \
+                --title "${msg%%$'\n'*}" \
                 --body "$msg" 2>/dev/null); then
             echo "contract: pull request opened for $branch"
             return 0
