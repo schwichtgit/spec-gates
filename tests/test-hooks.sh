@@ -781,6 +781,20 @@ check "a local rule cannot lift a shipped block" 2 bash -c "printf '%s' '{\"tool
 mkdir -p "$LR/.specify/gates/hooks.local.d/validate-bash/20-unreadable.sh"
 check "an unreadable rule refuses" 2 bash -c "printf '%s' '{\"tool_input\":{\"command\":\"ls\"}}' | CLAUDE_PROJECT_DIR='$LR' '$HOOKS/validate-bash.sh'"
 rmdir "$LR/.specify/gates/hooks.local.d/validate-bash/20-unreadable.sh"
+# #132: a dangling symlink is a rule that cannot be read, a rule that hangs
+# is killed and refuses, and a rule that ignores a large tool call on stdin
+# does not turn into a refusal (the old pipe died of SIGPIPE).
+ln -s "$WORKDIR/no-such-rule.sh" "$LR/.specify/gates/hooks.local.d/validate-bash/20-dangling.sh"
+check "a dangling-symlink rule refuses" 2 bash -c "printf '%s' '{\"tool_input\":{\"command\":\"ls\"}}' | CLAUDE_PROJECT_DIR='$LR' '$HOOKS/validate-bash.sh'"
+rm -f "$LR/.specify/gates/hooks.local.d/validate-bash/20-dangling.sh"
+rule validate-bash 30-hangs.sh 'sleep 20'
+check "a rule still running after the timeout refuses" 0 bash -c "out=\$(printf '%s' '{\"tool_input\":{\"command\":\"ls\"}}' | GATES_LOCAL_TIMEOUT=1 CLAUDE_PROJECT_DIR='$LR' '$HOOKS/validate-bash.sh' 2>&1); rc=\$?; [[ \$rc -eq 2 ]] && grep -q 'still running after 1s' <<<\"\$out\""
+rm -f "$LR/.specify/gates/hooks.local.d/validate-bash/30-hangs.sh"
+# Through a file: Linux caps a single argv string at 128 KB.
+{ printf 'echo '; head -c 200000 /dev/zero | tr '\0' x; } >"$WORKDIR/rule-big.txt"
+jq -n --rawfile c "$WORKDIR/rule-big.txt" '{tool_input:{command:$c}}' >"$WORKDIR/rule-big.json"
+check "a rule ignoring a 200 KB tool call allows it" 0 \
+    bash -c "CLAUDE_PROJECT_DIR='$LR' '$HOOKS/validate-bash.sh' <'$WORKDIR/rule-big.json'"
 rule protect-files 10-no-vendor.sh 'if grep -q "\"vendor/"; then echo "vendor/ is generated" >&2; exit 1; fi'
 check "protect-files local rule refuses" 2 bash -c "printf '%s' '{\"tool_input\":{\"file_path\":\"vendor/x.go\"}}' | CLAUDE_PROJECT_DIR='$LR' '$HOOKS/protect-files.sh'"
 check "protect-files local rule refuses before an ask" 2 bash -c "printf '%s' '{\"tool_input\":{\"file_path\":\"vendor/secret_util.go\"}}' | CLAUDE_PROJECT_DIR='$LR' '$HOOKS/protect-files.sh'"

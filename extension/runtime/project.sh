@@ -51,8 +51,8 @@ while [[ $# -gt 0 ]]; do
         --check) CHECK=1 DRY=1 ;;
         --no-agent-hooks) AGENT=0 ;;
         --no-git-hooks) GITHOOKS=0 ;;
-        --take-upstream) [[ $# -ge 2 ]] || refuse "--take-upstream needs a path"; TAKE="$(addline "$TAKE" "$2")"; shift ;;
-        --keep-local) [[ $# -ge 2 ]] || refuse "--keep-local needs a path"; KEEP="$(addline "$KEEP" "$2")"; shift ;;
+        --take-upstream) [[ $# -ge 2 ]] || refuse "--take-upstream needs a path"; TAKE="$(addline "$TAKE" "${2#./}")"; shift ;;
+        --keep-local) [[ $# -ge 2 ]] || refuse "--keep-local needs a path"; KEEP="$(addline "$KEEP" "${2#./}")"; shift ;;
         --allow-downgrade) DOWNGRADE=1 ;;
         --add-lint-ignores) LINTIGN=1 ;;
         --probe-git) PROBEGIT=1 ;;
@@ -63,6 +63,10 @@ while [[ $# -gt 0 ]]; do
     esac
     shift
 done
+while IFS= read -r p; do
+    [[ -n "$p" ]] && inlist "$KEEP" "$p" \
+        && refuse "$p is named by both --take-upstream and --keep-local; choose one"
+done <<<"$TAKE"
 if [[ "$SKIPCANARY" -eq 1 && "${GATES_TEST:-}" != "1" ]]; then
     refuse "--skip-canary is for the test suite only (GATES_TEST=1); projection must prove itself"
 fi
@@ -140,18 +144,28 @@ GATES_KNOWN_FILE="$SRC/lib/known-releases.sha256"
 
 TABLE="$(gates_projection_table "$SRC" "$AGENT")"
 targets="$(printf '%s\n' "$TABLE" | cut -f2)"
-for p in $TAKE $KEEP; do
+# Line by line: a path may contain spaces.
+while IFS= read -r p; do
+    [[ -n "$p" ]] || continue
     inlist "$targets" "$p" || refuse "$p is not a projected file"
-done
+done <<<"$(addline "$TAKE" "$KEEP")"
 
-WRITES="" CONFLICTS="" HELD="" STALE="" KEPT="" NEWMAN="" CHANGES=""
+WRITES="" CONFLICTS="" HELD="" STALE="" KEPT="" RELEASED="" NEWMAN="" CHANGES=""
 while IFS=$'\t' read -r s r; do
     [[ -n "$s" ]] || continue
     st="$(gates_classify "$ROOT" "$SRC/$s" "$r")" || refuse "cannot hash $r"
     # --keep-local is honored for any existing file, edited or not: the
     # maintainer asked for a hold.
     if inlist "$KEEP" "$r" && [[ "$st" != "held" ]]; then
-        [[ "$st" == "absent" ]] && refuse "--keep-local $r: there is no local file to keep"
+        # A deleted file that projection wrote before can be held as
+        # deleted; one that was never projected has nothing to keep.
+        [[ "$st" == "absent" && -z "$(gates_manifest_hash "$r")" ]] \
+            && refuse "--keep-local $r: there is no local file to keep"
+        st=edited
+    fi
+    # --take-upstream on a held file replaces it and releases the hold.
+    if [[ "$st" == "held" ]] && inlist "$TAKE" "$r"; then
+        RELEASED="$(addline "$RELEASED" "$r")"
         st=edited
     fi
     case "$st" in
@@ -323,7 +337,23 @@ fi
 
 [[ -n "$WRITES" ]] && CHANGES="$(addline "$CHANGES" "$(printf '%s\n' "$WRITES" | cut -f2 | sed 's/^/write /')")"
 [[ -n "$KEPT" ]] && CHANGES="$(addline "$CHANGES" "$(printf '%s\n' "$KEPT" | sed 's/^/hold (keep local) /')")"
-[[ "$NEED_RTV" -eq 1 ]] && CHANGES="$(addline "$CHANGES" "record runtime version $VERSION")"
+[[ -n "$RELEASED" ]] && CHANGES="$(addline "$CHANGES" "$(printf '%s\n' "$RELEASED" | sed 's/^/release the hold on /')")"
+# Projected scripts that lost their execute bit, listed by name: git and
+# Claude Code silently skip a hook that is not executable.
+EXECFIX=""
+while IFS=$'\t' read -r s r; do
+    [[ -n "$r" && -f "$ROOT/$r" && ! -x "$ROOT/$r" ]] && gates_is_exec_target "$r" \
+        && ! inlist "$(printf '%s\n' "$WRITES" | cut -f2)" "$r" && EXECFIX="$(addline "$EXECFIX" "$r")"
+done <<<"$TABLE"
+[[ -n "$EXECFIX" ]] && CHANGES="$(addline "$CHANGES" "$(printf '%s\n' "$EXECFIX" | sed 's/^/restore the execute bit on /')")"
+if [[ "$NEED_RTV" -eq 1 ]]; then
+    OLD_RTV="$(head -n 1 "$RTV_FILE" 2>/dev/null || true)"
+    if [[ -n "$OLD_RTV" ]]; then
+        CHANGES="$(addline "$CHANGES" "record runtime version $VERSION (.runtime-version said $OLD_RTV)")"
+    else
+        CHANGES="$(addline "$CHANGES" "record runtime version $VERSION")"
+    fi
+fi
 [[ "$NEED_GI" -eq 1 ]] && CHANGES="$(addline "$CHANGES" "add attestations.jsonl to .specify/gates/.gitignore")"
 [[ -n "$MERGED" ]] && CHANGES="$(addline "$CHANGES" "merge agent hooks into .claude/settings.json")"
 [[ -n "$HOOKPLAN" ]] && CHANGES="$(addline "$CHANGES" "$(printf '%s\n' "$HOOKPLAN" | sed 's/^/install the gates stub as git hook /')")"
@@ -434,6 +464,13 @@ if [[ -n "$HOOKPLAN" ]]; then
     for n in $HOOKPLAN; do
         { cp "$STUB" "$HOOKSDIR/$n" && chmod +x "$HOOKSDIR/$n"; } || fail_write "$HOOKSDIR/$n"
     done
+fi
+if [[ -n "$RELEASED" ]]; then
+    # grep -v exits 1 when no line is left; that is an empty holds file.
+    grep -vxF -f <(printf '%s\n' "$RELEASED") "$ROOT/$GATES_HOLDS_REL" >"$ROOT/$GATES_HOLDS_REL.tmp.$$"
+    if [[ "$?" -gt 1 ]] || ! mv -f "$ROOT/$GATES_HOLDS_REL.tmp.$$" "$ROOT/$GATES_HOLDS_REL"; then
+        fail_write "$GATES_HOLDS_REL"
+    fi
 fi
 if [[ -n "$KEPT" ]]; then
     printf '%s\n' "$KEPT" >>"$ROOT/$GATES_HOLDS_REL" || fail_write "$GATES_HOLDS_REL"

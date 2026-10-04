@@ -159,6 +159,33 @@ rc_is "deleted projected file -> exit 3" 3 "$D" --skip-canary
 rc_is "a path outside the table is refused" 2 "$D" --skip-canary --take-upstream src/app.ts
 
 echo ""
+echo "=== holds: release, deletions, path forms (#132) ==="
+fixture
+rc_is "initial projection" 0 "$D" --skip-canary
+printf '# local\n' >>"$D/.specify/gates/doctor.sh"
+rc_is "a ./-prefixed path is accepted" 0 "$D" --skip-canary --keep-local ./.specify/gates/doctor.sh
+ok "the hold records the path without ./" grep -qxF .specify/gates/doctor.sh "$D/.specify/gates/.upgrade-holds"
+rc_is "--take-upstream on a held file resolves" 0 "$D" --skip-canary --take-upstream .specify/gates/doctor.sh
+ok "the held file now equals upstream" cmp -s "$D/.specify/extensions/gates/runtime/doctor.sh" "$D/.specify/gates/doctor.sh"
+ok "the hold is released" bash -c "! grep -qxF .specify/gates/doctor.sh '$D/.specify/gates/.upgrade-holds'"
+printf '# local\n' >>"$D/.specify/gates/doctor.sh"
+rc_is "the same path for both flags is refused" 2 "$D" --skip-canary --keep-local .specify/gates/doctor.sh --take-upstream .specify/gates/doctor.sh
+ok "the refusal says to choose" grep -q 'choose one' <<<"$OUT"
+rc_is "a path with a space is one path, not two" 2 "$D" --skip-canary --keep-local ".specify/gates/no such file.sh"
+ok "the refusal names the whole path" grep -q 'no such file.sh is not a projected file' <<<"$OUT"
+rm -f "$D/.specify/gates/contract.sh"
+rc_is "a deleted projected file can be held as deleted" 0 "$D" --skip-canary --keep-local .specify/gates/doctor.sh --keep-local .specify/gates/contract.sh
+ok "the deletion stays deleted" test ! -e "$D/.specify/gates/contract.sh"
+rc_is "the held deletion is left alone on the next run" 0 "$D" --skip-canary
+ok "still deleted" test ! -e "$D/.specify/gates/contract.sh"
+chmod -x "$D/.specify/gates/verify.sh"
+rc_is "a lost execute bit is planned" 0 "$D" --skip-canary --dry-run
+ok "the plan names the file" grep -q 'restore the execute bit on .specify/gates/verify.sh' <<<"$OUT"
+printf '9.9.9\n' >"$D/.specify/gates/.runtime-version"
+rc_is "a wrong version marker is planned" 0 "$D" --skip-canary --dry-run
+ok "the plan says what the marker claimed" grep -q 'runtime-version said 9.9.9' <<<"$OUT"
+
+echo ""
 echo "=== upgrading a 0.3.x projection (no manifest) ==="
 # Project v0.3.6's files the way 0.3.6 did (no manifest), then upgrade:
 # the known-release table must recognize every untouched file (#70).

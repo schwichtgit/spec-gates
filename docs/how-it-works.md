@@ -437,7 +437,9 @@ reviewed change.
 next upgrade, a file that no longer matches its hash is a local edit: it is
 reported (exit 3) and nothing is written until the maintainer keeps it,
 which holds it in `.specify/gates/.upgrade-holds` from then on, or takes
-the new version. A project projected by 0.3.x has no manifest; there
+the new version (`--take-upstream`, which also releases an existing hold).
+Doctor flags a held file whose upstream copy changed since the hold, so a
+hold never silently pins an old version of a hook. A project projected by 0.3.x has no manifest; there
 `project.sh` compares each file against the hashes of what the 0.3.x
 releases shipped (`lib/known-releases.sha256`), so only real edits stop
 the upgrade. Doctor reports the same state between upgrades: local edits

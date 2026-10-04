@@ -60,7 +60,8 @@ SHA256SUMS`) and `cosign verify-blob` with the identity and issuer
 6. **Resolve local edits** (exit 3 lists them). For each listed file, ask
    the user: keep the local version (`--keep-local <path>`, recorded in
    `.specify/gates/.upgrade-holds` so later upgrades leave it alone too),
-   or take the new release's version (`--take-upstream <path>`; show
+   or take the new release's version (`--take-upstream <path>`, which
+   also releases an existing hold; show
    `diff <path> .specify/extensions/gates/runtime/<source>` first).
 7. **Project once**:
    `bash .specify/extensions/gates/runtime/project.sh [the resolution flags]`.
