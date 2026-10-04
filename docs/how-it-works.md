@@ -467,18 +467,23 @@ unchecked claim is worse than no claim.
 **Align.** `constitution.sh align` evaluates, per annotated principle,
 whether its surface is actually wired, all from local files with no
 network: a `policy` key present in the effective policy (and equal to
-`expect`), the ref read as a full dotted path (`hooks.markdownlint.severity`;
-a ref not starting with a top-level section such as `git` or `attestation`
-is short for `hooks.<ref>`); an `agent-hook` present, executable and
-referenced in `settings.json`; a `git-hook` installed, executable and
-delegating to the runtime; a `ci` pipeline with a live `verify.sh
---boundary ci` step that also runs the named template step (`gates`,
-`canary`, `pr`) or, for any other ref, names it, where comments and
-GitHub steps under `if: false` do not count; an `accept` block that parses
+`expect`; a list or object must be non-empty, and `expect` names an entry
+the list contains or a key the object has), the ref read as a full dotted
+path (`hooks.markdownlint.severity`; a ref not starting with a top-level
+section such as `git` or `attestation` is short for `hooks.<ref>`); an
+`agent-hook` present, executable and referenced in `settings.json`; a
+`git-hook` installed, executable and delegating to the runtime; a `ci`
+pipeline with a live `verify.sh --boundary ci` step that also runs the
+named template step (`gates`, `canary`, `pr`) or, for any other ref, names
+it, where live means what doctor's CI drift check reads (below); an
+`accept` block that parses
 and verifies the named criterion; a `scanner` rule in the tool's config.
 Each principle is `active`, `missing` (with a concrete proposed change), or
-`pending-boundary` (the whole boundary is not projected yet). Proposed
-policy changes target the **overlay**, so with a live contract they flow
+`pending-boundary` (the whole boundary is not projected yet). A policy
+proposal follows `policy.schema.json`, so applying it makes the principle
+active; a marker no valid policy can satisfy (a path the schema lacks, an
+`expect` outside the allowed values) is proposed as an annotation fix
+instead. Proposed policy changes target the **overlay**, so with a live contract they flow
 through `sync` into the effective policy like any other deviation. `align`
 never writes; applying is the session's job, change by change, with
 approval.
@@ -543,10 +548,32 @@ that are not held, holds that went stale (the held file now equals the
 installed copy), and CI pipelines missing a template step (the gates,
 canary and PR-check steps, recognized by command on GitHub, GitLab and
 Jenkins; `ci:<step>` in the holds file records a deliberate omission).
-Comments (`#` in YAML, `//` and `/* */` in a Jenkinsfile) and GitHub steps
-or jobs under `if: false` are not steps. A `ci:<step>` hold for a step the
-pipeline runs is stale and fails; one naming no template step gets a
-recommendation to remove it.
+Only a live step counts: one that runs on a push or pull request and can
+fail the pipeline. Doctor removes, as text, what never runs or can never
+fail: comments (`#` in YAML, `//` and `/* */` in a Jenkinsfile); steps or
+jobs under `if: false`; a command only printed by `echo` or `printf`; a
+command followed by `|| true`, `|| :`, `|| exit 0` or `|| echo`; a command
+with `--dry-run`; anything after an unconditional `exit 0` in the same run
+block; GitHub `continue-on-error: true` on the step or job, and a workflow
+whose only triggers are `workflow_dispatch` and `schedule`; GitLab
+`allow_failure: true`, `when: manual` or `when: never` on the job or as
+its unconditional first rule, and a hidden `.name:` job nothing extends;
+a Jenkins stage under `when { expression { false } }` and an `sh` step with
+`returnStatus: true`. The gates step is `verify.sh` with `--boundary ci`
+among its arguments; another boundary does not count. A pipeline that
+calls `verify.sh` but has no live gates step fails (the boundary looks
+wired and enforces nothing); a repository with no such pipeline at all
+gets a recommendation. A `ci:<step>` hold for a step the pipeline runs is
+stale and fails; one naming no template step gets a recommendation to
+remove it.
+
+The check reads files, so it has limits: a heredoc, `set +e`, a pipe into
+another command without `pipefail`, a wrapper script that runs the step, an
+`if:` or `continue-on-error:` computed by an expression, conditional GitLab
+rules, a job reached only through `extends:` or an alias, and a Jenkins
+`when` other than a literal false are read as live. The proof that the gates
+ran is the CI run's own log: `verify.sh` prints a
+`gates: boundary=ci failed=N warnings=N` summary line.
 
 ### Interrupted and unusual installs
 

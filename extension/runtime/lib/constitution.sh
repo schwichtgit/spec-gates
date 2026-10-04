@@ -556,30 +556,30 @@ _gates_const_policy_path() { # <ref>
 }
 
 # policy: the ref's full path is present in the ENFORCED policy (effective
-# when a 003 contract is live -- the policy loader resolves that) and, if
-# expect is given, equal to it; an enabled-style key must not be false.
+# when a 003 contract is live -- the policy loader resolves that). A scalar
+# must equal expect when one is given, and an enabled-style key must not be
+# false. A list or object (#171) is present when non-empty; expect on a list
+# names an element it must contain, on an object a key it must have.
 _gates_const_eval_policy() { # <ref> <expect>
     local ref="${1:-}" expect="${2:-}"
-    local path file val
+    local path file state=""
     path="$(_gates_const_policy_path "$ref")"
     file="$(gates_policy_file 2>/dev/null)"
-    val=""
-    # No `// ""`: a literal false must round-trip as "false", not as absent.
-    [[ -n "$file" && -f "$file" ]] && val="$(jq -r --arg p "$path" '
+    [[ -n "$file" && -f "$file" ]] && state="$(jq -r --arg p "$path" --arg e "$expect" '
         (try getpath($p | split(".")) catch null) as $v
-        | if $v == null then ""
-          elif ($v | type) == "array" or ($v | type) == "object" then ""
-          else ($v | tostring) end
+        | ($v | type) as $t
+        | if $v == null then "missing"
+          elif $t == "array" or $t == "object" then
+            if ($v | length) == 0 then "missing"
+            elif $e == "" then "active"
+            elif $t == "array" then (if any($v[]; tostring == $e) then "active" else "missing" end)
+            elif ($v | has($e)) then "active"
+            else "missing" end
+          elif $e != "" then (if ($v | tostring) == $e then "active" else "missing" end)
+          elif $v == false then "missing"
+          else "active" end
     ' "$file" 2>/dev/null)"
-    if [[ -z "$val" ]]; then
-        echo missing
-        return 0
-    fi
-    if [[ -n "$expect" ]]; then
-        [[ "$val" == "$expect" ]] && echo active || echo missing
-        return 0
-    fi
-    [[ "$val" == "false" ]] && echo missing || echo active
+    [[ "$state" == "active" ]] && echo active || echo missing
 }
 
 # agent-hook: <script.sh> exists under .claude/hooks/gates/, is executable, and
@@ -631,9 +631,10 @@ _gates_const_eval_git_hook() { # <ref> <root>
 
 # ci: a pipeline runs the gates (a live `verify.sh --boundary ci` step) and
 # the ref: a template step id (gates, canary, pr) must be a live step, any
-# other ref must appear in the live text. Live means comments and disabled
-# steps removed (lib/manifest.sh gates_ci_live, the reading doctor's drift
-# check uses), so a `# TODO: wire gates` line enforces nothing (#139). No
+# other ref must appear in the live text. Live means comments, disabled
+# steps and steps that cannot fail removed (lib/manifest.sh gates_ci_live,
+# the reading doctor's drift check uses), so a `# TODO: wire gates` line or
+# an `|| true` step enforces nothing (#139, #171). No
 # pipeline file at all is pending-boundary (the CI boundary is simply not
 # projected yet).
 _gates_const_eval_ci() { # <ref> <root>
@@ -715,6 +716,103 @@ _gates_const_eval_scanner() { # <ref> <root>
     echo missing
 }
 
+# policy.schema.json beside this library (the projected runtime and the
+# extension both keep it one level up).
+GATES_CONST_SCHEMA="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)/policy.schema.json"
+
+# What policy.schema.json allows at a dotted path:
+# "<type>|<enum>|<item enum>|<required>|<keys>" (lists comma-joined; keys
+# only for an object that allows no others), "unknown" for a path the
+# schema has no room for, empty when the schema cannot be read.
+_gates_const_schema_at() { # <path>
+    [[ -f "$GATES_CONST_SCHEMA" ]] || return 0
+    jq -r --arg p "$1" '
+        . as $root
+        | def deref: if type == "object" and has("$ref")
+              then .["$ref"] as $r | $root | getpath($r | ltrimstr("#/") | split("/"))
+              else . end;
+        reduce ($p | split("."))[] as $k (.;
+            if . == null then null
+            else deref
+                | if ((.properties // {}) | has($k)) then .properties[$k]
+                  elif (.additionalProperties | type) == "object" then .additionalProperties
+                  else null end
+            end)
+        | if . == null then "unknown"
+          else deref
+            | [(.type // "" | tostring), ((.enum // []) | map(tostring) | join(",")),
+               ((.items.enum // []) | map(tostring) | join(",")),
+               ((.required // []) | join(",")),
+               (if .additionalProperties == false then (.properties // {}) | keys | join(",") else "" end)]
+            | join("|")
+          end
+    ' "$GATES_CONST_SCHEMA" 2>/dev/null
+}
+
+# Is <value> in the comma-joined <allowed> list? An empty list allows all.
+_gates_const_allows() { # <allowed> <value>
+    [[ -z "$1" ]] || grep -qxF -- "$2" <<<"$(tr ',' '\n' <<<"$1")"
+}
+
+# A policy proposal that converges (#171): applying it makes the principle
+# active. The schema decides the shape (a list gets an element added, a
+# boolean is set to true); an annotation no valid policy can satisfy -- a
+# path the schema lacks, an expect outside the allowed values -- is reported
+# as the annotation to fix, never as a policy edit.
+_gates_const_policy_proposal() { # <path> <expect>
+    local path="$1" expect="$2" info type enum ienum req keys change=""
+    info="$(_gates_const_schema_at "$path")"
+    if [[ "$info" == unknown ]]; then
+        printf 'fix the annotation: policy.schema.json has no %s, so no policy can satisfy it' "$path"
+        return 0
+    fi
+    IFS='|' read -r type enum ienum req keys <<<"$info"
+    case "$type" in
+        boolean)
+            if [[ -n "$expect" && "$expect" != true && "$expect" != false ]]; then
+                printf 'fix the annotation: %s is a boolean, expect=%s can never match' "$path" "$expect"
+                return 0
+            fi
+            change="set $path = ${expect:-true}"
+            ;;
+        array)
+            if [[ -z "$expect" ]]; then
+                change="add at least one entry to $path"
+            elif _gates_const_allows "$ienum" "$expect"; then
+                change="add \"$expect\" to the $path list"
+            else
+                printf 'fix the annotation: %s entries are one of %s, expect=%s can never match' "$path" "$ienum" "$expect"
+                return 0
+            fi
+            ;;
+        object)
+            if [[ -n "$expect" ]] && ! _gates_const_allows "$keys" "$expect"; then
+                printf 'fix the annotation: %s has only the keys %s, expect=%s can never match' "$path" "$keys" "$expect"
+                return 0
+            fi
+            change="add $path with at least one key"
+            [[ -n "$expect" ]] && change="add key \"$expect\" to $path"
+            [[ -n "$req" ]] && change="$change (required: $req)"
+            ;;
+        *)
+            if [[ -n "$expect" ]] && ! _gates_const_allows "$enum" "$expect"; then
+                printf 'fix the annotation: %s is one of %s, expect=%s can never match' "$path" "$enum" "$expect"
+                return 0
+            elif [[ "$type" == integer && -n "$expect" && ! "$expect" =~ ^-?[0-9]+$ ]]; then
+                printf 'fix the annotation: %s is an integer, expect=%s can never match' "$path" "$expect"
+                return 0
+            elif [[ -n "$expect" ]]; then
+                change="set $path = $expect"
+            elif [[ -n "$enum" ]]; then
+                change="set $path to one of $enum"
+            else
+                change="set $path to a value other than false"
+            fi
+            ;;
+    esac
+    printf 'edit policy.json (overlay): %s, then re-sync if a contract is live' "$change"
+}
+
 # The concrete change proposed for a missing surface (R5). Policy changes name
 # the OVERLAY on purpose — with a 003 contract live, that edit flows through
 # sync into the effective policy exactly like any overlay deviation.
@@ -722,9 +820,7 @@ _gates_const_proposed() { # <surface> <ref> <expect>
     local surface="${1:-}" ref="${2:-}" expect="${3:-}"
     case "$surface" in
         policy)
-            local want="${expect:-non-false}"
-            printf 'edit policy.json (overlay): set %s = %s, then re-sync if a contract is live' \
-                "$(_gates_const_policy_path "$ref")" "$want"
+            _gates_const_policy_proposal "$(_gates_const_policy_path "$ref")" "$expect"
             ;;
         agent-hook)
             printf 'wire .claude/hooks/gates/%s and reference it in settings.json (/speckit.gates.init)' "$ref"
