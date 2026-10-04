@@ -128,6 +128,34 @@ else
     fail "jenkins installs shellcheck where the gate steps do not look"
 fi
 
+# The templates and this repository's CI run one node major (#148): the
+# GitLab image tag, the GitHub template's and this repository's
+# node-version. A different major resolves different linter behavior.
+first_match() { # <ERE with one group> <file>: the group of the first matching line
+    sed -nE "/$1/{s//\\1/p;q;}" "$2"
+}
+GH_NODE="$(first_match '^[[:space:]]*node-version:[[:space:]]*"?([0-9]+).*' "$GH_T")"
+GL_NODE="$(first_match '^[[:space:]]*image:[[:space:]]*node:([0-9]+).*' "$GL_T")"
+CI_NODE="$(first_match '^[[:space:]]*node-version:[[:space:]]*"?([0-9]+).*' "$REPO_ROOT/.github/workflows/ci.yml")"
+if [[ -n "$GH_NODE" && "$GL_NODE" == "$GH_NODE" && "$CI_NODE" == "$GH_NODE" ]]; then
+    pass "ci templates and this repository's CI use node $GH_NODE"
+else
+    fail "node majors differ: github template ${GH_NODE:-none}, gitlab image ${GL_NODE:-none}, ci.yml ${CI_NODE:-none}"
+fi
+
+# This repository's CI installs shellcheck with the shipped installer and
+# its checksums, not a copy of its own that could drift from them (#148).
+if grep -qE 'bash extension/runtime/install-shellcheck\.sh' <<<"$(code_lines "$REPO_ROOT/.github/workflows/ci.yml")"; then
+    pass "ci.yml installs shellcheck with the shipped installer"
+else
+    fail "ci.yml does not run extension/runtime/install-shellcheck.sh"
+fi
+if [[ ! -e "$REPO_ROOT/.github/scripts/install-shellcheck.sh" && ! -e "$REPO_ROOT/.github/shellcheck.sha256" ]]; then
+    pass "no second shellcheck installer or checksum file in .github"
+else
+    fail "a second shellcheck installer or checksum file exists in .github"
+fi
+
 # ===========================================================================
 # Part 2: the gate lives in exactly one place
 # ===========================================================================

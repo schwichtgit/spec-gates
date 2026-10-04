@@ -58,8 +58,11 @@ files must survive the extension being removed.
   orchestrator, severity). Apply requested edits. This is a conversation,
   not a dump — the user must understand what will be enforced.
 - Offer the settings the seed leaves at their defaults, one question each:
-  `git.block_bulk_staging` (refuse `git add -A`, `.`, `:/` and directory
-  arguments at the agent boundary; off by default) and the branding
+  `git.block_bulk_staging` (refuse `git add`/`git stage` with `-A`,
+  `--all`, `--no-ignore-removal`, `--pathspec-from-file`, `.`, `:/` and
+  other pathspec magic, globs, `"$PWD"`, `~` and directory arguments at
+  the agent boundary, asking on an argument it cannot resolve; off by
+  default) and the branding
   `git.ai_branding.allow_phrases` (phrases a repository that integrates an
   AI provider legitimately uses, such as an SDK name).
 - On approval, move the seed to `.specify/gates/policy.json`. Re-validate

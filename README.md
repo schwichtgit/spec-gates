@@ -390,9 +390,11 @@ if grep -q 'vendor/'; then echo "vendor/ is generated; run make vendor" >&2; exi
 
 Two settings in `.specify/gates/policy.json` cover the most common cases:
 
-- `git.block_bulk_staging: true` refuses `git add -A`, `--all`, `.`,
-  `:/` and other pathspec magic, globs (quoted or not), `"$PWD"` and
-  directory arguments at the agent boundary, so an untracked directory
+- `git.block_bulk_staging: true` refuses `git add -A` (also inside an
+  option cluster such as `-vA`), `--all`, `--no-ignore-removal`,
+  `--pathspec-from-file`, `.`, `:/` and other pathspec magic, globs
+  (quoted or not), `"$PWD"`, `~` and directory arguments (also under
+  `git -C <dir>`) at the agent boundary, so an untracked directory
   cannot be swept into a commit. `git stage`, `env git add`,
   `GIT_DIR=… git add` and `git --no-pager add` count too; an argument the
   check cannot resolve (`"$f"`) asks. Explicit files, `-u` and `-p` stay

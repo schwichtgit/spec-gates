@@ -2,7 +2,7 @@
 # (projected by /speckit.gates.ci gitlab)
 gates:
   stage: test
-  image: node:22-slim
+  image: node:26-slim
   timeout: 20m
   interruptible: true
   variables:

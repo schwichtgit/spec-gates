@@ -549,9 +549,9 @@ DN="$WORKDIR/const-nomark"
 project "$DN" "$ALL" yes
 mkdir -p "$DN/.specify/memory"
 printf '# C\n\n## Core Principles\n\n### I. X\n\nprose, no marker\n' >"$DN/.specify/memory/constitution.md"
-if [[ -x "$REPO_ROOT/node_modules/.bin/prettier" ]]; then
-    healthy "constitution without markers -> not a doctor failure" "$(run_doctor "$DN")" "$LACK_ALL"
-fi
+# doctor runs (and writes out.txt) on every host; only the exit-code case
+# depends on the linters being installed, and healthy skips it visibly.
+healthy "constitution without markers -> not a doctor failure" "$(run_doctor "$DN")" "$LACK_ALL"
 if grep -q "no enforcement annotations" "$DN/out.txt"; then
     echo "PASS: doctor nudges an un-annotated constitution"
     PASS=$((PASS + 1))
@@ -579,9 +579,7 @@ x
 <!-- gates:enforce surface=prose -->
 x
 EOF
-if [[ -x "$REPO_ROOT/node_modules/.bin/prettier" ]]; then
-    healthy "all-enforced constitution -> doctor exit 0" "$(run_doctor "$DE")" "$LACK_ALL"
-fi
+healthy "all-enforced constitution -> doctor exit 0" "$(run_doctor "$DE")" "$LACK_ALL"
 if grep -q "I. Enforced" "$DE/out.txt" && grep -q "II. Prose" "$DE/out.txt"; then
     echo "PASS: doctor lists enforced and prose-only principles"
     PASS=$((PASS + 1))

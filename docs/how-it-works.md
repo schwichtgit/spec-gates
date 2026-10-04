@@ -39,8 +39,14 @@ spec-gates uses four of them:
 - `PreToolUse(Bash)` → `validate-bash.sh`: refuses destructive commands
   (`rm` of root, home or a path outside the temp directories, force push,
   hard reset, `chmod 777`, piping a download into a shell, …). With
-  `git.block_bulk_staging` it also refuses `git add -A`, `.`, `:/` and
-  directory arguments. `validate-pr.sh`: checks the title and body of
+  `git.block_bulk_staging` it also refuses bulk staging: `git add` or
+  `git stage` with `-A` (also in a cluster such as `-vA`), `--all`,
+  `--no-ignore-removal`, `--pathspec-from-file`, `.`, `:/` and other
+  pathspec magic, globs (quoted or not), `"$PWD"`, `~` and directory
+  arguments, including behind `env`, `command`, `sudo`, variable
+  assignments and git's global options (`-C`, `--no-pager`, …). An
+  argument it cannot resolve (`"$f"`) asks. `validate-pr.sh`: checks the
+  title and body of
   `gh pr create|edit` and `glab mr create|update` with the commit-message
   rules.
 - `PostToolUse(Write|Edit)` → `post-edit.sh`: formats the touched file per
