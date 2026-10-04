@@ -9,8 +9,9 @@
 #
 # Missing hook, missing field, or missing policy file all yield empty output
 # with exit 0 -- the loader is fail-open. Strict checks happen in
-# gates_validate_policy: init validates the policy it seeds, and contract
-# sync validates the baseline, overlay and effective policy before writing.
+# gates_validate_policy: verify.sh refuses to run any gate on a policy that
+# fails it (#124), init validates the policy it seeds, and contract sync
+# validates the baseline, overlay and effective policy before writing.
 #
 # Usage (executable CLI):
 #   policy.sh get <hook> <field>
@@ -269,6 +270,12 @@ gates_protected_check() { # <protected> <changed> <declared> <approvers>
     return "$n"
 }
 
+# Validate a policy against the rules of policy.schema.json. Prints the
+# errors on stderr; returns 0 valid, 2 file missing, 3 not valid JSON,
+# 4 wrong shape, 5 field errors. verify.sh runs this on every boundary
+# (#124), so the whole check is a single jq pass: the file is slurped
+# (exactly one JSON value, an object with a "hooks" object), and the
+# checks run under `try`, so a jq type error reports instead of passing.
 gates_validate_policy() {
     local file="${1:-}"
     if [[ -z "$file" ]]; then
@@ -278,17 +285,9 @@ gates_validate_policy() {
         echo "ERROR: policy file not found: $file" >&2
         return 2
     fi
-    if ! jq empty "$file" >/dev/null 2>&1; then
-        echo "ERROR: $file is not valid JSON" >&2
-        return 3
-    fi
-    if ! jq -e '(type == "object") and has("hooks") and (.hooks | type == "object")' \
-        "$file" >/dev/null 2>&1; then
-        echo "ERROR: $file must be an object with a top-level \"hooks\" object" >&2
-        return 4
-    fi
-    local errors
-    errors="$(jq -r '
+    local out
+    if ! out="$(jq -rs '
+        def top_keys: ["_comment", "$schema", "extends", "hooks", "protected_files", "git", "attestation", "spec"];
         def allowed_keys: [
             "include","exclude","orchestrator","severity",
             "on_missing_runner","on_missing_tests","custom_command"
@@ -299,50 +298,52 @@ gates_validate_policy() {
         def sev_values:    ["error","warning","info"];
         def runner_values: ["warn","skip"];
         def tests_values:  ["warn","skip"];
-        .hooks
-        | to_entries[]
-        | . as $e
-        | [
-            ( if ($e.value | has("orchestrator"))
-                and (orch_values | index($e.value.orchestrator)) == null
-                then "\($e.key): invalid orchestrator \"\($e.value.orchestrator)\" (allowed: \(orch_values | join(", ")))"
-              else empty end ),
-            ( if ($e.value | has("severity")) | not
-                then "\($e.key): missing required field \"severity\""
-              elif (sev_values | index($e.value.severity)) == null
-                then "\($e.key): invalid severity \"\($e.value.severity)\" (allowed: \(sev_values | join(", ")))"
-              else empty end ),
-            ( if ($e.value | has("on_missing_runner"))
-                and (runner_values | index($e.value.on_missing_runner)) == null
-                then "\($e.key): invalid on_missing_runner \"\($e.value.on_missing_runner)\" (allowed: \(runner_values | join(", ")))"
-              else empty end ),
-            ( if ($e.value | has("on_missing_tests"))
-                and (tests_values | index($e.value.on_missing_tests)) == null
-                then "\($e.key): invalid on_missing_tests \"\($e.value.on_missing_tests)\" (allowed: \(tests_values | join(", ")))"
-              else empty end ),
-            ( $e.value
-              | keys[]
-              | . as $k
-              | if (allowed_keys | index($k)) == null
-                  then "\($e.key): unknown field \"\($k)\""
-                else empty end ),
-            ( if $e.value.orchestrator == "custom" then
-                if ($e.value | has("custom_command")) | not
-                  then "\($e.key): orchestrator \"custom\" requires non-empty \"custom_command\""
-                elif ($e.value.custom_command | type) != "string"
-                  then "\($e.key): \"custom_command\" must be a string"
-                elif ($e.value.custom_command | length) == 0
-                  then "\($e.key): orchestrator \"custom\" requires non-empty \"custom_command\""
-                else empty end
-              else empty end )
-          ]
-        | .[]
-    ' "$file" 2>/dev/null)"
-
-    # Validate the optional top-level protected_files, git, and attestation
-    # sections.
-    local section_errors
-    section_errors="$(jq -r '
+        def str_array($what; $v):
+            if ($v | type) != "array" then ["\($what) must be an array of strings"]
+            elif any($v[]; type != "string") then ["\($what) entries must be strings"]
+            else [] end;
+        def hook_errors:
+            .hooks
+            | to_entries[]
+            | . as $e
+            | if ($e.value | type) != "object" then "\($e.key): must be an object"
+              else
+              ( ( if ($e.value | has("orchestrator"))
+                    and (orch_values | index($e.value.orchestrator)) == null
+                    then "\($e.key): invalid orchestrator \"\($e.value.orchestrator)\" (allowed: \(orch_values | join(", ")))"
+                  else empty end ),
+                ( if ($e.value | has("severity")) | not
+                    then "\($e.key): missing required field \"severity\""
+                  elif (sev_values | index($e.value.severity)) == null
+                    then "\($e.key): invalid severity \"\($e.value.severity)\" (allowed: \(sev_values | join(", ")))"
+                  else empty end ),
+                ( if ($e.value | has("on_missing_runner"))
+                    and (runner_values | index($e.value.on_missing_runner)) == null
+                    then "\($e.key): invalid on_missing_runner \"\($e.value.on_missing_runner)\" (allowed: \(runner_values | join(", ")))"
+                  else empty end ),
+                ( if ($e.value | has("on_missing_tests"))
+                    and (tests_values | index($e.value.on_missing_tests)) == null
+                    then "\($e.key): invalid on_missing_tests \"\($e.value.on_missing_tests)\" (allowed: \(tests_values | join(", ")))"
+                  else empty end ),
+                ( ["include", "exclude"][] as $k
+                  | select($e.value | has($k))
+                  | str_array("\($e.key): \($k)"; $e.value[$k])[] ),
+                ( $e.value
+                  | keys[]
+                  | . as $k
+                  | if (allowed_keys | index($k)) == null
+                      then "\($e.key): unknown field \"\($k)\""
+                    else empty end ),
+                ( if $e.value.orchestrator == "custom" then
+                    if ($e.value | has("custom_command")) | not
+                      then "\($e.key): orchestrator \"custom\" requires non-empty \"custom_command\""
+                    elif ($e.value.custom_command | type) != "string"
+                      then "\($e.key): \"custom_command\" must be a string"
+                    elif ($e.value.custom_command | length) == 0
+                      then "\($e.key): orchestrator \"custom\" requires non-empty \"custom_command\""
+                    else empty end
+                  else empty end ) )
+              end;
         def git_keys: ["block_main_commits", "conventional_commits", "forbid_ai_isms", "protected_change_trailer", "block_bulk_staging", "ai_branding"];
         def git_bool_keys: ["block_main_commits", "conventional_commits", "forbid_ai_isms", "protected_change_trailer", "block_bulk_staging"];
         def brand_keys: ["terms", "allow_phrases"];
@@ -351,16 +352,17 @@ gates_validate_policy() {
         def spec_keys: ["enabled", "severity", "include", "exclude", "timeout_s"];
         def spec_sev_values: ["error", "warning"];
         def ext_keys: ["source", "version", "file"];
+        def pos_int: type == "number" and floor == . and . >= 1;
+        def top_errors:
+            [ keys[] | select(IN(top_keys[]) | not) | "unknown top-level field \"\(.)\"" ];
         def pf_errors:
             if has("protected_files") then
                 (.protected_files) as $p
                 | if ($p | type) != "object" then ["protected_files: must be an object"]
                   else
                     [ $p | keys[] | select(. != "extra") | "protected_files: unknown field \"\(.)\"" ]
-                    + ( if ($p | has("extra")) and (($p.extra | type) != "array")
-                          then ["protected_files.extra: must be an array of strings"]
-                        else [ ($p.extra // [])[] | select(type != "string") | "protected_files.extra: entries must be strings" ]
-                        end )
+                    + ( if ($p | has("extra")) then str_array("protected_files.extra:"; $p.extra)
+                        else [] end )
                   end
             else [] end;
         def git_errors:
@@ -392,10 +394,7 @@ gates_validate_policy() {
                     + ( if ($a | has("enabled")) and (($a.enabled | type) != "boolean")
                           then ["attestation: enabled must be a boolean"]
                         else [] end )
-                    + ( if ($a | has("max_records"))
-                          and ( (($a.max_records | type) != "number")
-                                or (($a.max_records | floor) != $a.max_records)
-                                or ($a.max_records < 1) )
+                    + ( if ($a | has("max_records")) and ($a.max_records | pos_int | not)
                           then ["attestation: max_records must be an integer >= 1"]
                         else [] end )
                     + ( if ($a | has("parity")) and ((parity_values | index($a.parity)) == null)
@@ -415,22 +414,9 @@ gates_validate_policy() {
                     + ( if ($s | has("severity")) and ((spec_sev_values | index($s.severity)) == null)
                           then ["spec: invalid severity \"\($s.severity)\" (allowed: \(spec_sev_values | join(", ")))"]
                         else [] end )
-                    + ( if ($s | has("include")) then
-                          if (($s.include | type) != "array")
-                            then ["spec: include must be an array of strings"]
-                          else [ $s.include[] | select(type != "string") | "spec: include entries must be strings" ]
-                          end
-                        else [] end )
-                    + ( if ($s | has("exclude")) then
-                          if (($s.exclude | type) != "array")
-                            then ["spec: exclude must be an array of strings"]
-                          else [ $s.exclude[] | select(type != "string") | "spec: exclude entries must be strings" ]
-                          end
-                        else [] end )
-                    + ( if ($s | has("timeout_s"))
-                          and ( (($s.timeout_s | type) != "number")
-                                or (($s.timeout_s | floor) != $s.timeout_s)
-                                or ($s.timeout_s < 1) )
+                    + ( if ($s | has("include")) then str_array("spec: include"; $s.include) else [] end )
+                    + ( if ($s | has("exclude")) then str_array("spec: exclude"; $s.exclude) else [] end )
+                    + ( if ($s | has("timeout_s")) and ($s.timeout_s | pos_int | not)
                           then ["spec: timeout_s must be an integer >= 1"]
                         else [] end )
                   end
@@ -454,15 +440,24 @@ gates_validate_policy() {
                         else [] end )
                   end
             else [] end;
-        (pf_errors + git_errors + att_errors + spec_errors + ext_errors) | .[]
-    ' "$file" 2>/dev/null)"
-    if [[ -n "$section_errors" ]]; then
-        errors="${errors:+$errors$'\n'}$section_errors"
+        if length != 1 or (.[0] | type) != "object" or (.[0].hooks | type) != "object"
+            then "#shape"
+        else
+            .[0]
+            | try ([hook_errors] + top_errors + pf_errors + git_errors + att_errors + spec_errors + ext_errors | .[])
+              catch "policy could not be checked: \(.)"
+        end
+    ' "$file" 2>/dev/null)"; then
+        echo "ERROR: $file is not valid JSON" >&2
+        return 3
     fi
-
-    if [[ -n "$errors" ]]; then
+    if [[ "$out" == "#shape" ]]; then
+        echo "ERROR: $file must be an object with a top-level \"hooks\" object" >&2
+        return 4
+    fi
+    if [[ -n "$out" ]]; then
         echo "ERROR: policy validation failed in $file:" >&2
-        printf '%s\n' "$errors" | sed 's/^/  - /' >&2
+        printf '%s\n' "$out" | sed 's/^/  - /' >&2
         return 5
     fi
     return 0

@@ -175,6 +175,22 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   call on stdin no longer turns it into a refusal. On Linux, a tool call
   over 128 KB no longer makes every local rule refuse: it was exported into
   the rules' environment, which the kernel rejects.
+- **An invalid policy no longer makes every boundary pass** (#124).
+  `verify.sh` validates the policy it enforces (`policy.json`, or
+  `policy.effective.json` in a contract repo) before any gate runs and
+  refuses a malformed or schema-invalid one with exit 1 and the
+  validator's errors, as it does a missing policy. Before, `{}`, a
+  severity of `Error`, a `spec.timeout_s` of `"abc"` or an
+  `attestation.max_records` of `0` silently dropped or weakened gates and
+  commits landed. The Stop hook still lets the session stop and names the
+  errors; protect-files asks, the format hooks format nothing, doctor
+  reports `[MISSING] policy is invalid` instead of linters "not enabled",
+  and `project.sh` refuses to project (exit 2). The validator now runs in
+  one jq pass and also rejects what the schema already did: a hook that is
+  not an object, non-array `include`/`exclude`, unknown top-level fields,
+  an empty file, and more than one JSON document. `verify.sh --boundary`
+  accepts only `agent`, `git` or `ci`, and `--boundary` or `--accept`
+  without a value is a usage error instead of a raw bash error.
 - **Checks no longer miss matches on large input** (#117). Under
   `pipefail`, `echo "$x" | grep -q` read a match as a miss once the input
   outgrew the pipe buffer, so the pre-commit secret scan let a key through

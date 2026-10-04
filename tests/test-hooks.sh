@@ -237,6 +237,12 @@ PM="$WORKDIR/protect-malformed"
 project_runtime "$PM" "true"
 printf '{ "hooks": ' >"$PM/.specify/gates/policy.json"
 askcheck "malformed policy.json asks" '{"tool_input":{"file_path":"src/a.ts"}}' protect-files.sh CLAUDE_PROJECT_DIR="$PM"
+# Valid JSON, but extra is not an array: the reader returns no entries,
+# which would read as "nothing protected" (#124).
+PI="$WORKDIR/protect-invalid"
+project_runtime "$PI" "true"
+printf '%s' '{ "hooks": {}, "protected_files": { "extra": "docs/internal.md" } }' >"$PI/.specify/gates/policy.json"
+askcheck "schema-invalid policy.json asks" '{"tool_input":{"file_path":"docs/internal.md"}}' protect-files.sh CLAUDE_PROJECT_DIR="$PI"
 PB="$WORKDIR/protect-brokenlib"
 project_runtime "$PB" "true"
 printf 'gates_policy_section_list() {\n' >"$PB/.specify/gates/lib/policy.sh"
@@ -269,6 +275,17 @@ check "loop guard (stop_hook_active) -> allow" 0 \
     bash -c "echo '{\"stop_hook_active\":true}' | CLAUDE_PROJECT_DIR='$AGENT_FAIL' '$HOOKS/verify-quality.sh'"
 check "runtime not projected -> fail open" 0 \
     bash -c "echo '{}' | CLAUDE_PROJECT_DIR='$WORKDIR/unprojected' '$HOOKS/verify-quality.sh'"
+# An invalid policy is a setup error: verify.sh refuses (exit 1), and the
+# Stop hook lets the session stop but names the errors (#124).
+AGENT_INV="$WORKDIR/agent-invalid"
+project_runtime "$AGENT_INV" "false"
+printf '%s' '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "Error", "custom_command": "false" } } }' \
+    >"$AGENT_INV/.specify/gates/policy.json"
+rc=0
+err="$(echo '{}' | CLAUDE_PROJECT_DIR="$AGENT_INV" "$HOOKS/verify-quality.sh" 2>&1 >/dev/null)" || rc=$?
+check "invalid policy -> allow stop (setup error)" 0 test "$rc" -eq 0
+check "invalid policy -> says verify.sh could not run" 0 grep -qF 'verify.sh could not run (exit 1); allowing stop' <<<"$err"
+check "invalid policy -> names the validation error" 0 grep -qF 'invalid severity "Error"' <<<"$err"
 
 # ===========================================================================
 # Part C: git-boundary delegation (pre-commit -> verify.sh)
@@ -650,11 +667,16 @@ if have_node_linters; then
     project_runtime "$NP" "true"
     printf '# Title\n\nBody.\n' >"$NP/doc.md"
     ( cd "$NP" && git add doc.md && git commit -q -m "seed" ) >/dev/null 2>&1
-    for setup in missing-policy unloadable-loader; do
+    for setup in missing-policy invalid-policy unloadable-loader; do
         project_runtime "$NP" "true"
         if [[ "$setup" == missing-policy ]]; then
             rm -f "$NP/.specify/gates/policy.json"
             want="no .specify/gates/policy.json, not formatting"
+        elif [[ "$setup" == invalid-policy ]]; then
+            # Parseable, so the reader would hand out no exclude lists (#124).
+            printf '%s' '{ "hooks": { "prettier": { "include": "**/*.md", "severity": "error" } } }' \
+                >"$NP/.specify/gates/policy.json"
+            want="the policy is invalid, not formatting"
         else
             printf 'gates_policy_get() {\n' >"$NP/.specify/gates/lib/policy.sh"
             want="cannot load the policy loader, not formatting"

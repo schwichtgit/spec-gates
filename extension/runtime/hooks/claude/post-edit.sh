@@ -12,7 +12,7 @@ set -uo pipefail
 #     (and silently skips when the path is on an exclude).
 #   - Reads its own severity field. severity=error -> tool failure exits 2;
 #     severity=warning (default) -> failure logs a WARNING line and exits 0.
-#   - Without a loadable policy there are no exclude lists, and
+#   - Without a loadable, valid policy there are no exclude lists, and
 #     formatting without them could rewrite vendored or generated
 #     files, so the hook prints a one-line notice and formats nothing.
 #     A project without the runtime projected is skipped silently.
@@ -51,6 +51,11 @@ fi
 if [[ ! -f "$(gates_policy_file)" ]]; then
     echo "gates: post-edit: no .specify/gates/policy.json, not formatting" \
         "(run /speckit.gates.init)" >&2
+    exit 0
+fi
+if ! gates_validate_policy "$(gates_policy_file)" >/dev/null 2>&1; then
+    echo "gates: post-edit: the policy is invalid, not formatting" \
+        "(run /speckit.gates.doctor)" >&2
     exit 0
 fi
 SEVERITY="$(gates_policy_get post-edit severity)"

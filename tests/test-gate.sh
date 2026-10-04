@@ -155,6 +155,64 @@ else
     skip "--json shape" "jq not installed"
 fi
 
+# --- an invalid policy runs no gate (#124) ---
+# The policy reader is fail-open, so before the fix a malformed or
+# schema-invalid policy dropped the tool gates and the run passed.
+echo ""
+echo "=== invalid policy is refused before any gate ==="
+# <name> <policy-json> <needle>: verify.sh exits 1, names the error, writes
+# no attestation.
+refused() {
+    local d="$WORKDIR/inv-$1" out rc=0
+    project "$d" "$2"
+    out="$(CLAUDE_PROJECT_DIR="$d" bash "$d/.specify/gates/verify.sh" --boundary git 2>&1)" || rc=$?
+    expect "$1: exit 1" "$rc" 1
+    expect "$1: names the error" "$(grep -qF -- "$3" <<<"$out" && echo yes || echo no)" yes
+    expect "$1: says no gate ran" "$(grep -qF 'no gate ran' <<<"$out" && echo yes || echo no)" yes
+    expect "$1: no attestation" "$([[ -e "$d/.specify/gates/attestations.jsonl" ]] && echo yes || echo no)" no
+}
+VQ='"verify-quality": { "orchestrator": "none", "severity": "error" }'
+refused malformed '{"version":' 'is not valid JSON'
+refused empty-object '{}' 'top-level "hooks" object'
+refused severity-case '{ "hooks": { "prettier": { "include": ["**/*.md"], "severity": "Error" } } }' 'invalid severity "Error"'
+refused spec-severity "{ \"hooks\": { $VQ }, \"spec\": { \"severity\": \"eror\" } }" 'spec: invalid severity "eror"'
+refused spec-timeout "{ \"hooks\": { $VQ }, \"spec\": { \"timeout_s\": \"abc\" } }" 'spec: timeout_s must be an integer >= 1'
+refused spec-timeout-neg "{ \"hooks\": { $VQ }, \"spec\": { \"timeout_s\": -1 } }" 'spec: timeout_s must be an integer >= 1'
+refused max-records-zero "{ \"hooks\": { $VQ }, \"attestation\": { \"max_records\": 0 } }" 'attestation: max_records must be an integer >= 1'
+refused max-records-str "{ \"hooks\": { $VQ }, \"attestation\": { \"max_records\": \"abc\" } }" 'attestation: max_records must be an integer >= 1'
+refused hook-not-object '{ "hooks": { "prettier": "on" } }' 'prettier: must be an object'
+
+# In a contract repo the enforced file is policy.effective.json: that is
+# the one validated.
+D="$WORKDIR/inv-effective"
+project "$D" "{ \"extends\": { \"source\": \"x\", \"version\": \"v1\" }, \"hooks\": { $VQ } }"
+printf '{}' >"$D/.specify/gates/policy.effective.json"
+rc=0
+OUT="$(CLAUDE_PROJECT_DIR="$D" bash "$D/.specify/gates/verify.sh" --boundary ci 2>&1)" || rc=$?
+expect "invalid effective policy: exit 1" "$rc" 1
+expect "invalid effective policy: names policy.effective.json" \
+    "$(grep -qF 'policy.effective.json must be an object' <<<"$OUT" && echo yes || echo no)" yes
+
+# --- argument errors are usage errors, not raw bash errors (#124) ---
+echo ""
+echo "=== verify.sh argument handling ==="
+# <name> <needle> <arg...>: exit 1 with the message and the usage line.
+usage_err() {
+    local name="$1" needle="$2" out rc=0
+    shift 2
+    out="$(CLAUDE_PROJECT_DIR="$DE" bash "$DE/.specify/gates/verify.sh" "$@" 2>&1)" || rc=$?
+    expect "$name: exit 1" "$rc" 1
+    expect "$name: message" "$(grep -qF -- "$needle" <<<"$out" && echo yes || echo no)" yes
+    expect "$name: usage line" "$(grep -qF 'usage: verify.sh --boundary agent|git|ci' <<<"$out" && echo yes || echo no)" yes
+}
+usage_err "--boundary foo" 'invalid value: foo (allowed: agent, git, ci)' --boundary foo
+usage_err "--boundary without a value" '--boundary needs a value' --boundary
+usage_err "--boundary followed by a flag" '--boundary needs a value' --boundary --json
+usage_err "--accept without a value" '--accept needs a feature name or all' --boundary ci --accept
+for b in agent git ci; do
+    expect "--boundary $b accepted" "$(CLAUDE_PROJECT_DIR="$DE" bash "$DE/.specify/gates/verify.sh" --boundary "$b" >/dev/null 2>&1 && echo 0 || echo $?)" 0
+done
+
 echo ""
 echo "$PASS passed, $FAIL failed, $SKIP skipped ($TOTAL total)"
 [[ "$FAIL" -gt 0 ]] && exit 1

@@ -219,8 +219,22 @@ if ! python3 -c 'import re' >/dev/null 2>&1 && ! perl -e 1 >/dev/null 2>&1; then
 fi
 
 echo ""
+# The policy verify.sh enforces (the effective policy in a contract repo).
+# Invalid, every boundary refuses to run the gates (#124), and reading
+# "enabled" linters from it would only guess.
+POLICY_ERR=""
+if [[ -f "$PROJECT_ROOT/.specify/gates/policy.json" ]] && have jq \
+    && declare -f gates_validate_policy >/dev/null 2>&1; then
+    POLICY_ERR="$(gates_validate_policy "$(CLAUDE_PROJECT_DIR="$PROJECT_ROOT" gates_policy_file)" 2>&1)" \
+        && POLICY_ERR=""
+fi
 if [[ ! -f "$PROJECT_ROOT/.specify/gates/policy.json" ]]; then
     echo "Policy: none found at .specify/gates/policy.json (run /speckit.gates.init)"
+elif [[ -n "$POLICY_ERR" ]]; then
+    echo "Policy:"
+    echo "${BAD}policy is invalid — verify.sh refuses to run any gate until it is fixed:"
+    printf '%s\n' "$POLICY_ERR" | sed 's/^/        /'
+    MISSING=$((MISSING + 1))
 else
     echo "Policy-enabled linters:"
     # hook name -> binary name

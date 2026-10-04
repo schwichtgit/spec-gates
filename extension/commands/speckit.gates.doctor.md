@@ -29,6 +29,9 @@ the checking; this command runs it, shows the output, and explains it.
    - **Required tools**: `jq`, `git`, `python3` with the `json` module (the
      PR hook refuses every PR command without it), and python3 or perl
      (the emoji rule). Without jq the agent hooks run in raw mode.
+   - **Policy**: the policy `verify.sh` enforces must validate; an invalid
+     one **fails** with the validator's errors (every boundary refuses to
+     run the gates until it is fixed), and the linters are not listed.
    - **Policy-enabled linters**: each linter the policy turns on must
      resolve (`node_modules/.bin`, then PATH). A missing one is an
      enforcement gap, so it fails. A deprecated field that no gate reads

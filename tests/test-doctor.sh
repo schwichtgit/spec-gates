@@ -120,6 +120,24 @@ fi
 TOTAL=$((TOTAL + 1))
 
 echo ""
+echo "=== invalid policy is a failure, not 'not enabled' (#124) ==="
+# <name> <policy-json> <needle>
+doctor_invalid() {
+    local d="$WORKDIR/invalid-$1"
+    project "$d" "$2" yes
+    expect "$1: doctor exits 1" "$(run_doctor "$d")" 1
+    expect "$1: [MISSING] invalid policy" \
+        "$(grep -qF '[MISSING] policy is invalid' "$d/out.txt" && echo yes || echo no)" yes
+    expect "$1: the validator's error is shown" \
+        "$(grep -qF -- "$3" "$d/out.txt" && echo yes || echo no)" yes
+    expect "$1: no linter guessed as not enabled" \
+        "$(grep -qF '(not enabled in policy)' "$d/out.txt" && echo yes || echo no)" no
+}
+doctor_invalid malformed '{"version":' 'is not valid JSON'
+doctor_invalid empty-object '{}' 'top-level "hooks" object'
+doctor_invalid severity-case '{ "hooks": { "prettier": {"include":["**/*.md"],"severity":"Error"} } }' 'invalid severity "Error"'
+
+echo ""
 echo "=== deprecated policy fields are flagged, not failed (#112) ==="
 D="$WORKDIR/deprecated"
 project "$D" '{ "hooks": { "shellcheck": {"include":["**/*.sh"],"orchestrator":"none","severity":"error"} } }' yes
