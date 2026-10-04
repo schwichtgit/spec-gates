@@ -8,10 +8,9 @@
 #   find_prettier_root <abs_path>  -- locate nearest package.json
 #
 # Notes:
-#   - The caller must source policy.sh before sourcing this file if it
-#     wants policy-driven exclude filtering. When the loader is unavailable
-#     (the hooks' missing-policy fallback), format_file still runs but
-#     skips exclude filtering.
+#   - The caller must source policy.sh before sourcing this file: the
+#     exclude filtering reads the policy. Both callers (post-edit and
+#     format-changed) refuse to format when the policy cannot be loaded.
 #   - format_file consults each tool's exclude list (prettier, markdownlint,
 #     and shell scope) before invoking the underlying tool and short-circuits
 #     silently if the project-relative path matches any glob.
@@ -129,7 +128,7 @@ _gates_run_tool() {
 # Returns 0 on success, on exclude-skip, or when no formatter is installed
 # for the extension. Returns nonzero only when a present formatter actually
 # fails on the path. Callers that care about severity (format-changed,
-# post-edit) check this rc; their missing-policy fallback ignores it.
+# post-edit) check this rc.
 format_file() {
     local file_path="$1"
     [[ -z "$file_path" ]] && return 0
