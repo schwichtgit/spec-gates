@@ -49,11 +49,17 @@ the association):
 6. **Termination**: an opening ` ```accept ` fence with no closing fence
    in the file is a parse error naming the opening line.
 7. **Read-only contract**: a block must not modify the working tree. The
-   runner snapshots `git status --porcelain` around each block; any delta
-   fails the block naming the changed paths (research R5). Blocks needing
+   runner snapshots the tree around each block: `git status --porcelain`
+   (every untracked file listed) plus a content hash of each dirty or
+   untracked file, so a write to an already-modified file is caught too.
+   Any delta fails the block naming the changed paths (research R5).
+   Outside a git work tree the block is not run and fails closed
+   (`cannot check for mutations: not a git work tree`). Blocks needing
    scratch space must use `mktemp -d` outside the repository and clean up.
 8. **Budget**: each block runs under the policy's `spec.timeout_s`
-   watchdog (default 30s); exceeding it fails the block.
+   watchdog (default 30s); exceeding it fails the block. The block runs in
+   its own process group and the watchdog stops the whole group (TERM,
+   then KILL after a short grace), so no child outlives the run.
 9. **No re-entry**: blocks run with `GATES_SPEC_EXEC=1` in the
    environment; a nested `verify.sh` call skips the `spec` gate class, so
    a block may invoke the gate runner (e.g. inside a sandbox fixture)

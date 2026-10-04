@@ -141,6 +141,16 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   the format and shell canaries, fails the run when the policy enables
   markdownlint but it is not installed, so every template's canary step
   is red when a policy-enabled linter is missing.
+- **Accept blocks can no longer write to dirty files unnoticed or outlive
+  their timeout** (#136). The read-only check compared `git status` lines,
+  which do not change when a block writes to a file that is already
+  modified or untracked, the usual state at the agent boundary. It now
+  also hashes the content of every such file, so any write fails the block
+  naming the path. Outside a git work tree a block now fails closed
+  (`cannot check for mutations: not a git work tree`) instead of running
+  unchecked. A timed-out block runs in its own process group, and the
+  watchdog stops the whole group (TERM, then KILL), so a child process can
+  no longer keep running and writing after verify has returned.
 - **Checks no longer miss matches on large input** (#117). Under
   `pipefail`, `echo "$x" | grep -q` read a match as a miss once the input
   outgrew the pipe buffer, so the pre-commit secret scan let a key through

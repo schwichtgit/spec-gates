@@ -588,6 +588,9 @@ run_spec_canary() {
     local d="$WORKDIR/spec"
     project_sandbox "$d" '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } } }'
     mkdir -p "$d/specs/900-canary-fixture" || setup_fail "spec fixture dir"
+    # A git work tree, so the block is blocked for failing and not because
+    # it cannot be checked for mutations (#136).
+    git init -q "$d" >/dev/null 2>&1 || setup_fail "spec fixture git init"
     printf '# Canary Fixture\n\n**Status**: Complete\n' \
         >"$d/specs/900-canary-fixture/spec.md" || setup_fail "spec fixture spec.md"
     {

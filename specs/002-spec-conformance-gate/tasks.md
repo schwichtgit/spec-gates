@@ -90,6 +90,7 @@ timeout, a broken fence.
   d="$(mktemp -d)"
   trap 'rm -rf "$d"' EXIT
   mkdir -p "$d/.specify/gates" "$d/specs/900-sc001"
+  git init -q "$d"
   cp -R .specify/gates/lib "$d/.specify/gates/lib"
   cp .specify/gates/verify.sh "$d/.specify/gates/"
   printf '%s' '{"hooks":{"verify-quality":{"orchestrator":"none","severity":"error"}}}' >"$d/.specify/gates/policy.json"

@@ -44,10 +44,12 @@ expect_contains() { # <name> <haystack> <needle>
 }
 
 # Project the runtime into <dir> with a caller-supplied policy body. Minimal
-# policies enable no linters, so the spec gate is the only live gate.
+# policies enable no linters, so the spec gate is the only live gate. The
+# fixture is a git work tree: outside one, blocks fail closed (#136).
 project() { # <dir> <policy-json>
     local dir="$1" policy="$2"
     mkdir -p "$dir/.specify/gates/lib"
+    git init -q "$dir" >/dev/null 2>&1
     cp "$REPO_ROOT/extension/runtime/verify.sh" "$dir/.specify/gates/"
     cp "$REPO_ROOT/extension/runtime/lib/"*.sh "$dir/.specify/gates/lib/"
     printf '%s' "$policy" >"$dir/.specify/gates/policy.json"
@@ -350,19 +352,29 @@ echo "=== timeout and mutation detection ==="
 D="$WORKDIR/timeout"
 project "$D" '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } }, "spec": { "timeout_s": 1 } }'
 mkfeature "$D" 300-slow Complete <<'EOF'
-- [x] T001 Hangs
+- [x] T001 Hangs, in a child process that outlives a top-level kill
 
   ```accept
-  sleep 30
+  bash -c 'sleep 2; touch late.txt'
   ```
 EOF
 OUT="$(gate_out "$D")"
 expect_contains "hung block blocks the run" "$OUT" "EXIT=2"
 expect_contains "timeout is named with the budget" "$OUT" "timeout after 1s"
+# Issue #136: the watchdog kills the block's whole process group, so the
+# child's late write never lands after verify has returned.
+sleep 3
+TOTAL=$((TOTAL + 1))
+if [[ ! -e "$D/late.txt" ]]; then
+    echo "PASS: timed-out block leaves no descendant running"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL: timed-out block's child kept running and wrote late.txt"
+    FAIL=$((FAIL + 1))
+fi
 
 D="$WORKDIR/mutation"
 project "$D" "$MINIMAL"
-git init -q "$D" >/dev/null 2>&1
 mkfeature "$D" 300-dirty Complete <<'EOF'
 - [x] T001 Mutates the tree
 
@@ -381,6 +393,61 @@ else
     echo "FAIL: mutated file was removed (FR-006 forbids auto-revert)"
     FAIL=$((FAIL + 1))
 fi
+
+# Issue #136: a write to a file that is already dirty or untracked leaves
+# the status line unchanged, so the runner compares content, not status.
+D="$WORKDIR/mutation-dirty"
+project "$D" "$MINIMAL"
+printf 'base\n' >"$D/tracked.txt"
+git -C "$D" add tracked.txt
+git -C "$D" -c user.email=b@test -c user.name=baseline commit -qm base --no-verify
+printf 'dirty\n' >>"$D/tracked.txt"
+printf 'scratch\n' >"$D/untracked.txt"
+mkfeature "$D" 300-reads Complete <<'EOF'
+- [x] T001 Reads the dirty files without writing
+
+  ```accept
+  grep -q dirty tracked.txt
+  grep -q scratch untracked.txt
+  ```
+EOF
+expect "block reading dirty and untracked files passes" "$(gate "$D")" 0
+mkfeature "$D" 300-reads Complete <<'EOF'
+- [x] T001 Appends to an already-dirty tracked file
+
+  ```accept
+  echo more >>tracked.txt
+  ```
+EOF
+OUT="$(gate_out "$D")"
+expect_contains "write to a dirty tracked file blocks the run" "$OUT" "EXIT=2"
+expect_contains "dirty-file mutation names the path" "$OUT" "working tree modified: tracked.txt"
+mkfeature "$D" 300-reads Complete <<'EOF'
+- [x] T001 Modifies an untracked file
+
+  ```accept
+  echo more >>untracked.txt
+  ```
+EOF
+OUT="$(gate_out "$D")"
+expect_contains "write to an untracked file blocks the run" "$OUT" "EXIT=2"
+expect_contains "untracked-file mutation names the path" "$OUT" "working tree modified: untracked.txt"
+
+# Issue #136: outside a git work tree there is no mutation check, so the
+# block fails closed instead of running unchecked.
+D="$WORKDIR/no-git"
+project "$D" "$MINIMAL"
+rm -rf "$D/.git"
+mkfeature "$D" 300-nogit Complete <<'EOF'
+- [x] T001 Would pass
+
+  ```accept
+  true
+  ```
+EOF
+OUT="$(gate_out "$D")"
+expect_contains "block outside a git work tree blocks the run" "$OUT" "EXIT=2"
+expect_contains "non-git failure names the cause" "$OUT" "cannot check for mutations: not a git work tree"
 
 # --- policy: severity, include, exclude, enabled ---
 echo ""
