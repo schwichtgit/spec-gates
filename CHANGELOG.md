@@ -109,6 +109,12 @@ add` forms at the agent boundary. `project.sh` lists new settings like
 
 ### Fixed
 
+- **Installing no longer warns about `policy.json`** (#118). The manifest
+  declared `policy.json` as a config template, which Spec Kit 1.x refuses
+  to scaffold (it keeps only `<id>-config.yml` files), so every install
+  printed "Config templates not scaffolded". The policy lives at
+  `.specify/gates/policy.json` and `/speckit.gates.init` seeds it; the
+  manifest no longer declares a config file.
 - **Checks no longer miss matches on large input** (#117). Under
   `pipefail`, `echo "$x" | grep -q` read a match as a miss once the input
   outgrew the pipe buffer, so the pre-commit secret scan let a key through

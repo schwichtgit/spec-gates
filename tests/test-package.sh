@@ -65,6 +65,13 @@ NOT_EXEC="$(cd "$REPO_ROOT" && git ls-files -s extension/runtime \
     | awk '$1 != "100755" && ($4 ~ /\.sh$/ || $4 ~ /\/hooks\/git\//) { print $4 }' | tr '\n' ' ')"
 expect "every shipped runtime script is 100755 in git" "$NOT_EXEC" ""
 
+# Spec Kit 1.x scaffolds a provides.config entry only as <id>-config.yml
+# (the names `remove --keep-config` preserves) and warns on every install
+# otherwise (#118). The policy lives at .specify/gates/policy.json, seeded by
+# init, so the manifest declares no config file at all.
+expect "extension.yml declares no provides.config" \
+    "$(awk '/^provides:/ { p = 1; next } /^[^[:space:]]/ { p = 0 } p && /^  config:/ { print "yes" }' "$REPO_ROOT/extension/extension.yml")" ""
+
 echo ""
 echo "=== a consumer's repo-wide lint sweep over the installed extension ==="
 
