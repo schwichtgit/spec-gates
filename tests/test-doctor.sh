@@ -840,6 +840,63 @@ expect "--installed-only on a removed extension exits 1" "$rc" "1"
 run_doctor "$DOR" >/dev/null
 has "the full run names the half-done upgrade" "$DOR" "[MISSING] the gates extension was removed but not added back"
 fx_cleanup "$DOR"
+
+echo ""
+echo "=== doctor --ci (#148) ==="
+# A CI checkout has the projected runtime but no git hook stubs: those are
+# installed into .git/hooks, which a clone never carries.
+DCI="$(fx_project)"
+(cd "$DCI" && GATES_TEST=1 bash .specify/extensions/gates/runtime/project.sh --skip-canary >/dev/null 2>&1)
+rm -f "$DCI/.git/hooks/pre-commit" "$DCI/.git/hooks/commit-msg"
+run_doctor "$DCI" >/dev/null
+has "without --ci, missing hook stubs read as a stale projection" "$DCI" "[MISSING] the projection is not current"
+rc=0
+CLAUDE_PROJECT_DIR="$DCI" bash "$DCI/.specify/gates/doctor.sh" --ci >"$DCI/out.txt" 2>&1 || rc=$?
+has "--ci: the projection is current" "$DCI" "[ok]  projection matches the installed extension"
+has "--ci: the git boundary is skipped, visibly" "$DCI" "git boundary not checked (--ci"
+lacks "--ci: no stale-projection failure" "$DCI" "the projection is not current"
+healthy "--ci on a healthy CI checkout exits 0" "$rc" "$LACK_BASE"
+printf '# local\n' >>"$DCI/.specify/gates/canary.sh"
+CLAUDE_PROJECT_DIR="$DCI" bash "$DCI/.specify/gates/doctor.sh" --ci >"$DCI/out.txt" 2>&1 || true
+has "--ci still fails an unheld local edit" "$DCI" "[MISSING] projected files were edited locally and are not held"
+fx_cleanup "$DCI"
+
+echo ""
+echo "=== degraded hosts name the missing tool (#122) ==="
+# PATH is a shim dir holding every tool doctor uses, minus those under test.
+doctor_path() { # <dir> <excluded-tool>...
+    local dir="$1" t x skip_t
+    shift
+    mkdir -p "$dir"
+    for t in bash sh cat grep sed awk head tail tr wc cut sort uniq env mkdir cp mv rm ln \
+        mktemp dirname basename date find chmod touch printf git jq cmp python3 perl \
+        sha256sum shasum; do
+        skip_t=0
+        for x in "$@"; do [[ "$t" == "$x" ]] && skip_t=1; done
+        [[ "$skip_t" -eq 1 ]] && continue
+        command -v "$t" >/dev/null 2>&1 && ln -sf "$(command -v "$t")" "$dir/$t"
+    done
+    return 0
+}
+DNJ="$(fx_project)"
+(cd "$DNJ" && GATES_TEST=1 bash .specify/extensions/gates/runtime/project.sh --skip-canary >/dev/null 2>&1)
+doctor_path "$WORKDIR/path-nojq" jq
+PATH="$WORKDIR/path-nojq" CLAUDE_PROJECT_DIR="$DNJ" bash "$DNJ/.specify/gates/doctor.sh" >"$DNJ/out.txt" 2>&1 || true
+has "no jq: the install state is reported as not checked" "$DNJ" "install state not checked: reading .specify/extensions/.registry needs jq"
+lacks "no jq: no interrupted-install claim" "$DNJ" "interrupted install"
+PATH="$WORKDIR/path-nojq" CLAUDE_PROJECT_DIR="$DNJ" bash "$DNJ/.specify/gates/doctor.sh" --installed-only >"$DNJ/out.txt" 2>&1 || true
+has "no jq, --installed-only: install state not checked" "$DNJ" "install state not checked"
+lacks "no jq, --installed-only: no not-installed claim" "$DNJ" "the gates extension is not installed"
+fx_cleanup "$DNJ"
+DNT="$WORKDIR/notools"
+project "$DNT" '{ "hooks": {} }' no
+doctor_path "$WORKDIR/path-notools" git cmp sha256sum shasum
+rc=0
+PATH="$WORKDIR/path-notools" CLAUDE_PROJECT_DIR="$DNT" bash "$DNT/.specify/gates/doctor.sh" >"$DNT/out.txt" 2>&1 || rc=$?
+expect "no git, cmp or SHA-256 tool: doctor fails" "$rc" 1
+has "no git: install hint" "$DNT" "[MISSING] git — not installed"
+has "no cmp: named" "$DNT" "[MISSING] cmp — not installed"
+has "no SHA-256 tool: named" "$DNT" "[MISSING] sha256sum or shasum — neither is installed"
 echo ""
 [[ "$SKIPPED" -gt 0 ]] && echo "$SKIPPED healthy-fixture case(s) skipped: this host lacks tools doctor requires."
 echo "$PASS of $TOTAL tests passed."

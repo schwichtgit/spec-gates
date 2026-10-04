@@ -205,6 +205,30 @@ expect "green gate stays exit 0 despite unwritable log" "$RC_W" 0
 expect "stderr carries a warning about the log" \
     "$(printf '%s' "$ERR_W" | grep -c 'could not write' || true)" 1
 
+# A read-only .specify/gates (#122): one warning, no bash "Permission
+# denied" leaking from the append, and doctor names the unwritable log.
+# Root writes through any mode, so the case cannot be built as root.
+if [[ "$(id -u)" -eq 0 ]]; then
+    skip "read-only .specify/gates" "running as root, which ignores file modes"
+else
+    DR="$WORKDIR/readonly"
+    project "$DR" "$CUSTOM_TRUE"
+    chmod a-w "$DR/.specify/gates"
+    RC_R=0
+    ERR_R="$(CLAUDE_PROJECT_DIR="$DR" bash "$DR/.specify/gates/verify.sh" --boundary ci 2>&1 >/dev/null)" || RC_R=$?
+    expect "read-only gates dir: green gate stays exit 0" "$RC_R" 0
+    expect "read-only gates dir: one warning that no evidence was written" \
+        "$(grep -c 'left no evidence record' <<<"$ERR_R" || true)" 1
+    expect "read-only gates dir: no shell error leaks" \
+        "$(grep -c 'Permission denied' <<<"$ERR_R" || true)" 0
+    RC_RD=0
+    OUT_RD="$(CLAUDE_PROJECT_DIR="$DR" bash "$DR/.specify/gates/doctor.sh" 2>&1)" || RC_RD=$?
+    expect "read-only gates dir: doctor fails" "$RC_RD" 1
+    expect "read-only gates dir: doctor says attestations cannot be written" \
+        "$(grep -c 'attestations cannot be written' <<<"$OUT_RD" || true)" 1
+    chmod u+w "$DR/.specify/gates"
+fi
+
 # --- 9: the record's exit field tracks the gate outcome ---
 echo ""
 echo "=== exit field tracks the outcome ==="

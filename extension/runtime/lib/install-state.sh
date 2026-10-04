@@ -16,6 +16,8 @@
 #   mismatch   registry and vendored copy disagree, or only one of them
 #              exists
 #   absent     nothing installed, nothing projected
+#   unknown    a registry exists but jq is not installed, so it cannot be
+#              read; nothing is known about the install (#122)
 #
 # "Projected" means a projection marker exists (.runtime-version, written by
 # init and project.sh, or .projected.sha256). A runtime copied in by hand
@@ -37,7 +39,11 @@ gates_install_state() { # <project-root>
     local reg_version="" vend_version="" projected=0
     [[ -f "$root/.specify/gates/.runtime-version" || -f "$root/.specify/gates/.projected.sha256" ]] \
         && projected=1
-    if [[ -f "$reg" ]] && command -v jq >/dev/null 2>&1; then
+    if [[ -f "$reg" ]] && ! command -v jq >/dev/null 2>&1; then
+        echo unknown
+        return 0
+    fi
+    if [[ -f "$reg" ]]; then
         reg_version="$(jq -r '.extensions.gates.version // empty' "$reg" 2>/dev/null || true)"
     fi
     vend_version="$(gates_extension_version "$vend/extension.yml")"

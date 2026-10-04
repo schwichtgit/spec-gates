@@ -389,7 +389,7 @@ if [[ "$DRY_RUN" != "1" && "$ATT_ENABLED" != "false" ]]; then
         MAX_RECORDS="$(gates_policy_section_get attestation max_records)"
         [[ -z "$MAX_RECORDS" ]] && MAX_RECORDS=200
         if ! gates_attest_append "$ATTESTATION" "$GATES_DIR/attestations.jsonl" "$MAX_RECORDS"; then
-            echo "gates: warning: could not write $GATES_DIR/attestations.jsonl (gate outcome unaffected)" >&2
+            echo "gates: warning: could not write $GATES_DIR/attestations.jsonl, so this run left no evidence record (gate outcome unaffected; run /speckit.gates.doctor)" >&2
         fi
     else
         echo "gates: warning: attestation skipped — cannot hash policy (gate outcome unaffected)" >&2

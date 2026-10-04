@@ -89,6 +89,22 @@ ok "settings carry the protect-files hook" jq -e '[.hooks.PreToolUse[].hooks[].c
 ok "policy.json untouched" grep -qx '{ "hooks": {} }' "$D/.specify/gates/policy.json"
 
 echo ""
+echo "=== no git binary (#122) ==="
+# Without git the note must say git is missing, not "run git init". PATH
+# is a shim dir with every tool project.sh uses except git.
+fixture
+NOGIT="$D/../nogit-path-$$"
+mkdir -p "$NOGIT"
+for t in bash sh cat grep sed awk head tail tr wc cut sort uniq env mkdir cp mv rm ln \
+    mktemp dirname basename date find chmod touch jq cmp sha256sum shasum perl python3; do
+    command -v "$t" >/dev/null 2>&1 && ln -sf "$(command -v "$t")" "$NOGIT/$t"
+done
+OUT="$(cd "$D" && PATH="$NOGIT" bash "$P" --dry-run --skip-canary 2>&1)" || true
+ok "no git: says git is not installed" grep -q 'git is not installed: the git boundary is not wired' <<<"$OUT"
+ok "no git: does not send the user to git init" bash -c "! grep -q 'after git init' <<<\"\$1\"" _ "$OUT"
+rm -rf "$NOGIT"
+
+echo ""
 echo "=== vendored modes ==="
 # The fixture has the modes Spec Kit's extraction produces: every *.sh
 # executable, the two extension-less git hooks not. Projection may fix

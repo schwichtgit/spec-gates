@@ -273,6 +273,38 @@ else
     skip "markdown canary blocking checks" "run npm ci to install pinned markdownlint-cli2"
 fi
 
+# Degraded hosts (#122): a canary that cannot run for a missing tool names
+# that tool. PATH is a shim dir holding every tool the suite uses, minus
+# the ones under test.
+echo ""
+echo "=== missing tools are named (#122) ==="
+shim_path() { # <dir> <excluded-tool>...
+    local dir="$1" t x skip_t
+    shift
+    mkdir -p "$dir"
+    for t in bash sh cat grep sed awk head tail tr wc cut sort uniq env mkdir cp mv rm ln \
+        mktemp dirname basename date find chmod touch printf git jq cmp python3 perl \
+        sha256sum shasum; do
+        skip_t=0
+        for x in "$@"; do [[ "$t" == "$x" ]] && skip_t=1; done
+        [[ "$skip_t" -eq 1 ]] && continue
+        command -v "$t" >/dev/null 2>&1 && ln -sf "$(command -v "$t")" "$dir/$t"
+    done
+    return 0
+}
+shim_path "$WORKDIR/path-nopy" python3
+PRJSON="$(PATH="$WORKDIR/path-nopy" CLAUDE_PROJECT_DIR="$FIX" bash "$FIX/.specify/gates/canary.sh" --json --only prhook 2>/dev/null || true)"
+expect "no python3: the prhook canary fails" \
+    "$(jq -r '.failed' <<<"$PRJSON")" 1
+expect "no python3: the prhook outcome names python3" \
+    "$(jq -r '.canaries[0].outcome' <<<"$PRJSON" | grep -c 'python3 with the json module is not installed' || true)" 1
+shim_path "$WORKDIR/path-nosha" sha256sum shasum
+RC_NOSHA=0
+OUT_NOSHA="$(PATH="$WORKDIR/path-nosha" CLAUDE_PROJECT_DIR="$FIX" bash "$FIX/.specify/gates/canary.sh" --only contract 2>&1)" || RC_NOSHA=$?
+expect "no SHA-256 tool: the contract canary fails (exit 1, not a setup error)" "$RC_NOSHA" 1
+expect "no SHA-256 tool: the outcome names sha256sum and shasum" \
+    "$(grep -c 'neither sha256sum nor shasum is installed' <<<"$OUT_NOSHA" || true)" 1
+
 echo ""
 echo "$PASS passed, $FAIL failed, $SKIP skipped ($TOTAL total)"
 [[ "$FAIL" -gt 0 ]] && exit 1
