@@ -135,6 +135,16 @@ runtime but deleted its hooks is refused, so removing the hooks cannot
 quietly turn enforcement off. A branch whose runtime predates
 `pre-merge-commit` runs its `pre-commit` hook for a merge.
 
+A branch that tracks something under `.specify/gates` but has no
+projected libraries is refused too: `pre-commit` without
+`lib/policy.sh`, `commit-msg` without `lib/policy.sh` or
+`lib/message.sh`. That is a clone of a repo that commits `policy.json`
+and gitignores the runtime, before anyone ran
+`bash .specify/extensions/gates/runtime/project.sh`; the refusal names
+that command. Only a runtime whose `.runtime-version` names a release
+before 0.3.4 commits without `lib/message.sh`, with a warning that the
+message rules were skipped.
+
 **Other hook managers.** When husky, lefthook or the pre-commit framework
 owns the hooks, gates adds its entry to the file that tool reads, never to
 the files it generates, which its next install would rewrite.

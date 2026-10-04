@@ -32,6 +32,15 @@ expect() { # <name> <actual> <wanted>
     fi
 }
 
+# A setup step that is a test of its own: a failure is recorded and the
+# suite goes on instead of stopping under set -e.
+step() { # <name> <command...>
+    local name="$1" rc=0
+    shift
+    "$@" >/dev/null 2>&1 || rc=$?
+    expect "$name" "exit $rc" "exit 0"
+}
+
 expect_contains() { # <name> <haystack> <needle>
     TOTAL=$((TOTAL + 1))
     if grep -qF -- "$3" <<<"$2"; then
@@ -597,12 +606,37 @@ expect "fallback message names no path" "$(grep -ci 'copilot' <<<"$BODY")" 0
 expect_contains "fallback message keeps the trailers" "$BODY" "Protected-Change: .specify/gates/baseline.lock.json"
 
 echo ""
+echo "=== sync --update: a committer name the rules refuse (#159) ==="
+# The name is a branding term of the baseline: the approver falls back to
+# the committer email's local part.
+WN="$WORKDIR/words-name"
+hooked_repo "$WN" "$BW" v1.0.0
+git -C "$WN" config user.name Anthropic
+git -C "$WN" config user.email pat@test
+OUT="$(contract "$WN" sync --update v2.0.0)"
+expect_contains "update by a branded committer name commits" "$OUT" "EXIT=0"
+BODY="$(git -C "$WN" log -1 --format=%B gates/baseline-v2.0.0 2>/dev/null || true)"
+expect_contains "the approver is the email local part" "$BODY" "Approved-By: pat"
+expect "the branded name is not in the message" "$(grep -ci 'anthropic' <<<"$BODY")" 0
+# Standalone "Claude" in the name and the email: the fixed approver.
+WC="$WORKDIR/words-claude"
+hooked_repo "$WC" "$BW" v1.0.0
+git -C "$WC" config user.name Claude
+git -C "$WC" config user.email claude@test
+OUT="$(contract "$WC" sync --update v2.0.0)"
+expect_contains "update by a committer named Claude commits" "$OUT" "EXIT=0"
+BODY="$(git -C "$WC" log -1 --format=%B gates/baseline-v2.0.0 2>/dev/null || true)"
+expect_contains "the approver falls back to the fixed value" "$BODY" "Approved-By: the committer of this commit"
+expect "the committer's name is in the commit, not the message" \
+    "$(git -C "$WC" log -1 --format=%cn gates/baseline-v2.0.0 2>/dev/null || true)" Claude
+
+echo ""
 echo "=== sync --update with git.protected_change_trailer false (#154) ==="
 BO="$WORKDIR/base-trailer-off"
 mkbaseline "$BO" v1.0.0 "$(printf '%s' "$BASE_POLICY" | jq -c '.git = {"protected_change_trailer": false}')"
 mkbaseline "$BO" v2.0.0 "$(printf '%s' "$BASE_POLICY" | jq -c '.git = {"protected_change_trailer": false} | .hooks.shellcheck.include += ["**/*.bash"]')"
 TO="$WORKDIR/trailer-off"
-hooked_repo "$TO" "$BO" v1.0.0
+step "trailer-off fixture is set up" hooked_repo "$TO" "$BO" v1.0.0
 OUT="$(contract "$TO" sync --update)"
 expect_contains "trailer-off update commits" "$OUT" "EXIT=0"
 expect_contains "pre-commit names the verified update" "$OUT" "exactly a policy baseline update"
@@ -610,9 +644,11 @@ BODY="$(git -C "$TO" log -1 --format=%B gates/baseline-v2.0.0 2>/dev/null || tru
 expect_contains "trailer-off update still declares the lock for pr-check" "$BODY" "Protected-Change: .specify/gates/baseline.lock.json"
 expect_contains "trailer-off update names the approver" "$BODY" "Approved-By: updater"
 # The allowance is the exact shape only. Rebuild the update by hand on a
-# fresh gates/baseline-v2.0.0 branch and vary it.
-git -C "$TO" branch -q -m gates/baseline-v2.0.0 keep-update
-git -C "$TO" switch -q -c gates/baseline-v2.0.0 main
+# fresh gates/baseline-v2.0.0 branch and vary it. Every step is a test of
+# its own: a failed one is reported and the suite goes on (#159).
+step "keep the update branch" git -C "$TO" branch -q -m gates/baseline-v2.0.0 keep-update
+step "fresh update branch from main" git -C "$TO" switch -q -c gates/baseline-v2.0.0 main
+# shellcheck disable=SC2329 # run through step
 stage_update() {
     git -C "$TO" checkout -q keep-update -- .specify/gates/policy.json .specify/gates/baseline.json \
         .specify/gates/baseline.lock.json .specify/gates/policy.effective.json
@@ -622,37 +658,45 @@ hand_commit() { # -> output + EXIT line
     out="$(cd "$TO" && env -u CLAUDE_PROJECT_DIR git commit -q -m "chore: update policy baseline by hand" 2>&1)" || rc=$?
     printf '%s\nEXIT=%d\n' "$out" "$rc"
 }
-stage_update
+# shellcheck disable=SC2329 # run through step
+jq_edit() { # <file under .specify/gates> <jq args...>: rewrite it in place
+    local f="$TO/.specify/gates/$1"
+    shift
+    jq "$@" "$f" >"$TO/edit.tmp" && mv "$TO/edit.tmp" "$f"
+}
+# shellcheck disable=SC2329 # run through step
+recompute_effective() {
+    (
+        # shellcheck source=/dev/null
+        source "$REPO_ROOT/extension/runtime/lib/contract.sh"
+        gates_contract_merge "$TO/.specify/gates/baseline.json" "$TO/.specify/gates/policy.json" \
+            >"$TO/.specify/gates/policy.effective.json"
+    )
+}
+step "stage the update" stage_update
 printf 'x\n' >"$TO/notes.txt"
-git -C "$TO" add notes.txt
+step "stage an extra file" git -C "$TO" add notes.txt
 OUT="$(hand_commit)"
 expect_contains "an extra staged file voids the allowance" "$OUT" "BLOCKED: policy-protected file staged"
-git -C "$TO" rm -q --cached notes.txt
+step "unstage the extra file" git -C "$TO" rm -q --cached notes.txt
 rm -f "$TO/notes.txt"
-jq -S '.hooks.shellcheck.severity = "warning"' "$TO/.specify/gates/baseline.json" >"$TO/b.tmp"
-mv "$TO/b.tmp" "$TO/.specify/gates/baseline.json"
-git -C "$TO" add .specify/gates/baseline.json
+step "edit the snapshot" jq_edit baseline.json -S '.hooks.shellcheck.severity = "warning"'
+step "stage the edited snapshot" git -C "$TO" add .specify/gates/baseline.json
 OUT="$(hand_commit)"
 expect_contains "a snapshot that does not match the lock is refused" "$OUT" "BLOCKED: policy-protected file staged"
-stage_update
+step "restage the update" stage_update
 # policy.json changing more than extends.version, effective recomputed to
 # match: only the one-field rule catches it.
-jq '.hooks.shellcheck = {"severity": "warning"}' "$TO/.specify/gates/policy.json" >"$TO/p.tmp"
-mv "$TO/p.tmp" "$TO/.specify/gates/policy.json"
-(
-    # shellcheck source=/dev/null
-    source "$REPO_ROOT/extension/runtime/lib/contract.sh"
-    gates_contract_merge "$TO/.specify/gates/baseline.json" "$TO/.specify/gates/policy.json" \
-        >"$TO/.specify/gates/policy.effective.json"
-)
-git -C "$TO" add .specify/gates/policy.json .specify/gates/policy.effective.json
+step "edit policy.json beyond the pin" jq_edit policy.json '.hooks.shellcheck = {"severity": "warning"}'
+step "recompute the effective policy" recompute_effective
+step "stage both" git -C "$TO" add .specify/gates/policy.json .specify/gates/policy.effective.json
 OUT="$(hand_commit)"
 expect_contains "a policy.json change beyond extends.version is refused" "$OUT" "BLOCKED: policy-protected file staged"
-stage_update
+step "restage the exact update" stage_update
 OUT="$(hand_commit)"
 expect_contains "the exact update shape commits by hand too" "$OUT" "EXIT=0"
-git -C "$TO" switch -q -c gates/baseline-v9.9.9 keep-update~1
-stage_update
+step "branch whose name misses the pin" git -C "$TO" switch -q -c gates/baseline-v9.9.9 keep-update~1
+step "stage the update there" stage_update
 OUT="$(hand_commit)"
 expect_contains "a branch name that does not match the pin is refused" "$OUT" "BLOCKED: policy-protected file staged"
 

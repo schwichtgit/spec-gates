@@ -38,6 +38,19 @@ POLICY_LIB="$PROJECT_ROOT/.specify/gates/lib/policy.sh"
 # shellcheck source=/dev/null disable=SC1091
 [[ -f "$POLICY_LIB" ]] && source "$POLICY_LIB"
 
+# --- The runtime this hook needs (issue #159) ---
+# Without lib/policy.sh the protected-branch setting and the protected
+# files go unchecked. A branch that tracks something under .specify/gates
+# (the stub's adoption test) and lacks it was never projected, as in a
+# fresh clone of a repo that gitignores the runtime: refuse.
+if [[ ! -f "$POLICY_LIB" ]] \
+    && { git rev-parse -q --verify "HEAD:.specify/gates" >/dev/null 2>&1 \
+        || [[ -n "$(git ls-files -- ':(top).specify/gates' 2>/dev/null)" ]]; }; then
+    echo "ERROR: ${GATES_GIT_HOOK:-pre-commit} refused -- .specify/gates is tracked but the runtime is not projected (missing: lib/policy.sh)." >&2
+    echo "  Project it: bash .specify/extensions/gates/runtime/project.sh" >&2
+    exit 1
+fi
+
 # --- Block commits to protected branches (policy: git.block_main_commits) ---
 # Checked before the no-staged-files exit below: an empty commit
 # (--allow-empty) or one that only deletes files is still a commit to main
