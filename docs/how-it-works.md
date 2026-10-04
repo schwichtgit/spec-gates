@@ -33,7 +33,9 @@ spec-gates uses four of them:
   (`credentials.json`, `.netrc`, cloud service-account files), sensitive
   directories, lock files, the project's own rules in
   `.specify/gates/hooks.local.d/`, and every `protected_files.extra` entry
-  (by default the constitution and `policy.json`).
+  (by default the constitution and `policy.json`). It resolves `.`, `..`
+  and `//` in the path first and matches ignoring case, since macOS
+  filesystems are case-insensitive by default.
 - `PreToolUse(Bash)` → `validate-bash.sh`: refuses destructive commands
   (`rm` of root, home or a path outside the temp directories, force push,
   hard reset, `chmod 777`, piping a download into a shell, …). With

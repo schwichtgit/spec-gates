@@ -295,6 +295,13 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   asks, instead of guessing, when the input holds more than one `command`
   field or none. The README now says plainly that the Stop hook lets the
   session end when `verify.sh` cannot run, and what still enforces.
+- **The file hook sees through path spellings** (#131). `protect-files.sh`
+  matched the raw path, so `.specify/gates/./policy.json`,
+  `.specify//gates/policy.json`, `.specify/gates/lib/../policy.json` and,
+  on case-insensitive APFS, `.specify/gates/POLICY.json`, `.ENV` or
+  `Package-Lock.json` were written. It now resolves `.`, `..` and `//`
+  before matching, makes a path under the project relative to it, and
+  compares ignoring case.
 
 ## 0.3.6 — 2026-10-02
 

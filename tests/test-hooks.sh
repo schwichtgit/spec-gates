@@ -1159,6 +1159,30 @@ askcheck "raw mode: two command fields ask" '{"tool_input":{"command":"rm -rf .s
 askcheck "raw mode: no command field asks" '{"tool_input":{"cmd":"rm -rf /"}}' validate-bash.sh PATH="$NOJQ" CLAUDE_PROJECT_DIR="$RJ"
 check "raw mode: an empty command is still allowed" 0 bash -c "out=\$(printf '%s' '{\"tool_input\":{\"command\":\"\"}}' | PATH='$NOJQ' CLAUDE_PROJECT_DIR='$RJ' '$HOOKS/validate-bash.sh') && [[ -z \"\$out\" ]]"
 
+# ===========================================================================
+# Part K: protect-files normalizes the path and ignores case (#131)
+# ===========================================================================
+echo ""
+echo "=== protect-files: path spellings and letter case (#131) ==="
+PN="$WORKDIR/pf131"
+project_runtime "$PN" "true"
+printf '%s' '{ "hooks": {}, "protected_files": { "extra": [".specify/memory/constitution.md", ".specify/gates/policy.json"] } }' \
+    >"$PN/.specify/gates/policy.json"
+pn_payload() { jq -nc --arg f "$1" '{tool_input:{file_path:$f}}'; }
+for f in .specify/gates/./policy.json .specify//gates/policy.json .specify/gates/lib/../policy.json \
+    "$PN/.specify/x/../gates/policy.json" .specify/memory/./constitution.md .specify/gates/POLICY.json \
+    .SPECIFY/gates/policy.json "$PN/.Specify/Gates/policy.json" "$(tr '[:lower:]' '[:upper:]' <<<"$PN")/.specify/gates/policy.json" \
+    Package-Lock.json .ENV config/.Env.Local "$PN/.SSH/config" ./.ssh/config \
+    .specify/gates/HOOKS.LOCAL.D/validate-bash/10.sh .specify/gates/./hooks.local.d/x.sh; do
+    check "Write/Edit refused: $f" 2 bash -c "printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$PN' '$HOOKS/protect-files.sh'" _ "$(pn_payload "$f")"
+done
+for f in .specify/gates/./hooks.local.d/x.sh ./.ENV; do
+    check "Write/Edit refused without jq: $f" 2 bash -c "printf '%s' \"\$1\" | PATH='$NOJQ' CLAUDE_PROJECT_DIR='$WORKDIR/none' '$HOOKS/protect-files.sh'" _ "$(pn_payload "$f")"
+done
+for f in src/app.ts ./src/../README.md .ENV.example "$PN/docs/policy.json"; do
+    check "Write/Edit allowed: $f" 0 bash -c "out=\$(printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$PN' '$HOOKS/protect-files.sh') && [[ -z \"\$out\" ]]" _ "$(pn_payload "$f")"
+done
+
 # --- Summary ---
 echo ""
 echo "$PASS of $TOTAL tests passed."
