@@ -90,6 +90,14 @@ expect "emoji in the PR body -> exit 1" \
     "$(run "${GH[@]}" GATES_PR_TITLE="feat: x" GATES_PR_BODY="Adds a. 🤖$DECL")" 1
 expect "branded term in the PR body -> exit 1" \
     "$(run "${GH[@]}" GATES_PR_TITLE="feat: x" GATES_PR_BODY="Written with Copilot.$DECL")" 1
+expect "plain attribution line in the PR body -> exit 1" \
+    "$(run "${GH[@]}" GATES_PR_TITLE="feat: x" GATES_PR_BODY="Adds a."$'\n\n'"Generated with Claude Code$DECL")" 1
+expect "the attribution line is the reported violation" \
+    "$(grep -c 'Agent attribution line detected' "$WORKDIR/out.txt")" 1
+expect "markdown-link attribution line in the PR body -> exit 1" \
+    "$(run "${GH[@]}" GATES_PR_TITLE="feat: x" GATES_PR_BODY="Adds a."$'\n\n'"Generated with [Claude Code](https://claude.com/claude-code)$DECL")" 1
+expect "the linked attribution line is the reported violation" \
+    "$(grep -c 'Agent attribution line detected' "$WORKDIR/out.txt")" 1
 
 echo ""
 echo "=== GitLab merge_request context ==="
