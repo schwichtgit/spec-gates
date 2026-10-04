@@ -43,10 +43,8 @@ jobs:
       # parity gate enforces the same pin on every boundary. The shipped
       # installer (the one the CI templates run) picks the asset for this
       # runner's architecture and refuses a download that does not match
-      # extension/runtime/shellcheck.sha256 (#107, #148). To bump the pin:
-      # change .tool-versions, run the installer with --update, and move the
-      # lines it writes to extension/runtime/shellcheck.local.sha256 into
-      # shellcheck.sha256.
+      # extension/runtime/shellcheck.sha256 (#107, #148). To bump the pin,
+      # see "Bumping the shellcheck pin" in CONTRIBUTING.md (#159).
       - name: Install system tooling (jq, pinned and verified shellcheck)
         run: |
           sudo apt-get update -q
@@ -165,7 +163,7 @@ jobs:
       - name: Install tooling (git before checkout, so tags come along)
         run: |
           apt-get update -q
-          apt-get install -y -q git jq python3 shellcheck ruby
+          apt-get install -y -q git jq python3 ruby curl xz-utils ca-certificates
           gem install --no-document bashcov -v 4.0.0
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -174,6 +172,12 @@ jobs:
 
       - name: Trust the checkout (the container runs as root)
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      # The same pinned, checksum-verified shellcheck as the gates job, not
+      # the distro package (#159): the installer needs the checkout
+      # (.tool-versions, the shipped checksums), curl and xz.
+      - name: Install pinned and verified shellcheck
+        run: bash extension/runtime/install-shellcheck.sh
 
       - name: Install pinned linters (prettier, markdownlint-cli2)
         run: npm ci

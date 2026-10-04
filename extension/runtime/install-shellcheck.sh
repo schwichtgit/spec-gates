@@ -8,10 +8,13 @@ set -euo pipefail
 # run whose shellcheck differs from the pin.
 #
 # The shellcheck project publishes no checksum files, so the checksums are
-# pinned here, taken from GitHub's own asset digests, in two files next to
-# this script: shellcheck.sha256 ships with spec-gates and is replaced on
-# upgrade; shellcheck.local.sha256 holds the project's own pins, for versions
-# spec-gates does not ship, and no upgrade touches it.
+# pinned here, taken from GitHub's own asset digests, in two files: the
+# shipped shellcheck.sha256, next to this script, comes with spec-gates and
+# is replaced on upgrade; .specify/gates/shellcheck.local.sha256 in the project
+# holds the project's own pins, for versions spec-gates does not ship, and
+# no upgrade touches it. It is always the project's file, wherever this
+# script runs from: in the spec-gates source tree the script sits in
+# extension/runtime/, the packaging source, which --update never writes.
 # A download that matches neither is never extracted. The asset follows the
 # machine (linux/darwin, x86_64/aarch64); anything else fails clearly
 # instead of installing a binary that cannot run.
@@ -19,21 +22,24 @@ set -euo pipefail
 # Usage:
 #   install-shellcheck.sh [install-dir]   default /usr/local/bin (sudo if needed)
 #   install-shellcheck.sh --update        pin the version in .tool-versions
-#                                         (writes its checksums to the
-#                                         local pin file)
+#                                         (writes its checksums to
+#                                         .specify/gates/shellcheck.local.sha256)
 #
 # --update reads each asset's digest from the GitHub release API and checks
 # it against a fresh download before writing, so pinning another version is
 # one reviewable change: .tool-versions plus shellcheck.local.sha256.
+#
+# The project root is $CLAUDE_PROJECT_DIR when set, else the git work tree
+# this script sits in, else the working directory.
 #
 # Exit codes: 0 installed (or pinned), 1 failure. A .tool-versions that pins
 # no shellcheck is a failure: the CI templates check for the pin first and
 # fall back to the distro package themselves.
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+ROOT="${CLAUDE_PROJECT_DIR:-$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null || pwd)}"
 SUMS="$HERE/shellcheck.sha256"
-LOCAL_SUMS="$HERE/shellcheck.local.sha256"
+LOCAL_SUMS="$ROOT/.specify/gates/shellcheck.local.sha256"
 API="https://api.github.com/repos/koalaman/shellcheck/releases/tags"
 
 die() {
@@ -80,7 +86,8 @@ if [[ "${1:-}" == "--update" ]]; then
     if [[ -f "$LOCAL_SUMS" ]]; then
         grep -vF "shellcheck-v$VERSION." "$LOCAL_SUMS" >>"$TMP/sums" || true
     fi
-    cp "$TMP/sums" "$LOCAL_SUMS"
+    { mkdir -p "$(dirname "$LOCAL_SUMS")" && cp "$TMP/sums" "$LOCAL_SUMS"; } \
+        || die "cannot write $LOCAL_SUMS"
     echo "install-shellcheck: pinned shellcheck $VERSION in $LOCAL_SUMS"
     exit 0
 fi

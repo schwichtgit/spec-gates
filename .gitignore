@@ -33,6 +33,9 @@ node_modules/
 .specify/gates/project.sh
 .specify/gates/install-shellcheck.sh
 .specify/gates/shellcheck.sha256
+# install-shellcheck.sh --update writes here; this repository ships its pins
+# in extension/runtime/shellcheck.sha256 instead (CONTRIBUTING.md).
+.specify/gates/shellcheck.local.sha256
 .specify/gates/lib/
 .specify/gates/policy.schema.json
 

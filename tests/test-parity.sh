@@ -150,6 +150,21 @@ if grep -qE 'bash extension/runtime/install-shellcheck\.sh' <<<"$(code_lines "$R
 else
     fail "ci.yml does not run extension/runtime/install-shellcheck.sh"
 fi
+# No job, the coverage job included, installs the unpinned distro package
+# of shellcheck (#159).
+if grep -qE '^shellcheck|[[:space:]]shellcheck([[:space:]]|$)' \
+    <<<"$(code_lines "$REPO_ROOT/.github/workflows/ci.yml" | grep -E 'apt-get install')"; then
+    fail "ci.yml installs the distro shellcheck"
+else
+    pass "no ci.yml job installs the distro shellcheck"
+fi
+COV_JOB="$(code_lines "$REPO_ROOT/.github/workflows/ci.yml" \
+    | awk '/^  coverage:/ { on = 1; next } on && /^  [A-Za-z_-]+:/ { on = 0 } on')"
+if grep -qE 'bash extension/runtime/install-shellcheck\.sh' <<<"$COV_JOB"; then
+    pass "the coverage job installs shellcheck with the shipped installer"
+else
+    fail "the coverage job does not run extension/runtime/install-shellcheck.sh"
+fi
 if [[ ! -e "$REPO_ROOT/.github/scripts/install-shellcheck.sh" && ! -e "$REPO_ROOT/.github/shellcheck.sha256" ]]; then
     pass "no second shellcheck installer or checksum file in .github"
 else
