@@ -109,6 +109,10 @@ add` forms at the agent boundary. `project.sh` lists new settings like
 
 ### Fixed
 
+- **The test suite passes on a host without python3** (#120). The GitLab
+  "no curl" case assumed python3's `urllib` as the fallback fetcher; it
+  now skips visibly without it, and a new case checks that with neither
+  curl nor python3 a truncated description fails closed.
 - **A fresh init no longer fails before the user does anything wrong**
   (#119). `/speckit.gates.init` installs the pinned linters before it
   projects, so the canaries no longer report a missing prettier as a
