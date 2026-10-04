@@ -11,7 +11,8 @@ set -uo pipefail
 # 1. PR/MR text: the title and description must pass the same message rules
 #    as commit-msg (lib/message.sh: AI-isms, branding, emoji,
 #    Co-Authored-By, conventional title). On squash-merge repositories this
-#    text becomes the commit on the default branch.
+#    text becomes the commit on the default branch. With a range, the
+#    rules come from the base's policy (#147), like the check below.
 # 2. Protected changes: every commit in the range that changes a
 #    protected_files.extra path must declare it ("Protected-Change: <path>")
 #    and name an approver ("Approved-By: <name>") -- the commit-msg rule via
@@ -146,6 +147,53 @@ fi
 BODY="$(printf '%s' "$BODY" | tr -d '\r')"
 TITLE="$(printf '%s' "$TITLE" | tr -d '\r')"
 
+# Resolve the PR/MR range and load the policy committed at its base, before
+# either check runs. -> 0 resolved (BASE, HEAD_REF set; GATES_POLICY_FILE
+# points at the base policy when the base has one), 1 no range in this
+# context, 2 setup error (message printed).
+BASE_POLICY=""
+trap '[[ -n "$BASE_POLICY" ]] && rm -f "$BASE_POLICY"' EXIT
+resolve_range() {
+    if [[ -z "$RANGE" ]]; then
+        if [[ "${GITHUB_EVENT_NAME:-}" == pull_request* && -n "${GITHUB_BASE_REF:-}" ]]; then
+            RANGE="origin/$GITHUB_BASE_REF..HEAD"
+        elif [[ -n "${CI_MERGE_REQUEST_DIFF_BASE_SHA:-}" ]]; then
+            RANGE="$CI_MERGE_REQUEST_DIFF_BASE_SHA..HEAD"
+        elif [[ -n "${CHANGE_TARGET:-}" ]]; then
+            RANGE="origin/$CHANGE_TARGET..HEAD"
+        fi
+    fi
+    if [[ -z "$RANGE" ]]; then
+        return 1
+    fi
+    if [[ "$RANGE" != *..* ]]; then
+        echo "pr-check: --range must be <base>..<head>, got: $RANGE" >&2
+        return 2
+    fi
+    BASE="${RANGE%%..*}"
+    HEAD_REF="${RANGE##*..}"
+    for ref in "$BASE" "$HEAD_REF"; do
+        if ! git rev-parse -q --verify "$ref^{commit}" >/dev/null 2>&1; then
+            echo "pr-check: cannot resolve '$ref' in this clone -- fetch full history (actions/checkout fetch-depth: 0)" >&2
+            return 2
+        fi
+    done
+
+    # The rules come from the base (#123, #147): the PR under review must
+    # not be able to relax them, for its text or its protected changes. A
+    # base without a policy falls back to the checked-out one.
+    BASE_POLICY="$(mktemp 2>/dev/null || mktemp -t gates-policy)" || return 2
+    if gates_policy_at_rev "$BASE" "$BASE_POLICY"; then
+        export GATES_POLICY_FILE="$BASE_POLICY"
+    else
+        rm -f "$BASE_POLICY"
+        BASE_POLICY=""
+    fi
+    return 0
+}
+RANGE_RC=0
+resolve_range || RANGE_RC=$?
+
 # --- 1. PR/MR text ---
 if [[ -n "$DESCRIPTION_UNCHECKABLE" ]]; then
     # Fail closed: passing on the visible part would hide a violation in the
@@ -167,46 +215,12 @@ fi
 # Paths checked whatever the policy says: the runtime's built-in entries plus
 # the policy file itself, so a PR cannot switch its own check off (#123).
 ALWAYS_PROTECTED="$GATES_BUILTIN_PROTECTED"$'\n'".specify/gates/policy.json"
-BASE_POLICY=""
-trap '[[ -n "$BASE_POLICY" ]] && rm -f "$BASE_POLICY"' EXIT
-
 protected_range_check() { # -> 0 pass/skip, 1 violations, 2 setup error
-    if [[ -z "$RANGE" ]]; then
-        if [[ "${GITHUB_EVENT_NAME:-}" == pull_request* && -n "${GITHUB_BASE_REF:-}" ]]; then
-            RANGE="origin/$GITHUB_BASE_REF..HEAD"
-        elif [[ -n "${CI_MERGE_REQUEST_DIFF_BASE_SHA:-}" ]]; then
-            RANGE="$CI_MERGE_REQUEST_DIFF_BASE_SHA..HEAD"
-        elif [[ -n "${CHANGE_TARGET:-}" ]]; then
-            RANGE="origin/$CHANGE_TARGET..HEAD"
-        fi
-    fi
-    if [[ -z "$RANGE" ]]; then
+    if [[ "$RANGE_RC" -eq 1 ]]; then
         echo "pr-check: protected range skipped -- no pull/merge request range (pass --range or set GATES_COMMIT_RANGE)"
         return 0
     fi
-    if [[ "$RANGE" != *..* ]]; then
-        echo "pr-check: --range must be <base>..<head>, got: $RANGE" >&2
-        return 2
-    fi
-    BASE="${RANGE%%..*}"
-    HEAD_REF="${RANGE##*..}"
-    for ref in "$BASE" "$HEAD_REF"; do
-        if ! git rev-parse -q --verify "$ref^{commit}" >/dev/null 2>&1; then
-            echo "pr-check: cannot resolve '$ref' in this clone -- fetch full history (actions/checkout fetch-depth: 0)" >&2
-            return 2
-        fi
-    done
-
-    # The rules come from the base (#123): the PR under review must not be
-    # able to relax them. A base without a policy falls back to the checked
-    # out one; ALWAYS_PROTECTED holds either way.
-    BASE_POLICY="$(mktemp 2>/dev/null || mktemp -t gates-policy)" || return 2
-    if gates_policy_at_rev "$BASE" "$BASE_POLICY"; then
-        export GATES_POLICY_FILE="$BASE_POLICY"
-    else
-        rm -f "$BASE_POLICY"
-        BASE_POLICY=""
-    fi
+    [[ "$RANGE_RC" -eq 0 ]] || return 2
     FULL_LIST=true
     if ! gates_protected_trailer_enabled; then
         FULL_LIST=false
