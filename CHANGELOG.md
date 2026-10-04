@@ -163,6 +163,16 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   its emoji was: "Generated with Claude Code", plain or as a markdown
   link, passed. PR text (the agent's PR hook and `pr-check.sh`) now
   refuses it, matching the commit-side `Co-Authored-By` rule.
+- **Holds and project rules behave as documented** (#132).
+  `--take-upstream` on a held file replaces it and releases the hold; a
+  deleted projected file can be held as deleted; paths with spaces or a
+  leading `./` work, and naming one path for both flags is refused. The
+  plan names each lost execute bit and what a wrong `.runtime-version`
+  said. Doctor flags a held file whose upstream copy changed since the
+  hold. A `hooks.local.d` rule that is a dangling symlink refuses, a rule
+  still running after 10 seconds (`GATES_LOCAL_TIMEOUT`) is killed with
+  everything it started and refuses, and a rule that ignores a large tool
+  call on stdin no longer turns it into a refusal.
 - **Checks no longer miss matches on large input** (#117). Under
   `pipefail`, `echo "$x" | grep -q` read a match as a miss once the input
   outgrew the pipe buffer, so the pre-commit secret scan let a key through

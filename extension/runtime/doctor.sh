@@ -341,6 +341,7 @@ if declare -f gates_ci_missing >/dev/null 2>&1 && [[ -d "$PROJECT_ROOT/.specify/
     fi
 
     gates_holds_load "$PROJECT_ROOT"
+    gates_manifest_load "$PROJECT_ROOT"
     if [[ -n "$GATES_HOLDS" ]]; then
         HTABLE=""
         [[ -d "$VEND_RT" ]] && HTABLE="$(gates_projection_table "$VEND_RT" 1)"
@@ -360,7 +361,16 @@ if declare -f gates_ci_missing >/dev/null 2>&1 && [[ -d "$PROJECT_ROOT/.specify/
                 echo "${BAD}stale hold: $hp now equals the installed extension's copy — remove it from $GATES_HOLDS_REL so upgrades update it again"
                 MISSING=$((MISSING + 1))
             else
-                echo "${OK}held: $hp (differs from the installed extension, kept on purpose)"
+                # The manifest keeps the hash projection last wrote for a
+                # held file. When the installed copy differs from it, the
+                # upstream file changed since the hold was taken (#132).
+                hrec="$(gates_manifest_hash "$hp")"
+                if [[ -n "$hrec" ]] && declare -f gates_sha256 >/dev/null 2>&1 \
+                    && [[ "$(gates_sha256 "$VEND_RT/$hsrc")" != "$hrec" ]]; then
+                    echo "${REC}held: $hp — the installed extension changed this file since it was held; compare the two and re-decide (--take-upstream replaces it and releases the hold)"
+                else
+                    echo "${OK}held: $hp (differs from the installed extension, kept on purpose)"
+                fi
             fi
         done <<<"$GATES_HOLDS"
     fi

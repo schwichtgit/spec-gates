@@ -327,7 +327,8 @@ zip, so they prove the download arrived intact, not who published it.
 of every file it projects in `.specify/gates/.projected.sha256`, so a file
 you changed locally is reported (exit 3) instead of overwritten: re-run
 with `--keep-local <path>` (it is added to `.specify/gates/.upgrade-holds`
-and left alone from then on) or `--take-upstream <path>`. A project
+and left alone from then on; a deleted file can be held as deleted) or
+`--take-upstream <path>`, which also releases a hold. A project
 projected by 0.3.x has no such record yet; there `project.sh` compares
 against the hashes of what the 0.3.x releases shipped, so only real
 edits stop it. It ends by running the canary suite and fails if any gate
@@ -347,7 +348,9 @@ and the manifest never touch. `<hook>` is `protect-files`,
 runs after the shipped checks, so it can add a refusal but never remove
 one. It reads the tool call JSON on stdin (agent hooks) or gets the hook's
 arguments (`commit-msg` gets the message file as `$1`). Exit 0 allows;
-any other exit refuses, with the rule's stderr as the message.
+any other exit refuses, with the rule's stderr as the message. A rule that
+cannot be read (including a dangling symlink) refuses, and so does one still
+running after 10 seconds (`GATES_LOCAL_TIMEOUT`).
 
 The rules are the project's, not the agent's: the agent cannot write or
 delete them (Write/Edit is refused, and a Bash command that appears to

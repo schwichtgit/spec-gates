@@ -604,6 +604,11 @@ has "an unheld local edit fails" "$U" "[MISSING] projected files were edited loc
 run_doctor "$U" >/dev/null
 has "a held edit is reported as kept" "$U" "[ok]  held: .specify/gates/canary.sh (differs from the installed extension, kept on purpose)"
 has "and the projection is current again" "$U" "[ok]  projection matches the installed extension"
+# The installed extension changes the held file (an upgrade): the hold now
+# pins an old version, which doctor must say (#132).
+printf '\n# newer upstream\n' >>"$U/.specify/extensions/gates/runtime/canary.sh"
+run_doctor "$U" >/dev/null
+has "a held file whose upstream changed is flagged" "$U" "[rec] held: .specify/gates/canary.sh — the installed extension changed this file since it was held"
 cp "$U/.specify/extensions/gates/runtime/canary.sh" "$U/.specify/gates/canary.sh"
 run_doctor "$U" >/dev/null
 has "a hold equal to upstream is stale and fails" "$U" "[MISSING] stale hold: .specify/gates/canary.sh"
