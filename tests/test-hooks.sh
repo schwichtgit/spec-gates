@@ -928,9 +928,12 @@ check "large commit with a declared protected path passes" 0 \
     bash -c "cd '$LG' && git add -A && git commit -q -m 'chore: many' -m 'Protected-Change: const.md
 Approved-By: Reviewer'"
 
-LARGE_CMD="rm -rf / ; echo $(tr '\n' ' ' <"$PAD")"
+# The payloads go through files: Linux caps a single argv string at 128 KB
+# (MAX_ARG_STRLEN), so passing them as arguments fails with exit 126.
+{ printf 'rm -rf / ; echo '; tr '\n' ' ' <"$PAD"; } >"$WORKDIR/large-cmd.txt"
+jq -n --rawfile c "$WORKDIR/large-cmd.txt" '{tool_input:{command:$c}}' >"$WORKDIR/large-cmd.json"
 check "dangerous command followed by 100+ KB is blocked" 2 \
-    bash -c "jq -n --arg c \"\$1\" '{tool_input:{command:\$c}}' | '$HOOKS/validate-bash.sh'" _ "$LARGE_CMD"
+    bash -c "'$HOOKS/validate-bash.sh' <'$WORKDIR/large-cmd.json'"
 
 # Under the stock macOS bash 3.2, ${msg//[[:space:]]/} on such a message
 # ran for minutes; the hook runs by path, so this exercises 3.2 there.
@@ -938,8 +941,10 @@ check "dangerous command followed by 100+ KB is blocked" 2 \
 check "branding at the top of a long message is refused" 1 \
     bash -c "cd '$LG' && '$GITHOOKS/commit-msg' '$WORKDIR/large-msg.txt'"
 # Raw mode (no jq) decodes escapes with ${v//...}: a long value asks instead.
+{ printf 'echo '; sed 's/$/\\n/' "$PAD" | tr -d '\n'; } >"$WORKDIR/raw-cmd.txt"
+jq -n --rawfile c "$WORKDIR/raw-cmd.txt" '{tool_input:{command:$c}}' >"$WORKDIR/raw-cmd.json"
 check "raw mode: a 100+ KB command asks, never hangs" 0 \
-    bash -c "out=\$(jq -n --arg c \"\$1\" '{tool_input:{command:\$c}}' | PATH='$NOJQ' '$HOOKS/validate-bash.sh') && grep -q '\"ask\"' <<<\"\$out\"" _ "echo $(sed 's/$/\\n/' "$PAD" | tr -d '\n')"
+    bash -c "out=\$(PATH='$NOJQ' '$HOOKS/validate-bash.sh' <'$WORKDIR/raw-cmd.json') && grep -q '\"ask\"' <<<\"\$out\""
 
 # --- Summary ---
 echo ""
