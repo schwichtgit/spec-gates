@@ -132,6 +132,23 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   tool's globs are now read once, git lists the files (tracked files
   plus untracked ones it does not ignore), and matching stays in bash.
   The same files are checked as before.
+- **CI wiring checks no longer accept steps that enforce nothing** (#171).
+  Doctor's CI drift check and the constitution `ci` surface took
+  `echo bash .specify/gates/verify.sh ...`, `|| true`,
+  `continue-on-error: true`, `--dry-run`, an earlier `exit 0`, a
+  `workflow_dispatch`-only workflow, hidden, manual or `when: never`
+  GitLab jobs and Jenkins `when { expression { false } }` stages as live,
+  and reported a job under `if: false` or `verify.sh --boundary git` as a
+  `[rec]` only. These are now not live, and a pipeline that calls
+  `verify.sh` without a live `--boundary ci` step fails. What a text check
+  cannot see (heredocs, wrapper scripts, computed conditions) is listed in
+  how-it-works; the CI run's log is the proof.
+- **Constitution `policy` markers on lists and objects work** (#171). A
+  list or object value always reported `missing`, and `align` proposed
+  `set ... = non-false`, which never converged. A non-empty list or object
+  is now present, `expect` on a list means it contains that entry (on an
+  object, that key), and proposals follow `policy.schema.json`; a marker
+  no valid policy can satisfy is reported as an annotation to fix.
 - **The git hooks refuse a branch whose runtime was never projected**
   (#159). In a clone that tracks `policy.json` but gitignores the runtime,
   commit-msg took the missing `.runtime-version` for a pre-0.3.4 runtime

@@ -61,9 +61,18 @@ the checking; this command runs it, shows the output, and explains it.
      `--take-upstream <path>` restores it), and held edits get a `[rec]`
      to prove them with `doctor.sh --canary`; CI pipelines must contain the template's `gates`, `canary` and
      `pr` steps unless `ci:<step>` in `.specify/gates/.upgrade-holds`
-     records a deliberate omission. Commented-out steps and GitHub steps
-     under `if: false` do not count; a `ci:<step>` hold for a step the
-     pipeline runs is stale and fails, and an unknown id gets a `[rec]`.
+     records a deliberate omission. Only live steps count: commented-out
+     steps, steps or jobs under `if: false`, a command an `echo` only
+     prints, one whose failure `|| true`, `continue-on-error: true` or
+     `allow_failure: true` ignores, `--dry-run`, anything after an
+     unconditional `exit 0`, manual, hidden or never-run GitLab jobs,
+     workflows triggered only by `workflow_dispatch` or `schedule`, and
+     Jenkins stages under `when { expression { false } }` do not. A
+     pipeline that calls `verify.sh` without a live `--boundary ci` step
+     fails. Heredocs, wrapper scripts and computed conditions are read as
+     live: the CI run's own log is the proof that the gates ran. A
+     `ci:<step>` hold for a step the pipeline runs is stale and fails, and
+     an unknown id gets a `[rec]`.
    - **Agent hooks**: each projected hook must be executable (Claude Code
      runs them by path).
    - **Attestations**: `.specify/gates/` and its `attestations.jsonl`

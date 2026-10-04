@@ -169,7 +169,16 @@ approval, change by change, using the existing wiring:
 
 - `policy` → edit `.specify/gates/policy.json` (the OVERLAY) to set the key
   at the full path the proposal names (`hooks.<hook>.<key>` for a
-  `<hook>.<key>` ref).
+  `<hook>.<key>` ref). A scalar is active when it equals `expect`, or,
+  without `expect`, when it is set and not `false`. A list or object is
+  active when it is non-empty; `expect` on a list names an entry it must
+  contain (`ref=git.ai_branding.terms expect=Copilot`), on an object a key
+  it must have. The proposal follows `policy.schema.json`: add the entry
+  to a list, set a boolean to `true`, set a value from its allowed set.
+  When no valid policy can satisfy the marker (a path the schema lacks,
+  an `expect` outside the allowed values, a boolean expected to be `yes`),
+  the proposal says to fix the annotation instead: change the marker with
+  the user, never the policy.
   If a 003 contract is live, re-run `/speckit.gates.sync` so the change flows
   into the effective policy exactly like any overlay deviation — never edit
   `policy.effective.json` directly.
@@ -177,8 +186,12 @@ approval, change by change, using the existing wiring:
   `/speckit.gates.init` (project the hook, set the execute bit, reference it).
 - `ci` → project the named check with `/speckit.gates.ci <platform>`. Only a
   live step counts: a pipeline must run `verify.sh --boundary ci`, plus the
-  step a `gates`, `canary` or `pr` ref names; a commented-out step or one
-  under `if: false` stays `missing`.
+  step a `gates`, `canary` or `pr` ref names; a commented-out step, one
+  under `if: false`, one whose failure is ignored (`|| true`,
+  `continue-on-error: true`, `allow_failure: true`), one that only prints
+  the command, and a job that never runs (a manual or hidden GitLab job, a
+  workflow triggered only by `workflow_dispatch` or `schedule`) stay
+  `missing`.
 - `accept` → add the `# verifies:` accept block stub to the named feature's
   `tasks.md`.
 - `scanner` → add the rule to the tool's config.

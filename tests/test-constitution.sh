@@ -448,6 +448,18 @@ sed -i.bak 's/canary/pr/' "$CIW/.specify/memory/constitution.md" && rm -f "$CIW/
 printf 'jobs:\n  pr:\n    steps:\n      - run: bash .specify/gates/verify.sh --boundary ci\n' \
     >"$CIW/.github/workflows/ci.yml"
 expect_state "ci: a template id needs its step, not the word" "$(ciw_align)" "II. Canary" "missing"
+# A step that runs but cannot fail, or a job that never runs, wires nothing
+# (#171): the ci surface reads the same live text doctor does.
+printf 'jobs:\n  gates:\n    steps:\n      - run: bash .specify/gates/verify.sh --boundary ci\n        continue-on-error: true\n' \
+    >"$CIW/.github/workflows/ci.yml"
+expect_state "ci: a continue-on-error gates step is missing" "$(ciw_align)" "I. Gates" "missing"
+printf 'on: workflow_dispatch\njobs:\n  lint-job:\n    steps:\n      - run: bash .specify/gates/verify.sh --boundary ci\n' \
+    >"$CIW/.github/workflows/ci.yml"
+expect_state "ci: a dispatch-only workflow wires no gates step" "$(ciw_align)" "I. Gates" "missing"
+expect_state "ci: nor any other ref in it" "$(ciw_align)" "III. Custom" "missing"
+printf 'jobs:\n  lint-job:\n    steps:\n      - run: bash .specify/gates/verify.sh --boundary ci || true\n' \
+    >"$CIW/.github/workflows/ci.yml"
+expect_state "ci: verify.sh || true is missing" "$(ciw_align)" "I. Gates" "missing"
 
 # policy refs are full dotted paths (#139); <hook>.<key> still means
 # hooks.<hook>.<key>, and a proposal names the path the evaluator reads.
@@ -482,6 +494,87 @@ expect_state "policy: an absent hook key is missing" "$pf" "III. Absent Short" "
 expect_contains "policy: a shorthand proposal names the full path" "$pf" "set hooks.shellcheck.severity = error"
 expect_contains "policy: a full-path proposal keeps it" "$pf" "set hooks.prettier.severity = error"
 expect "policy: no proposal doubles the hooks prefix" "$(grep -c 'hooks\.hooks' <<<"$pf")" "0"
+
+# List and object values (#171): non-empty is present, expect on a list is
+# membership, on an object a key; every proposal converges, and an
+# annotation no policy can satisfy is named as the annotation to fix.
+PLV="$WORKDIR/policy-lists"
+mkdir -p "$PLV/.specify/gates" "$PLV/.specify/memory"
+cat >"$PLV/.specify/gates/policy.json" <<'EOF'
+{ "git": { "block_main_commits": false, "ai_branding": { "terms": ["Copilot", "Claude"], "allow_phrases": [] } },
+  "spec": { "include": ["specs/**"] } }
+EOF
+cat >"$PLV/.specify/memory/constitution.md" <<'EOF'
+# C
+
+## Core Principles
+
+### I. List Present
+<!-- gates:enforce surface=policy ref=git.ai_branding.terms -->
+x
+
+### II. List Member
+<!-- gates:enforce surface=policy ref=git.ai_branding.terms expect=Copilot -->
+x
+
+### III. List Non Member
+<!-- gates:enforce surface=policy ref=git.ai_branding.terms expect=Gemini -->
+x
+
+### IV. Empty List
+<!-- gates:enforce surface=policy ref=git.ai_branding.allow_phrases -->
+x
+
+### V. Object Present
+<!-- gates:enforce surface=policy ref=git.ai_branding -->
+x
+
+### VI. Object Key
+<!-- gates:enforce surface=policy ref=git.ai_branding expect=terms -->
+x
+
+### VII. Absent List
+<!-- gates:enforce surface=policy ref=spec.exclude -->
+x
+
+### VIII. False Boolean
+<!-- gates:enforce surface=policy ref=git.block_main_commits -->
+x
+
+### IX. Bad Path
+<!-- gates:enforce surface=policy ref=git.no_such_key -->
+x
+
+### X. Bad Expect
+<!-- gates:enforce surface=policy ref=spec.severity expect=fatal -->
+x
+EOF
+plv() { CLAUDE_PROJECT_DIR="$PLV" bash "$CONST" align --constitution "$PLV/.specify/memory/constitution.md"; }
+pl="$(plv)"
+expect_state "policy: a non-empty list is present" "$pl" "I. List Present" "active"
+expect_state "policy: expect on a list is membership" "$pl" "II. List Member" "active"
+expect_state "policy: a list without the expected entry is missing" "$pl" "III. List Non Member" "missing"
+expect_state "policy: an empty list is missing" "$pl" "IV. Empty List" "missing"
+expect_state "policy: a non-empty object is present" "$pl" "V. Object Present" "active"
+expect_state "policy: expect on an object is a key" "$pl" "VI. Object Key" "active"
+expect_state "policy: an absent list is missing" "$pl" "VII. Absent List" "missing"
+expect_contains "policy: a missing list entry is proposed as an addition" "$pl" 'add "Gemini" to the git.ai_branding.terms list'
+expect_contains "policy: an empty list gets an entry" "$pl" "add at least one entry to git.ai_branding.allow_phrases"
+expect_contains "policy: an absent list gets an entry" "$pl" "add at least one entry to spec.exclude"
+expect_contains "policy: a false boolean is set to true" "$pl" "set git.block_main_commits = true"
+expect_contains "policy: a path the schema lacks is an annotation fix" "$pl" "fix the annotation: policy.schema.json has no git.no_such_key"
+expect_contains "policy: an expect outside the enum is an annotation fix" "$pl" "fix the annotation: spec.severity is one of"
+expect "policy: no proposal sets a value no policy accepts" "$(grep -c 'non-false\|= fatal\|= Gemini' <<<"$pl")" "0"
+# Applying the proposals makes the principles active: they converge.
+cat >"$PLV/.specify/gates/policy.json" <<'EOF'
+{ "git": { "block_main_commits": true, "ai_branding": { "terms": ["Copilot", "Claude", "Gemini"], "allow_phrases": ["x"] } },
+  "spec": { "include": ["specs/**"], "exclude": ["y"] } }
+EOF
+pl="$(plv)"
+expect_state "policy: the list addition converges" "$pl" "III. List Non Member" "active"
+expect_state "policy: the empty-list entry converges" "$pl" "IV. Empty List" "active"
+expect_state "policy: the absent-list entry converges" "$pl" "VII. Absent List" "active"
+expect_state "policy: the boolean proposal converges" "$pl" "VIII. False Boolean" "active"
 
 # Overlay targeting: a missing policy surface proposes an overlay edit.
 expect_contains "align: missing policy proposes an OVERLAY edit" "$alm" "policy.json (overlay)"

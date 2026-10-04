@@ -386,7 +386,12 @@ no longer blocks. `/speckit.gates.doctor` reports the same state between
 upgrades: local edits that are not held, stale holds, and CI pipelines
 missing a template step (a `ci:<step>` line in `.upgrade-holds` records a
 deliberate omission; one for a step the pipeline runs is stale and fails).
-Commented-out steps and GitHub steps under `if: false` do not count.
+Only live steps count: commented-out steps, steps under `if: false`, a
+step whose failure is ignored (`|| true`, `continue-on-error: true`), and
+a job that never runs on a push or pull request do not, and a pipeline
+that calls `verify.sh` without a live `--boundary ci` step fails (the
+full list and the limits of a text check are in
+[how-it-works](docs/how-it-works.md)).
 `/speckit.gates.upgrade` walks through the same steps in Claude Code.
 
 ## Project rules that survive upgrades
