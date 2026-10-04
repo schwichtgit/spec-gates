@@ -23,7 +23,8 @@ the hooks execute under macOS `/bin/bash`.
   allow (block on certainty, ask on uncertainty, raw mode without jq);
   `protected_files.extra`; commit-msg toggles, Protected-Change trailers
   and `git.ai_branding`; hook/runtime version skew, hook stubs and linked
-  worktrees; the auto-format hooks really format; local rules in
+  worktrees; the auto-format hooks really format, map a tool failure
+  through their severity, and format nothing without a policy; local rules in
   `hooks.local.d`, `git.block_bulk_staging`, and asking on a name alone;
   project rules and protected files out of the agent's reach (Write
   blocked, Bash asks, rule changes need a trailer); the `GATES_PROBE`
@@ -70,14 +71,17 @@ the hooks execute under macOS `/bin/bash`.
   it; deviations are classified and informational; repos without
   `extends` are untouched; sync failures fail closed with prior state
   intact; `sync --update` lands only as a reviewable change; `propose`
-  turns deviations into an upstream change request.
+  turns deviations into an upstream change request. Every refusal (bad
+  arguments, an invalid overlay, baseline or merge, no pin, no tags, an
+  existing update branch) is named and writes nothing.
 - `test-constitution.sh` — the constitution pipeline (feature 004):
   fragment filtering and ordering; a byte-deterministic draft with one
   marker per principle and no placeholders; no materializing without a
   surface decision; `--augment` keeps every existing line; detect
   (absent/placeholder/filled); per-surface alignment and overlay targeting;
   `check` verdicts and exit codes; only `###` headings under
-  `## Core Principles` count as principles.
+  `## Core Principles` count as principles; argument errors and the
+  `--constitution`/`--policy` flags.
 - `test-package.sh` — what a consumer's repo sees after install: the
   package contents mirror the release workflow, shipped markdown is clean
   under default lint tooling, shipped shell passes the pinned shellcheck,
