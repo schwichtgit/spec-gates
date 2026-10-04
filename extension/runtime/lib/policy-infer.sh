@@ -204,7 +204,7 @@ gates_policy_infer() {
     # Surface a per-field summary on stderr so the operator can see what
     # was inferred vs. what was left at defaults.
     {
-        echo "gates-policy-infer: synthesized policy at $output_path"
+        echo "policy-infer: synthesized policy at $output_path"
         printf '  prettier.exclude       <- %s\n' "$prettier_source"
         printf '  markdownlint.exclude   <- %s\n' "$markdown_source"
         printf '  shellcheck.exclude     <- %s\n' "$shellcheck_source"

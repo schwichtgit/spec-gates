@@ -57,6 +57,7 @@ eq "shellcheck.exclude from the template" "$(jq -c '.hooks.shellcheck.exclude' "
     "$(jq -c '.hooks.shellcheck.exclude' "$P/.specify/gates/policy.json")"
 eq "no Taskfile -> orchestrator none" none "$(jq -r '.hooks["verify-quality"].orchestrator' "$P/.specify/gates/policy.json")"
 eq "the summary names the defaults" 3 "$(grep -c '<- bundled defaults' "$W/err")"
+eq "the summary is prefixed with the script's own name (#119)" 1 "$(grep -c '^policy-infer: synthesized policy at' "$W/err")"
 eq "the result validates" 0 "$(bash -c "source '$LIB/policy.sh'; gates_validate_policy '$P/.specify/gates/policy.json' >/dev/null 2>&1; echo \$?")"
 
 echo ""

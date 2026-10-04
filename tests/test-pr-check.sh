@@ -129,9 +129,24 @@ for t in bash sh git jq python3 perl cat grep sed awk head tail tr wc dirname ba
     command -v "$t" >/dev/null 2>&1 && ln -sf "$(command -v "$t")" "$NOCURL/$t"
 done
 mr_api "Adds a."$'\n\n'"Tail line: I have made this seamless."
-expect "no curl: python3 fetch still finds the tail violation (exit 1)" \
-    "$(run "${GL[@]}" PATH="$NOCURL" CI_MERGE_REQUEST_DESCRIPTION="Adds a." CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED=true GATES_GITLAB_TOKEN=t)" 1
-expect "no curl: the violation came from the fetched tail" "$(grep -c 'Self-referential' "$WORKDIR/out.txt")" 1
+if python3 -c 'import urllib.request' >/dev/null 2>&1; then
+    expect "no curl: python3 fetch still finds the tail violation (exit 1)" \
+        "$(run "${GL[@]}" PATH="$NOCURL" CI_MERGE_REQUEST_DESCRIPTION="Adds a." CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED=true GATES_GITLAB_TOKEN=t)" 1
+    expect "no curl: the violation came from the fetched tail" "$(grep -c 'Self-referential' "$WORKDIR/out.txt")" 1
+else
+    echo "SKIP: no curl, python3 fetch (this host lacks python3's urllib)"
+fi
+# Neither curl nor python3 (#120): no fetcher at all, so the truncated
+# description cannot be checked and the check fails closed, saying why.
+NOFETCH="$WORKDIR/path-nofetch"
+mkdir -p "$NOFETCH"
+for t in "$NOCURL"/*; do
+    [[ "$(basename "$t")" == python3 ]] || ln -sf "$(readlink "$t")" "$NOFETCH/$(basename "$t")"
+done
+expect "no curl, no python3: truncated description fails closed (exit 1)" \
+    "$(run "${GL[@]}" PATH="$NOFETCH" CI_MERGE_REQUEST_DESCRIPTION="Adds a." CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED=true GATES_GITLAB_TOKEN=t)" 1
+expect "no curl, no python3: says the full text could not be fetched" \
+    "$(grep -c 'could not be fetched' "$WORKDIR/out.txt")" 1
 mr_api "Adds a."$'\n\n'"A long but clean tail."
 expect "GitLab < 16.7 (no description var), no token -> notice, title checked (exit 0)" \
     "$(run "${GL[@]}")" 0

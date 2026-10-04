@@ -95,12 +95,17 @@ runtime but deleted its hooks is refused, so removing the hooks cannot
 quietly turn enforcement off.
 
 **Other hook managers.** When husky, lefthook or the pre-commit framework
-owns the hooks, gates adds its entry to the file that tool reads
-(`.husky/<hook>`, a block in `lefthook.yml`, a `repo: local` item in
-`.pre-commit-config.yaml`), never to the files it generates, which its
-next install would rewrite. `project.sh --wire-manager` appends the entry
-only where the result is certainly still valid; otherwise it prints it.
-Any other owner gets the one call-through line to add.
+owns the hooks, gates adds its entry to the file that tool reads, never to
+the files it generates, which its next install would rewrite.
+`project.sh --wire-manager` appends the entry only where the result is
+certainly still valid; otherwise it prints it.
+
+| Owner                                                     | Where the gates entry goes                        | Notes                                                                                                                                                                  |
+| --------------------------------------------------------- | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| husky (`core.hooksPath` under `.husky/`)                  | a line in `.husky/<hook>`                         | The script is created if missing; your existing lines stay first.                                                                                                      |
+| lefthook                                                  | a `<hook>:` block in `lefthook.yml`               | Appended only when that hook has no block yet; otherwise printed for you to merge. Run `lefthook install` if git does not run lefthook for that hook yet.              |
+| pre-commit framework                                      | a `repo: local` item in `.pre-commit-config.yaml` | Appended only when `repos:` is the last top-level key; otherwise printed. Needs pre-commit 3.2+; run `pre-commit install --hook-type commit-msg` for the message hook. |
+| anything else (another `core.hooksPath`, a custom script) | nothing is written                                | `project.sh` prints the call-through line to add.                                                                                                                      |
 
 **Proving the hooks run.** A hook that exists is not a hook git runs. The
 projected hooks answer `GATES_PROBE=1` with a marker before reading any

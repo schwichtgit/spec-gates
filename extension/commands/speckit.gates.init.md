@@ -67,54 +67,7 @@ files must survive the extension being removed.
   On failure, show the error, fix interactively, re-validate.
 - With `--policy-only`, stop here and report the policy path.
 
-### 3. Project the runtime and wire the boundaries (one step)
-
-`RUNTIME_SRC/project.sh` does the whole projection in one invocation:
-it copies the runtime into `.specify/gates/` and `.claude/hooks/gates/`,
-sets every execute bit (including the installed extension's git hooks,
-which zip extraction leaves non-executable), records
-`.specify/gates/.runtime-version`, adds `attestations.jsonl` to
-`.specify/gates/.gitignore`, merges the agent hooks into
-`.claude/settings.json` (append-only: existing entries are never removed
-or reordered, and a command path already wired is skipped), installs the
-git hook stub as `pre-commit` and `commit-msg` in the hooks directory git
-reads, writes `.specify/gates/.projected.sha256`, and runs the canary
-suite. It never writes `policy.json` and refuses to run without one.
-
-1. Plan it and show the user the complete output:
-   `bash "$RUNTIME_SRC/project.sh" --dry-run` (pass `--no-agent-hooks` /
-   `--no-git-hooks` through from the user's arguments).
-2. On approval, run it once with the same flags:
-   `bash "$RUNTIME_SRC/project.sh"`.
-
-Never copy runtime files or `chmod` them by hand: one reviewed command
-replaces the per-file writes that permission classifiers refuse.
-
-Read the exit code:
-
-- `0`: projected, and every canary blocked.
-- `1`: a canary was accepted (a broken gate: report it and point at
-  `/speckit.gates.doctor`), or another tool owns the git hooks:
-  - **husky, lefthook or the pre-commit framework**: `project.sh` printed
-    the gates entry for that tool's own file (`.husky/<hook>`,
-    `lefthook.yml`, `.pre-commit-config.yaml`). Show it, ask the user, and
-    on approval re-run with `--wire-manager` to append it. If it says the
-    file cannot be appended to safely, give the user the entry to add by
-    hand. If it says to run `lefthook install` or `pre-commit install
---hook-type commit-msg`, tell the user to run it (never run another
-    tool's installer yourself).
-  - **any other owner**: give the user the call-through line it printed.
-  - Never edit the generated files in `.husky/_/` or `.git/hooks`.
-- `2`: refused before writing; its message says why (no policy, an
-  interrupted install, a corrupt `.projected.sha256`).
-- `3`: files projected earlier were changed locally. Treat it as
-  `/speckit.gates.upgrade` step 6.
-
-If the project is not a git work tree yet (greenfield), `project.sh` says
-the git boundary is not wired: tell the user to run it again after
-`git init`, because a later `git init` does not pick the hooks up.
-
-### 3b. Seed the pinned linter toolchain
+### 3. Seed the pinned linter toolchain
 
 If the approved policy enables node-resolved linters (prettier and/or
 markdownlint) and the repo does not already pin them (`package.json`
@@ -151,9 +104,59 @@ permanent noise. Seed this and show it to the user:
 Adjust `ignores` to the repo's layout (mirror the policy's exclude
 globs). Do not seed a prettier **config** — prettier's defaults are the
 convention and needing none is the point. Ignore files are a different
-concern; see 3c.
+concern; see 4b.
 
-### 3c. Keep projected artifacts out of the repo's OWN lint scope
+### 4. Project the runtime and wire the boundaries (one step)
+
+`RUNTIME_SRC/project.sh` does the whole projection in one invocation:
+it copies the runtime into `.specify/gates/` and `.claude/hooks/gates/`,
+sets every execute bit (including the installed extension's git hooks,
+which zip extraction leaves non-executable), records
+`.specify/gates/.runtime-version`, adds `attestations.jsonl` to
+`.specify/gates/.gitignore`, merges the agent hooks into
+`.claude/settings.json` (append-only: existing entries are never removed
+or reordered, and a command path already wired is skipped), installs the
+git hook stub as `pre-commit` and `commit-msg` in the hooks directory git
+reads, writes `.specify/gates/.projected.sha256`, and runs the canary
+suite. It never writes `policy.json` and refuses to run without one.
+
+1. Plan it and show the user the complete output:
+   `bash "$RUNTIME_SRC/project.sh" --dry-run` (pass `--no-agent-hooks` /
+   `--no-git-hooks` through from the user's arguments).
+2. On approval, run it once with the same flags:
+   `bash "$RUNTIME_SRC/project.sh"`.
+
+Never copy runtime files or `chmod` them by hand: one reviewed command
+replaces the per-file writes that permission classifiers refuse.
+
+Read the exit code:
+
+- `0`: projected, and every canary blocked.
+- `1`: a canary was skipped because a policy-enabled tool is not
+  installed (the user declined step 3: name the tool and say that gate
+  skips until it is installed), a canary was accepted (a broken gate:
+  report it and point at `/speckit.gates.doctor`), or another tool owns
+  the git hooks:
+  - **husky, lefthook or the pre-commit framework**: `project.sh` printed
+    the gates entry for that tool's own file (`.husky/<hook>`,
+    `lefthook.yml`, `.pre-commit-config.yaml`). Show it, ask the user, and
+    on approval re-run with `--wire-manager` to append it. If it says the
+    file cannot be appended to safely, give the user the entry to add by
+    hand. If it says to run `lefthook install` or `pre-commit install
+--hook-type commit-msg`, tell the user to run it (never run another
+    tool's installer yourself).
+  - **any other owner**: give the user the call-through line it printed.
+  - Never edit the generated files in `.husky/_/` or `.git/hooks`.
+- `2`: refused before writing; its message says why (no policy, an
+  interrupted install, a corrupt `.projected.sha256`).
+- `3`: files projected earlier were changed locally. Treat it as
+  `/speckit.gates.upgrade` step 6.
+
+If the project is not a git work tree yet (greenfield), `project.sh` says
+the git boundary is not wired: tell the user to run it again after
+`git init`, because a later `git init` does not pick the hooks up.
+
+### 4b. Keep projected artifacts out of the repo's OWN lint scope
 
 Projection puts files the user did not write into their tree:
 `.specify/gates/` (runtime + schema), `.specify/extensions/gates/`
@@ -168,21 +171,21 @@ There is no formatting that avoids this: any style we ship fails
 somebody's config. Vendored content belongs out of scope, exactly like
 `node_modules`. So:
 
-- **prettier**: when the repository uses prettier, `project.sh` (step 3)
+- **prettier**: when the repository uses prettier, `project.sh` (step 4)
   already reported which of the three paths `.prettierignore` does not
   exclude. Offer to add them; on approval re-run
   `bash "$RUNTIME_SRC/project.sh" --add-lint-ignores`, which appends them
   (creating the file if needed) and never rewrites or reorders existing
   entries.
 - **markdownlint**: if the repo already has its own markdownlint config
-  (so the seed in 3b does not apply), offer to add the same three paths to
+  (so the seed in step 3 does not apply), offer to add the same three paths to
   its `ignores`; `project.sh` does not edit markdownlint configs.
 
 Show the diff, apply only on approval, and if the user declines say
 plainly that their repo-wide lint runs will flag our vendored files and
 that the gate itself is unaffected either way.
 
-### 4. Self-test (mandatory — the user must SEE enforcement work)
+### 5. Self-test (mandatory — the user must SEE enforcement work)
 
 `project.sh` already ran the full canary suite. Run these as well and
 show the results, so the user sees each boundary refuse something:
@@ -212,7 +215,7 @@ show the results, so the user sees each boundary refuse something:
 If any self-test does not behave as expected, report it as a failure and
 point the user at `/speckit.gates.doctor`. Do not declare success.
 
-### 4b. Constitution enforcement (FR-014, offer only)
+### 5b. Constitution enforcement (FR-014, offer only)
 
 Run `bash .specify/gates/constitution.sh detect`. It prints one word:
 
@@ -226,13 +229,25 @@ Run `bash .specify/gates/constitution.sh detect`. It prints one word:
 Whatever the answer, init proceeds. This step reads only; it never writes the
 constitution itself (that is the session's job, on explicit approval).
 
-### 5. Report
+### 6. Report
 
 Summarize: policy path, boundaries wired, self-test results, the constitution
-state from step 4b (`filled` / `absent` / `placeholder`, and whether the
+state from step 5b (`filled` / `absent` / `placeholder`, and whether the
 session was offered), and the two follow-ups — `/speckit.gates.ci <platform>`
 to project CI enforcement, and the note that `/speckit.implement` will now
 offer to run gates on completion (via the extension's `after_implement` hook).
+
+Tell the user how to commit the adoption. The first commit stages
+`.specify/gates/policy.json`, a protected file, so commit-msg refuses it
+without a declaration and an approver. Give them the exact message tail:
+
+```text
+Protected-Change: .specify/gates/policy.json
+Approved-By: <name>
+```
+
+Commit on a branch, not `main` (the git boundary refuses commits to
+`main` unless `git.block_main_commits` is off).
 
 ## Project rules
 

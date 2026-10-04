@@ -61,18 +61,13 @@ self-evidencing:
   detected version, lockfile pin, candidate vs checked file counts,
   result, and duration. Evidence, never file contents.
 - **Canaries** — `canary.sh` plants 14 known violations in disposable
-  sandboxes and requires the real gate or hook to reject each one: a
-  prettier-dirty file, an SC2086 script, an `rm -rf /` tool call and a
-  `.env` edit (each with and without jq), a PR the PR hook must allow and
-  one it must refuse, `git add -A` under `git.block_bulk_staging`, a
-  command a `hooks.local.d` rule refuses, a staged AWS-key-shaped string,
-  a staged token assignment, a protected file staged without its
-  `Protected-Change` trailer, a commit message naming a branded AI term,
-  a PR range with an undeclared protected change, a Complete feature with
-  a failing accept block, and a tampered effective policy. An accepted probe fails the suite naming the broken
-  gate. CI runs it on every build — a red canary step means a broken
-  gate, not a dirty tree. On demand:
-  `bash .specify/gates/canary.sh` (or `doctor.sh --canary`).
+  sandboxes (dirty files, dangerous tool calls with and without jq, staged
+  secrets, undeclared protected changes, branding, a failing accept block,
+  a tampered effective policy, and more) and requires the real gate or hook
+  to reject each one. An accepted probe fails the suite naming the broken
+  gate; CI runs it on every build. On demand:
+  `bash .specify/gates/canary.sh` (or `doctor.sh --canary`). The full list
+  is in [How it works](docs/how-it-works.md#evidence-canaries-and-verified-parity).
 - **Verified parity** — a synthetic `parity` gate compares each tool's
   resolved version against its lockfile pin on every run, at every
   boundary. Drift fails the boundary with
@@ -259,6 +254,11 @@ Then, in Claude Code:
 /speckit.gates.ci github   # project the CI boundary (github | gitlab | jenkins)
 ```
 
+Commit the adoption on a branch. Its first commit stages
+`.specify/gates/policy.json`, a protected file, so end the message with
+`Protected-Change: .specify/gates/policy.json` and `Approved-By: <name>`
+(see [Commit and PR message rules](#commit-and-pr-message-rules)).
+
 From that point the normal Spec Kit loop is unchanged —
 `/speckit.specify → clarify → plan → tasks → implement` — but during
 `implement` every edit is auto-formatted, protected files and dangerous
@@ -274,22 +274,23 @@ installed and ends with a single reviewable projection step.
 ```bash
 V=X.Y.Z   # the release to install
 U=https://github.com/schwichtgit/spec-gates/releases/download/v$V
-cp -R .specify/gates /tmp/gates-backup-$(date +%Y%m%d%H%M%S)   # 1. back up
+D="$(mktemp -d)"   # downloads stay out of the project tree
+cp -R .specify/gates "$D/gates-backup"   # 1. back up
 
 # 2. Download and verify the release; stop if a check fails (no cosign on
 #    this machine? see "No cosign" below).
-curl -fsSLO "$U/gates-$V.zip" -O "$U/gates-$V.zip.sha256" -O "$U/gates-$V.zip.sigstore.json" -O "$U/SHA256SUMS"
-sha256sum -c "gates-$V.zip.sha256"     # behind Artifactory: sha256sum -c --ignore-missing SHA256SUMS
-cosign verify-blob --bundle "gates-$V.zip.sigstore.json" \
+(cd "$D" && curl -fsSLO "$U/gates-$V.zip" -O "$U/gates-$V.zip.sha256" -O "$U/gates-$V.zip.sigstore.json" -O "$U/SHA256SUMS" \
+  && sha256sum -c "gates-$V.zip.sha256")   # behind Artifactory: sha256sum -c --ignore-missing SHA256SUMS
+cosign verify-blob --bundle "$D/gates-$V.zip.sigstore.json" \
   --certificate-identity-regexp '^https://github.com/schwichtgit/spec-gates/.github/workflows/release.yml@' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com "gates-$V.zip"
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com "$D/gates-$V.zip"
 
-# 3. Swap the installed extension (policy.json and config stay).
+# 3. Swap the installed extension (policy.json stays).
 specify extension remove gates --keep-config --force
 specify extension add gates --from "$U/gates-$V.zip"
 
 # 4. Confirm the installed files are the verified zip.
-unzip -q "gates-$V.zip" -d /tmp/gates-verified && diff -r /tmp/gates-verified/gates .specify/extensions/gates
+unzip -q "$D/gates-$V.zip" -d "$D/verified" && diff -r "$D/verified/gates" .specify/extensions/gates
 
 # 5. Project: review the plan, then run it once.
 bash .specify/extensions/gates/runtime/project.sh --dry-run
@@ -308,7 +309,7 @@ checksum check is still required, and the signature can be checked
 elsewhere. Run the `cosign verify-blob` command on any machine that has
 cosign (a CI job or another workstation), note the zip's
 `sha256sum` there, and on this machine confirm that
-`sha256sum gates-$V.zip` prints the same value. That gives the same
+`sha256sum "$D/gates-$V.zip"` prints the same value. That gives the same
 assurance as running cosign locally. Skipping the signature entirely is
 a deliberate choice for the maintainer to make, never a default: the
 `.sha256` file and `SHA256SUMS` come from the same release page as the
@@ -368,17 +369,13 @@ Two settings in `.specify/gates/policy.json` cover the most common cases:
 
 ## Coexisting with other hook managers
 
-When another tool owns the git hooks, gates adds its entry to that tool's
-own configuration, never to the files the tool generates (the next
-`husky`, `lefthook install` or `pre-commit install` would silently drop
-it). `project.sh` prints the entry; `--wire-manager` appends it:
-
-| Owner                                                     | Where the gates entry goes                        | Notes                                                                                                                                                                  |
-| --------------------------------------------------------- | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| husky (`core.hooksPath` under `.husky/`)                  | a line in `.husky/<hook>`                         | The script is created if missing; your existing lines stay first.                                                                                                      |
-| lefthook                                                  | a `<hook>:` block in `lefthook.yml`               | Appended only when that hook has no block yet; otherwise printed for you to merge. Run `lefthook install` if git does not run lefthook for that hook yet.              |
-| pre-commit framework                                      | a `repo: local` item in `.pre-commit-config.yaml` | Appended only when `repos:` is the last top-level key; otherwise printed. Needs pre-commit 3.2+; run `pre-commit install --hook-type commit-msg` for the message hook. |
-| anything else (another `core.hooksPath`, a custom script) | nothing is written                                | `project.sh` prints the call-through line to add.                                                                                                                      |
+When husky, lefthook or the pre-commit framework owns the git hooks,
+gates adds its entry to that tool's own configuration, never to the files
+the tool generates (the next install would silently drop it).
+`project.sh` prints the entry; `--wire-manager` appends it where the result
+is certainly still valid. Any other owner gets the call-through line to
+add. Where each entry goes:
+[How it works, "Other hook managers"](docs/how-it-works.md#the-three-boundary-model).
 
 Doctor checks such hooks statically: it looks for the gates call-through in
 the file the tool reads, and does not run the hook, since that would run
