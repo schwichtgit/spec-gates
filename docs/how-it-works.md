@@ -160,7 +160,9 @@ Approved-By: Jane Reviewer
 A staged protected path without a declaration, a declaration for a path
 the commit does not change, or a missing `Approved-By` is refused. The
 protected list is the union of the worktree policy and the committed one
-at `HEAD`, plus the built-in `hooks.local.d/**`, so a staged `policy.json`
+at `HEAD`, plus the built-in `hooks.local.d/**` and the three
+policy-contract artifacts (`baseline.json`, `baseline.lock.json`,
+`policy.effective.json`), so a staged `policy.json`
 cannot drop its own protection on the way in. A merge commit needs a
 declaration only for a protected path that differs from every merged
 parent, such as an edit made while resolving it; the merged commits carry

@@ -196,6 +196,15 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   an empty file, and more than one JSON document. `verify.sh --boundary`
   accepts only `agent`, `git` or `ci`, and `--boundary` or `--accept`
   without a value is a usage error instead of a raw bash error.
+- **The policy-contract artifacts are protected files** (#137).
+  `baseline.json`, `baseline.lock.json` and `policy.effective.json` decide
+  what is enforced, like `policy.json`, but nothing protected them: a
+  consistent hand edit (lock digest and effective policy recomputed) passed
+  pre-commit, the contract gate, `pr-check` and doctor. All three are now
+  built-in protected paths: the agent cannot write them, a Bash command
+  that appears to modify one asks, and a commit that changes one needs
+  `Protected-Change` and `Approved-By` trailers, checked again by
+  `pr-check`. Commit a sync with one `Protected-Change` line per artifact.
 - **Checks no longer miss matches on large input** (#117). Under
   `pipefail`, `echo "$x" | grep -q` read a match as a miss once the input
   outgrew the pipe buffer, so the pre-commit secret scan let a key through

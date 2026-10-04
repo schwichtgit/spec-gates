@@ -996,6 +996,29 @@ check "rule commit with the trailers passes" 0 bash -c "cd '$PR95' && git commit
 ( cd "$PR95" && git rm -q .specify/gates/hooks.local.d/validate-bash/10.sh ) >/dev/null 2>&1
 printf 'chore: drop the rule\n' >"$PTM"
 check "deleting a rule without a trailer is refused" 1 bash -c "cd '$PR95' && git commit -q -F '$PTM'"
+( cd "$PR95" && git reset -q --hard ) >/dev/null 2>&1
+
+# ===========================================================================
+# The policy-contract artifacts are built-in protected paths (#137)
+# ===========================================================================
+echo ""
+echo "=== contract artifacts: protected at every boundary (#137) ==="
+for a in baseline.json baseline.lock.json policy.effective.json; do
+    for f in ".specify/gates/$a" "$WORKDIR/x/.specify/gates/$a"; do
+        check "Write/Edit blocked: $f" 2 bash -c "jq -nc --arg f '$f' '{tool_input:{file_path:\$f}}' | CLAUDE_PROJECT_DIR='$WORKDIR/none' '$HOOKS/protect-files.sh'"
+    done
+    check "Write/Edit blocked without jq: $a" 2 bash -c "jq -nc --arg f '.specify/gates/$a' '{tool_input:{file_path:\$f}}' >'$WORKDIR/pf137.json' && PATH='$NOJQ' CLAUDE_PROJECT_DIR='$WORKDIR/none' '$HOOKS/protect-files.sh' <'$WORKDIR/pf137.json'"
+    askcheck "Bash modification asks: $a" "$(pp_payload "jq '.git = {}' x.json > .specify/gates/$a")" validate-bash.sh CLAUDE_PROJECT_DIR="$WORKDIR/none"
+    check "Bash read allowed: $a" 0 bash -c "printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$WORKDIR/none' '$HOOKS/validate-bash.sh' | grep -q . && exit 1 || exit 0" _ "$(pp_payload "jq . .specify/gates/$a")"
+    check "built-in protected list names $a" 0 bash -c "cd '$WORKDIR' && source '$REPO_ROOT/extension/runtime/lib/policy.sh' && GATES_POLICY_FILE=/nonexistent gates_protected_list | grep -qxF '.specify/gates/$a'"
+done
+check "a non-contract file beside them stays editable" 0 bash -c "jq -nc '{tool_input:{file_path:\".specify/gates/baseline.json.bak\"}}' | CLAUDE_PROJECT_DIR='$WORKDIR/none' '$HOOKS/protect-files.sh'"
+printf '{"digest":"sha256:forged"}\n' >"$PR95/.specify/gates/baseline.lock.json"
+( cd "$PR95" && git add .specify/gates/baseline.lock.json ) >/dev/null 2>&1
+printf 'chore: pin the baseline\n' >"$PTM"
+check "contract artifact commit without a trailer is refused" 1 bash -c "cd '$PR95' && git commit -q -F '$PTM'"
+printf 'chore: pin the baseline\n\nProtected-Change: .specify/gates/baseline.lock.json\nApproved-By: Reviewer\n' >"$PTM"
+check "contract artifact commit with the trailers passes" 0 bash -c "cd '$PR95' && git commit -q -F '$PTM'"
 
 # ===========================================================================
 # Part H: the behavioral git probe (#74)

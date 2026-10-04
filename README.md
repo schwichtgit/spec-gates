@@ -163,7 +163,10 @@ hooks.shellcheck.severity: baseline "error" -> overlay "warning"`.
 The three artifacts (`baseline.json`, `baseline.lock.json`,
 `policy.effective.json`) are committed contract state (formats:
 [`specs/003-policy-contract/contracts/artifact-layout.md`](specs/003-policy-contract/contracts/artifact-layout.md));
-`policy.json` stays the only file you edit. Repos without an `extends`
+`policy.json` stays the only file you edit. The artifacts are built-in
+protected files: only `sync` writes them, and the commit that adds a
+sync needs a `Protected-Change: <path>` trailer for each artifact it
+changes plus `Approved-By: <name>`. Repos without an `extends`
 declaration are completely unaffected.
 
 ## Constitution as an enforceable contract
@@ -364,7 +367,8 @@ delete them (Write/Edit is refused, and a Bash command that appears to
 modify them asks you first), and a commit that adds, changes or removes
 one needs `Protected-Change: <path>` and `Approved-By: <name>` trailers,
 checked again in CI by `pr-check.sh`. The same Bash check covers
-`policy.json`, the constitution and every `protected_files.extra` entry.
+`policy.json`, the constitution, the policy-contract artifacts and every
+`protected_files.extra` entry.
 
 ```bash
 # .specify/gates/hooks.local.d/validate-bash/10-no-vendor-edits.sh

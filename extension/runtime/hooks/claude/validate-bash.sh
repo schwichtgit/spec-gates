@@ -366,8 +366,9 @@ fi
 # `find -delete` or `git rm` reach it through here. Telling a modification
 # from a read by the command text alone is a heuristic, so a command that
 # appears to modify one asks the human instead of blocking; reads stay
-# allowed. The paths: the project's rules (hooks.local.d) plus
-# protected_files.extra (glob entries by their literal prefix). Without
+# allowed. The paths: the project's rules (hooks.local.d), the
+# policy-contract artifacts (#137), plus protected_files.extra (glob
+# entries by their literal prefix). Without
 # jq, policy.json and the constitution are always checked, extra is read
 # when it is a plain list of strings, and when it cannot be read a command
 # that changes anything asks (#121). A path counts as named when it appears in the command, when one
@@ -398,7 +399,8 @@ if [[ -n "$DEGRADED" && -f "$POLICY" ]]; then
     [[ "$rc" -eq 2 ]] && EXTRA_UNREAD=1
 fi
 protected_prefixes() {
-    printf '%s\n' ".specify/gates/hooks.local.d"
+    printf '%s\n' ".specify/gates/hooks.local.d" ".specify/gates/baseline.json" \
+        ".specify/gates/baseline.lock.json" ".specify/gates/policy.effective.json"
     {
         if [[ -n "$DEGRADED" ]]; then
             printf '%s\n' ".specify/gates/policy.json" ".specify/memory/constitution.md"

@@ -161,6 +161,17 @@ case "$FILE_PATH" in
         ;;
 esac
 
+# The policy-contract artifacts (#137) decide what is enforced, like
+# policy.json. Only contract.sh sync writes them; a hand edit, even a
+# consistent one the contract gate cannot tell from a sync, is refused.
+case "$FILE_PATH" in
+    .specify/gates/baseline.json | */.specify/gates/baseline.json \
+        | .specify/gates/baseline.lock.json | */.specify/gates/baseline.lock.json \
+        | .specify/gates/policy.effective.json | */.specify/gates/policy.effective.json)
+        BLOCKED="Policy-contract artifact (written by contract.sh sync, never by hand; the commit needs a Protected-Change trailer)"
+        ;;
+esac
+
 # Lock files
 case "$BASENAME" in
     package-lock.json|yarn.lock|pnpm-lock.yaml|Cargo.lock|poetry.lock)

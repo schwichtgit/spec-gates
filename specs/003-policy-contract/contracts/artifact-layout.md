@@ -88,5 +88,11 @@ never affect the exit code.
 
 - The three artifacts are committed; adding them to ignore files defeats
   the contract and is not supported.
+- The three artifacts are built-in protected paths (#137), whatever
+  `protected_files.extra` says: the agent hooks refuse writes to them,
+  and a commit that changes one needs a `Protected-Change: <path>`
+  trailer per changed artifact plus `Approved-By: <name>` (commit-msg,
+  re-checked by `pr-check.sh`). The offline proof cannot tell a
+  consistent forgery from a sync; the review of that commit can.
 - `policy.json` remains the only user-edited policy file; sync never
   writes it, and `upgrade` continues to never touch any of the four.
