@@ -170,6 +170,11 @@ gates_message_check() { # <commit|pr> <text>
     if grep -qi 'Co-Authored-By:' <<<"$msg"; then
         _err "Co-Authored-By trailer detected."
     fi
+    # The PR-side counterpart: Claude Code's default PR footer, plain or as
+    # a markdown link, with or without its emoji (#140).
+    if [[ "$mode" == "pr" ]] && grep -qiE 'Generated with[[:space:]]+\[?Claude Code\b' <<<"$msg"; then
+        _err "Agent attribution line detected (Generated with Claude Code)."
+    fi
 
     if [[ "$mode" == "commit" ]] && [[ $(printf '%s\n' "$msg" | wc -l) -gt 1 ]]; then
         local long

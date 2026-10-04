@@ -406,7 +406,8 @@ CI) apply the same rules, from `lib/message.sh`:
   `Anthropic`, `GPT`, `OpenAI`, `Copilot`), and a standalone `Claude`.
   `Claude Code`, `CLAUDE.md`, `.claude/` paths and `claude-*`
   identifiers are allowed.
-- No `Co-Authored-By` trailer, whatever the policy says.
+- No `Co-Authored-By` trailer, whatever the policy says, and in PR text
+  no "Generated with Claude Code" attribution line.
 
 **Agent attribution.** Claude Code adds a `Co-Authored-By: Claude …`
 trailer to commits and a "Generated with Claude Code" line to PRs by

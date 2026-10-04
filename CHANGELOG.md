@@ -151,6 +151,18 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   unchecked. A timed-out block runs in its own process group, and the
   watchdog stops the whole group (TERM, then KILL), so a child process can
   no longer keep running and writing after verify has returned.
+- **`pr-check.sh` can no longer be switched off by the PR it checks**
+  (#123). The protected-change check read the policy from the PR head, so
+  a `--no-verify` commit setting `git.protected_change_trailer` to `false`
+  passed its own undeclared `policy.json` change, and it skipped merge
+  commits entirely. The rules now come from the policy at the base;
+  `policy.json` and `hooks.local.d/**` are always checked; and a merge
+  commit is checked for the paths it changes against every parent.
+- **The PR message rules refuse the agent attribution line** (#140). The
+  README promised that Claude Code's default PR line is refused, but only
+  its emoji was: "Generated with Claude Code", plain or as a markdown
+  link, passed. PR text (the agent's PR hook and `pr-check.sh`) now
+  refuses it, matching the commit-side `Co-Authored-By` rule.
 - **Checks no longer miss matches on large input** (#117). Under
   `pipefail`, `echo "$x" | grep -q` read a match as a miss once the input
   outgrew the pipe buffer, so the pre-commit secret scan let a key through

@@ -90,6 +90,14 @@ expect "emoji in the PR body -> exit 1" \
     "$(run "${GH[@]}" GATES_PR_TITLE="feat: x" GATES_PR_BODY="Adds a. 🤖$DECL")" 1
 expect "branded term in the PR body -> exit 1" \
     "$(run "${GH[@]}" GATES_PR_TITLE="feat: x" GATES_PR_BODY="Written with Copilot.$DECL")" 1
+expect "plain attribution line in the PR body -> exit 1" \
+    "$(run "${GH[@]}" GATES_PR_TITLE="feat: x" GATES_PR_BODY="Adds a."$'\n\n'"Generated with Claude Code$DECL")" 1
+expect "the attribution line is the reported violation" \
+    "$(grep -c 'Agent attribution line detected' "$WORKDIR/out.txt")" 1
+expect "markdown-link attribution line in the PR body -> exit 1" \
+    "$(run "${GH[@]}" GATES_PR_TITLE="feat: x" GATES_PR_BODY="Adds a."$'\n\n'"Generated with [Claude Code](https://claude.com/claude-code)$DECL")" 1
+expect "the linked attribution line is the reported violation" \
+    "$(grep -c 'Agent attribution line detected' "$WORKDIR/out.txt")" 1
 
 echo ""
 echo "=== GitLab merge_request context ==="
@@ -163,8 +171,84 @@ expect "Jenkins CHANGE_TARGET resolves the range -> exit 1" \
 expect "--range with trailer-declared commit -> exit 0" \
     "$(cd "$W" && git commit -q --amend -m $'docs: amend c\n\nProtected-Change: c.md\nApproved-By: Reviewer' && run GATES_COMMIT_RANGE="$BASE..HEAD")" 0
 expect "unresolvable base (shallow clone) -> exit 2" "$(run GATES_COMMIT_RANGE="deadbeef..HEAD")" 2
-expect "git.protected_change_trailer=false -> range skipped, exit 0" \
-    "$(cd "$W" && git commit -q --amend -m 'docs: amend c' && printf '%s\n' '{ "hooks": {}, "git": { "protected_change_trailer": false }, "protected_files": { "extra": ["c.md"] } }' >.specify/gates/policy.json && run GATES_COMMIT_RANGE="$BASE..HEAD")" 0
+expect "trailer rule switched off in the checkout only -> base rules apply, exit 1" \
+    "$(cd "$W" && git commit -q --amend -m 'docs: amend c' && printf '%s\n' '{ "hooks": {}, "git": { "protected_change_trailer": false }, "protected_files": { "extra": ["c.md"] } }' >.specify/gates/policy.json && run GATES_COMMIT_RANGE="$BASE..HEAD")" 1
+git -C "$W" checkout -q -- .specify/gates/policy.json
+
+echo ""
+echo "=== policy comes from the base, not the PR head (#123) ==="
+OFF='{ "hooks": {}, "git": { "protected_change_trailer": false }, "protected_files": { "extra": ["c.md"] } }'
+(
+    cd "$W"
+    git checkout -q -b feat/off "$BASE"
+    printf '%s\n' "$OFF" >.specify/gates/policy.json
+    echo more >>c.md
+    git add -A && git commit -q -m "chore: relax policy"
+) >/dev/null 2>&1
+expect "PR head disables the trailer rule and edits c.md + policy.json -> exit 1" \
+    "$(run GATES_COMMIT_RANGE="$BASE..HEAD")" 1
+expect "the undeclared policy.json change is named" \
+    "$(grep -c 'without a declaration: .specify/gates/policy.json' "$WORKDIR/out.txt")" 1
+expect "the undeclared c.md change is named (base list applies)" \
+    "$(grep -c 'without a declaration: c.md' "$WORKDIR/out.txt")" 1
+# A base that has the trailer rule off: c.md is the git boundary's job, but a
+# change to policy.json is still checked.
+(
+    cd "$W"
+    git checkout -q -b base-off "$BASE"
+    printf '%s\n' "$OFF" >.specify/gates/policy.json
+    git add -A && git commit -q -m "chore: trailer off"
+    git checkout -q -b feat/c-only
+    echo more >>c.md && git add -A && git commit -q -m "docs: amend c"
+) >/dev/null 2>&1
+OFFBASE="$(git -C "$W" rev-parse base-off)"
+expect "base has the trailer rule off, c.md only -> exit 0" \
+    "$(run GATES_COMMIT_RANGE="$OFFBASE..HEAD")" 0
+expect "the narrowed check is reported" \
+    "$(grep -c 'checking only the always-protected paths' "$WORKDIR/out.txt")" 1
+(
+    cd "$W"
+    printf '%s\n' '{ "hooks": {}, "git": { "protected_change_trailer": false } }' >.specify/gates/policy.json
+    git add -A && git commit -q -m "chore: drop protection"
+) >/dev/null 2>&1
+expect "base has the trailer rule off, policy.json changed undeclared -> exit 1" \
+    "$(run GATES_COMMIT_RANGE="$OFFBASE..HEAD")" 1
+
+echo ""
+echo "=== merge commits (#123) ==="
+(
+    cd "$W"
+    git checkout -q -b feat/m "$BASE"
+    echo a >a.txt && git add a.txt && git commit -q -m "feat: add a"
+    git checkout -q -b side
+    echo b >b.txt && git add b.txt && git commit -q -m "feat: add b"
+    git checkout -q feat/m
+    git merge -q --no-ff --no-commit side
+    echo evil >>c.md && git add c.md
+    git commit -q -m "chore: merge side"
+) >/dev/null 2>&1
+expect "merge commit edits c.md without a declaration -> exit 1" \
+    "$(run GATES_COMMIT_RANGE="$BASE..HEAD")" 1
+expect "the merge commit is named" "$(grep -c 'chore: merge side' "$WORKDIR/out.txt")" 1
+expect "merge commit edits c.md, declared in its message -> exit 0" \
+    "$(cd "$W" && git commit -q --amend -m "chore: merge side$DECL" && run GATES_COMMIT_RANGE="$BASE..HEAD")" 0
+expect "merge commit edits c.md, declared in the PR body -> exit 0" \
+    "$(cd "$W" && git commit -q --amend -m "chore: merge side" && run GATES_COMMIT_RANGE="$BASE..HEAD" GATES_PR_TITLE="feat: x" GATES_PR_BODY="Adds a.$DECL")" 0
+# Updating the PR branch from the base ("Update branch"): the merge brings in
+# a c.md change already declared on the base, which is not the PR's change.
+(
+    cd "$W"
+    git checkout -q -b main2 "$BASE"
+    echo more >>c.md && git add c.md && git commit -q -m "docs: amend c$DECL"
+    git checkout -q -b feat/u "$BASE"
+    echo a >a.txt && git add a.txt && git commit -q -m "feat: add a"
+    git merge -q --no-ff -m "chore: merge main" main2
+) >/dev/null 2>&1
+MAIN2="$(git -C "$W" rev-parse main2)"
+expect "merging the base into the PR branch -> exit 0" \
+    "$(run GATES_COMMIT_RANGE="$MAIN2..HEAD")" 0
+expect "the merge is counted as checked" \
+    "$(grep -c '2 commit(s) checked, 0 touching' "$WORKDIR/out.txt")" 1
 
 echo ""
 echo "$PASS of $TOTAL tests passed."

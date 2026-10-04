@@ -88,7 +88,8 @@ create`; GitLab: `glab repo create` or the web UI; Jenkins: the SCM
    description against the commit-message rules, and Protected-Change
    declarations across the PR's commits (declarations in the description
    count for every commit, since a squash merge keeps the description).
-   It needs full history (`fetch-depth: 0` / `GIT_DEPTH: 0`, set in the
+   Merge commits are checked too, and the rules come from the policy at
+   the PR's base, so the PR cannot relax its own check. It needs full history (`fetch-depth: 0` / `GIT_DEPTH: 0`, set in the
    templates) and skips itself outside PR/MR pipelines. Platform notes:
    - github: the workflow also runs on `edited`, so a title or
      description change re-runs the check.

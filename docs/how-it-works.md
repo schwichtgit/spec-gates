@@ -156,7 +156,12 @@ title and description with the same message rules as `commit-msg`
 repository that text becomes the commit on the default branch, and no
 local hook ever sees it. It also re-checks the protected-change rule for
 every commit in the range, catching commits that never passed a local
-hook. A declaration in the description covers every commit, since a
+hook. The rules come from the policy at the base of the range, not the
+PR head, so a PR cannot switch its own check off; `policy.json` and
+`hooks.local.d/**` are checked even where the base sets
+`git.protected_change_trailer` to `false`. A merge commit is checked for
+the paths it changes against every parent, so merging the base into a PR
+branch does not re-check the base's own changes. A declaration in the description covers every commit, since a
 squash merge keeps the description and drops the commit trailers. GitHub
 re-runs it when a PR is `edited`; GitLab starts no pipeline on an MR edit,
 so a fresh pipeline is needed after one.

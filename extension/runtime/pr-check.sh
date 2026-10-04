@@ -16,8 +16,11 @@ set -uo pipefail
 #    protected_files.extra path must declare it ("Protected-Change: <path>")
 #    and name an approver ("Approved-By: <name>") -- the commit-msg rule via
 #    gates_protected_check, re-checked server-side for commits that never
-#    passed a local hook. The protected list per commit is the union of the
-#    policies at the commit and its parent. Declarations in the PR/MR
+#    passed a local hook. The rules come from the policy at the base, not the
+#    PR head (#123); the protected list per commit is the union of the
+#    policies at the base, the commit and its parent, and policy.json plus
+#    hooks.local.d are always protected. Merge commits are checked for the
+#    paths they change against every parent. Declarations in the PR/MR
 #    description count for every commit (a squash merge keeps the
 #    description, not the commit trailers).
 #
@@ -161,12 +164,13 @@ else
 fi
 
 # --- 2. Protected changes over the commit range ---
-protected_range_check() { # -> 0 pass/skip, 1 violations, 2 setup error
-    if ! gates_protected_trailer_enabled; then
-        echo "pr-check: protected range skipped -- git.protected_change_trailer is false (protected files are refused at the git boundary)"
-        return 0
-    fi
+# Paths checked whatever the policy says: the runtime's built-in entries plus
+# the policy file itself, so a PR cannot switch its own check off (#123).
+ALWAYS_PROTECTED="$GATES_BUILTIN_PROTECTED"$'\n'".specify/gates/policy.json"
+BASE_POLICY=""
+trap '[[ -n "$BASE_POLICY" ]] && rm -f "$BASE_POLICY"' EXIT
 
+protected_range_check() { # -> 0 pass/skip, 1 violations, 2 setup error
     if [[ -z "$RANGE" ]]; then
         if [[ "${GITHUB_EVENT_NAME:-}" == pull_request* && -n "${GITHUB_BASE_REF:-}" ]]; then
             RANGE="origin/$GITHUB_BASE_REF..HEAD"
@@ -193,10 +197,27 @@ protected_range_check() { # -> 0 pass/skip, 1 violations, 2 setup error
         fi
     done
 
+    # The rules come from the base (#123): the PR under review must not be
+    # able to relax them. A base without a policy falls back to the checked
+    # out one; ALWAYS_PROTECTED holds either way.
+    BASE_POLICY="$(mktemp 2>/dev/null || mktemp -t gates-policy)" || return 2
+    if gates_policy_at_rev "$BASE" "$BASE_POLICY"; then
+        export GATES_POLICY_FILE="$BASE_POLICY"
+    else
+        rm -f "$BASE_POLICY"
+        BASE_POLICY=""
+    fi
+    FULL_LIST=true
+    if ! gates_protected_trailer_enabled; then
+        FULL_LIST=false
+        echo "pr-check: git.protected_change_trailer is false -- checking only the always-protected paths (policy.json, hooks.local.d)"
+    fi
+
     BODY_DECLARED="$(printf '%s\n' "$BODY" | gates_trailer_values protected-change)"
     BODY_APPROVERS="$(printf '%s\n' "$BODY" | gates_trailer_values approved-by)"
 
-    COMMITS="$(git rev-list --no-merges --reverse "$BASE..$HEAD_REF")"
+    # Merge commits included (#123): a merge is judged on its own edits.
+    COMMITS="$(git rev-list --reverse "$BASE..$HEAD_REF")"
     CHECKED=0
     TOUCHING=0
     VIOLATIONS=0
@@ -204,9 +225,25 @@ protected_range_check() { # -> 0 pass/skip, 1 violations, 2 setup error
     while IFS= read -r c; do
         [[ -z "$c" ]] && continue
         CHECKED=$((CHECKED + 1))
-        changed="$(git diff-tree -r --root --no-commit-id --name-only --no-renames "$c")"
+        if git rev-parse -q --verify "$c^2" >/dev/null 2>&1; then
+            # A merge: the protected candidates are the paths whose result
+            # differs from every parent. A path equal to one parent came from
+            # the base or from a commit in this range, checked on its own.
+            # Declarations may name anything the merge brought in relative
+            # to its first parent.
+            candidates="$(git diff-tree -r -c --no-commit-id --name-only --no-renames "$c")"
+            changed="$(git diff --name-only --no-renames "$c^1" "$c")"
+        else
+            changed="$(git diff-tree -r --root --no-commit-id --name-only --no-renames "$c")"
+            candidates="$changed"
+        fi
         RANGE_CHANGED="$RANGE_CHANGED"$'\n'"$changed"
-        protected="$(printf '%s\n' "$changed" | gates_match_protected "$(gates_protected_list "$c^" "$c" 2>/dev/null)")"
+        if [[ "$FULL_LIST" == "true" ]]; then
+            patterns="$(gates_protected_list "$BASE" "$c^" "$c" 2>/dev/null)"$'\n'"$ALWAYS_PROTECTED"
+        else
+            patterns="$ALWAYS_PROTECTED"
+        fi
+        protected="$(printf '%s\n' "$candidates" | gates_match_protected "$patterns")"
         trailers="$(git log -1 --format=%B "$c" | git interpret-trailers --parse --no-divider 2>/dev/null)"
         declared="$(printf '%s\n' "$trailers" | gates_trailer_values protected-change)"
         approvers="$(printf '%s\n' "$trailers" | gates_trailer_values approved-by)"
