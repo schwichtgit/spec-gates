@@ -186,8 +186,11 @@ session that closes that gap:
 3. **Align.** `constitution.sh align` computes, per annotated principle,
    whether its surface is actually wired here (`active` / `missing` /
    `pending-boundary`) and proposes a concrete change for each gap — policy
-   changes targeting the overlay so a live 003 contract picks them up. You
-   apply them one at a time, with approval; declining leaves the repo
+   changes targeting the overlay so a live 003 contract picks them up. A
+   `policy` ref is a dotted path (`hooks.markdownlint.severity`, or the
+   short `markdownlint.severity`); a `ci` principle counts only when a
+   pipeline runs `verify.sh --boundary ci` in a step that is not commented
+   out or disabled, and runs the step its ref names. You apply them one at a time, with approval; declining leaves the repo
    byte-identical.
 4. **Prove, permanently.** `doctor` and `constitution.sh check` report every
    principle's status on every run. An annotated-but-unwired principle, or a
@@ -331,7 +334,8 @@ edits stop it. It ends by running the canary suite and fails if any gate
 no longer blocks. `/speckit.gates.doctor` reports the same state between
 upgrades: local edits that are not held, stale holds, and CI pipelines
 missing a template step (a `ci:<step>` line in `.upgrade-holds` records a
-deliberate omission).
+deliberate omission; one for a step the pipeline runs is stale and fails).
+Commented-out steps and GitHub steps under `if: false` do not count.
 `/speckit.gates.upgrade` walks through the same steps in Claude Code.
 
 ## Project rules that survive upgrades

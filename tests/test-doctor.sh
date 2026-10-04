@@ -547,7 +547,7 @@ TOTAL=$((TOTAL + 1))
 DE="$WORKDIR/const-ok"
 project "$DE" "$ALL" yes
 mkdir -p "$DE/.specify/memory" "$DE/.github/workflows"
-printf 'jobs:\n  gates:\n    steps: []\n' >"$DE/.github/workflows/ci.yml"
+printf 'jobs:\n  gates:\n    steps:\n      - run: bash .specify/gates/verify.sh --boundary ci\n      - run: bash .specify/gates/canary.sh\n      - run: bash .specify/gates/pr-check.sh\n' >"$DE/.github/workflows/ci.yml"
 cat >"$DE/.specify/memory/constitution.md" <<'EOF'
 # C
 
@@ -619,6 +619,61 @@ printf 'ci:pr\n' >"$U/.specify/gates/.upgrade-holds"
 run_doctor "$U" >/dev/null
 has "an acknowledged omission passes" "$U" "[ok]  CI step 'pr' omitted on purpose"
 has "and the pipeline is otherwise complete" "$U" "[ok]  CI pipeline (.github/workflows/gates.yml) has every template step"
+# ci: holds are judged like file holds (#139): one for a step the pipeline
+# runs is stale, an id the template lacks is a stray line.
+printf 'ci:canary\nci:bogus\n' >"$U/.specify/gates/.upgrade-holds"
+run_doctor "$U" >/dev/null
+has "a ci: hold for a step that runs is stale and fails" "$U" "[MISSING] stale hold: ci:canary but the pipeline runs the 'canary' step"
+has "an unknown ci: id is flagged" "$U" "[rec] hold ci:bogus names no template step"
+lacks() { # <name> <dir> <fixed-string>: doctor output lacks the line
+    TOTAL=$((TOTAL + 1))
+    if grep -qF -- "$3" "$2/out.txt"; then
+        echo "FAIL: $1 (unexpected line containing: $3)"
+        FAIL=$((FAIL + 1))
+    else
+        echo "PASS: $1"
+        PASS=$((PASS + 1))
+    fi
+}
+lacks "neither is reported as an omission" "$U" "omitted on purpose"
+rm -f "$U/.specify/gates/.upgrade-holds"
+# Commented-out and disabled steps are not wiring (#139).
+cat >"$U/.github/workflows/gates.yml" <<'EOF'
+jobs:
+  gates:
+    steps:
+      - run: bash .specify/gates/verify.sh --boundary ci
+      - name: Canaries
+        run: "true"  # disabled: bash .specify/gates/canary.sh
+      - name: PR
+        if: false && github.event_name == 'pull_request'
+        run: bash .specify/gates/pr-check.sh
+EOF
+run_doctor "$U" >/dev/null
+has "a step whose command is only in a comment is missing" "$U" "[MISSING] CI pipeline lacks the 'canary' step"
+has "an if: false step is missing" "$U" "[MISSING] CI pipeline lacks the 'pr' step"
+rm -f "$U/.github/workflows/gates.yml"
+printf 'gates:\n  script:\n    - bash .specify/gates/verify.sh --boundary ci\n    # - bash .specify/gates/canary.sh\n    - bash .specify/gates/pr-check.sh\n' >"$U/.gitlab-ci.yml"
+run_doctor "$U" >/dev/null
+has "a commented GitLab step is missing" "$U" "[MISSING] CI pipeline lacks the 'canary' step"
+rm -f "$U/.gitlab-ci.yml"
+cat >"$U/Jenkinsfile" <<'EOF'
+stage('Gates') {
+    steps {
+        sh 'bash .specify/gates/verify.sh --boundary ci'
+        // sh 'bash .specify/gates/canary.sh'
+        /* sh 'bash .specify/gates/pr-check.sh'
+        */
+    }
+}
+EOF
+run_doctor "$U" >/dev/null
+has "a // comment in a Jenkinsfile is not a step" "$U" "[MISSING] CI pipeline lacks the 'canary' step"
+has "nor is a /* */ comment" "$U" "[MISSING] CI pipeline lacks the 'pr' step"
+printf "// sh 'bash .specify/gates/verify.sh --boundary ci'\n" >"$U/Jenkinsfile"
+run_doctor "$U" >/dev/null
+has "a commented-out verify step is no gates pipeline" "$U" "no CI pipeline runs verify.sh --boundary ci"
+rm -f "$U/Jenkinsfile"
 fx_cleanup "$U"
 U="$(fx_project)"
 (cd "$U" && GATES_TEST=1 bash .specify/extensions/gates/runtime/project.sh --skip-canary --no-agent-hooks >/dev/null 2>&1)

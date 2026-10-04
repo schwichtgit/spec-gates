@@ -376,9 +376,21 @@ if declare -f gates_ci_missing >/dev/null 2>&1 && [[ -d "$PROJECT_ROOT/.specify/
                 MISSING=$((MISSING + 1))
             done <<<"$CI_MISSING"
         fi
-        [[ -n "$CI_ACKS" ]] && printf '%s\n' "$CI_ACKS" | while IFS= read -r cid; do
-            echo "${OK}CI step '$cid' omitted on purpose (ci:$cid in $GATES_HOLDS_REL)"
-        done
+        # A ci: hold is judged like a file hold: an id the template lacks is
+        # a stray line, a hold for a step the pipeline runs is stale.
+        CI_PRESENT="$(gates_ci_present "$PROJECT_ROOT")"
+        if [[ -n "$CI_ACKS" ]]; then
+            while IFS= read -r cid; do
+                if [[ -z "$(gates_ci_step_re "$cid")" ]]; then
+                    echo "${REC}hold ci:$cid names no template step (gates, canary, pr) — remove the line"
+                elif [[ -n "$CI_PRESENT" ]] && grep -qxF "$cid" <<<"$CI_PRESENT"; then
+                    echo "${BAD}stale hold: ci:$cid but the pipeline runs the '$cid' step — remove it from $GATES_HOLDS_REL"
+                    MISSING=$((MISSING + 1))
+                else
+                    echo "${OK}CI step '$cid' omitted on purpose (ci:$cid in $GATES_HOLDS_REL)"
+                fi
+            done <<<"$CI_ACKS"
+        fi
     else
         echo "${REC}no CI pipeline runs verify.sh --boundary ci — project one with /speckit.gates.ci"
     fi

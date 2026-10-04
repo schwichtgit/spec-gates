@@ -270,8 +270,8 @@ printf '{ "hooks": { "PreToolUse": "validate-bash.sh" } }\n' >"$PROJ/.claude/set
 printf '#!/bin/sh\nexec bash .specify/gates/verify.sh\n' >"$PROJ/.git/hooks/pre-commit"
 chmod +x "$PROJ/.git/hooks/pre-commit"
 
-# ci: a workflow naming the check.
-printf 'jobs:\n  mygate:\n    steps: []\n' >"$PROJ/.github/workflows/ci.yml"
+# ci: a gates workflow (a live verify step) naming the check.
+printf 'jobs:\n  mygate:\n    steps:\n      - run: bash .specify/gates/verify.sh --boundary ci\n' >"$PROJ/.github/workflows/ci.yml"
 
 # accept: a tasks.md with an accept block verifying SC-9.
 cat >"$PROJ/specs/feat-x/tasks.md" <<'EOF'
@@ -340,7 +340,7 @@ expect_state "align: prose reported prose-only" "$al" "VIII. Prose" "prose-only"
 # Now break each surface and confirm it flips to missing.
 chmod -x "$PROJ/.claude/hooks/gates/validate-bash.sh" # agent-hook not executable
 rm "$PROJ/.git/hooks/pre-commit"                      # git-hook removed
-printf 'jobs:\n  other:\n    steps: []\n' >"$PROJ/.github/workflows/ci.yml" # ci name gone
+printf 'jobs:\n  other:\n    steps:\n      - run: bash .specify/gates/verify.sh --boundary ci\n' >"$PROJ/.github/workflows/ci.yml" # ci name gone
 rm "$PROJ/.checkov.yml"                               # scanner config gone
 al2="$(CLAUDE_PROJECT_DIR="$PROJ" bash "$CONST" align --constitution "$PROJ/.specify/memory/constitution.md")"
 expect_state "align: non-executable agent-hook missing" "$al2" "III. Agent Hook" "missing"
@@ -395,6 +395,94 @@ EOF
 alp="$(CLAUDE_PROJECT_DIR="$NOCI" bash "$CONST" align --constitution "$NOCI/.specify/memory/constitution.md")"
 expect_state "align: ci with no CI boundary is pending-boundary" "$alp" "I. Ci Pending" "pending-boundary"
 
+# ci is wired only by a live step (#139): text in a comment, a disabled step,
+# or a job name alone does not enforce anything.
+CIW="$WORKDIR/ci-wiring"
+mkdir -p "$CIW/.specify/memory" "$CIW/.github/workflows"
+cat >"$CIW/.specify/memory/constitution.md" <<'EOF'
+# C
+
+## Core Principles
+
+### I. Gates
+<!-- gates:enforce surface=ci ref=gates -->
+x
+
+### II. Canary
+<!-- gates:enforce surface=ci ref=canary -->
+x
+
+### III. Custom
+<!-- gates:enforce surface=ci ref=lint-job -->
+x
+EOF
+ciw_align() { CLAUDE_PROJECT_DIR="$CIW" bash "$CONST" align --constitution "$CIW/.specify/memory/constitution.md"; }
+printf 'jobs:\n  lint-job:\n    steps:\n      # TODO: wire spec-gates here later\n      - run: npm test\n' \
+    >"$CIW/.github/workflows/ci.yml"
+cw="$(ciw_align)"
+expect_state "ci: a comment mentioning gates is not wiring" "$cw" "I. Gates" "missing"
+expect_state "ci: a named job without a gates pipeline is not wiring" "$cw" "III. Custom" "missing"
+cat >"$CIW/.github/workflows/ci.yml" <<'EOF'
+jobs:
+  lint-job:
+    steps:
+      - run: bash .specify/gates/verify.sh --boundary ci
+      - name: Canaries
+        run: "true"  # disabled: bash .specify/gates/canary.sh
+EOF
+cw="$(ciw_align)"
+expect_state "ci: a live verify step wires ref=gates" "$cw" "I. Gates" "active"
+expect_state "ci: a custom ref in a gates pipeline is wired" "$cw" "III. Custom" "active"
+expect_state "ci: a command only in a comment is not wiring" "$cw" "II. Canary" "missing"
+# shellcheck disable=SC2016  # a literal GitHub expression
+printf '      - if: ${{ false }}\n        run: bash .specify/gates/canary.sh\n' >>"$CIW/.github/workflows/ci.yml"
+expect_state "ci: an if: false step is not wiring" "$(ciw_align)" "II. Canary" "missing"
+printf '      - run: bash .specify/gates/canary.sh\n' >>"$CIW/.github/workflows/ci.yml"
+expect_state "ci: a live template step wires its id" "$(ciw_align)" "II. Canary" "active"
+printf 'jobs:\n  gates:\n    steps:\n      # - run: bash .specify/gates/verify.sh --boundary ci\n' \
+    >"$CIW/.github/workflows/ci.yml"
+expect_state "ci: a commented-out verify step is not wiring" "$(ciw_align)" "I. Gates" "missing"
+# A template id is its step's command, not the word: a gates pipeline
+# whose text happens to contain "pr" does not run pr-check.sh.
+sed -i.bak 's/canary/pr/' "$CIW/.specify/memory/constitution.md" && rm -f "$CIW/.specify/memory/constitution.md.bak"
+printf 'jobs:\n  pr:\n    steps:\n      - run: bash .specify/gates/verify.sh --boundary ci\n' \
+    >"$CIW/.github/workflows/ci.yml"
+expect_state "ci: a template id needs its step, not the word" "$(ciw_align)" "II. Canary" "missing"
+
+# policy refs are full dotted paths (#139); <hook>.<key> still means
+# hooks.<hook>.<key>, and a proposal names the path the evaluator reads.
+PFP="$WORKDIR/policy-path"
+mkdir -p "$PFP/.specify/gates" "$PFP/.specify/memory"
+printf '{ "hooks": { "markdownlint": { "severity": "error" } } }\n' >"$PFP/.specify/gates/policy.json"
+cat >"$PFP/.specify/memory/constitution.md" <<'EOF'
+# C
+
+## Core Principles
+
+### I. Full Path
+<!-- gates:enforce surface=policy ref=hooks.markdownlint.severity expect=error -->
+x
+
+### II. Short Form
+<!-- gates:enforce surface=policy ref=markdownlint.severity expect=error -->
+x
+
+### III. Absent Short
+<!-- gates:enforce surface=policy ref=shellcheck.severity expect=error -->
+x
+
+### IV. Absent Full
+<!-- gates:enforce surface=policy ref=hooks.prettier.severity expect=error -->
+x
+EOF
+pf="$(CLAUDE_PROJECT_DIR="$PFP" bash "$CONST" align --constitution "$PFP/.specify/memory/constitution.md")"
+expect_state "policy: a full dotted ref resolves" "$pf" "I. Full Path" "active"
+expect_state "policy: the <hook>.<key> shorthand still resolves" "$pf" "II. Short Form" "active"
+expect_state "policy: an absent hook key is missing" "$pf" "III. Absent Short" "missing"
+expect_contains "policy: a shorthand proposal names the full path" "$pf" "set hooks.shellcheck.severity = error"
+expect_contains "policy: a full-path proposal keeps it" "$pf" "set hooks.prettier.severity = error"
+expect "policy: no proposal doubles the hooks prefix" "$(grep -c 'hooks\.hooks' <<<"$pf")" "0"
+
 # Overlay targeting: a missing policy surface proposes an overlay edit.
 expect_contains "align: missing policy proposes an OVERLAY edit" "$alm" "policy.json (overlay)"
 
@@ -430,7 +518,7 @@ expect "align leaves the repo byte-identical (SC-003, pure compute)" "$tree_befo
 
 CHK="$WORKDIR/chk"
 mkdir -p "$CHK/.specify/gates" "$CHK/.specify/memory" "$CHK/.github/workflows"
-printf 'jobs:\n  gates:\n    steps: []\n' >"$CHK/.github/workflows/ci.yml"
+printf 'jobs:\n  gates:\n    steps:\n      - run: bash .specify/gates/verify.sh --boundary ci\n' >"$CHK/.github/workflows/ci.yml"
 printf '{ "hooks": { "prettier": { "severity": "error" } } }\n' >"$CHK/.specify/gates/policy.json"
 
 # All enforced/prose/unannotated -> exit 0.

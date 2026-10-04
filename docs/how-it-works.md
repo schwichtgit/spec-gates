@@ -372,9 +372,14 @@ unchecked claim is worse than no claim.
 **Align.** `constitution.sh align` evaluates, per annotated principle,
 whether its surface is actually wired, all from local files with no
 network: a `policy` key present in the effective policy (and equal to
-`expect`); an `agent-hook` present, executable and referenced in
-`settings.json`; a `git-hook` installed, executable and delegating to the
-runtime; a `ci` check named in a workflow; an `accept` block that parses
+`expect`), the ref read as a full dotted path (`hooks.markdownlint.severity`;
+a ref not starting with a top-level section such as `git` or `attestation`
+is short for `hooks.<ref>`); an `agent-hook` present, executable and
+referenced in `settings.json`; a `git-hook` installed, executable and
+delegating to the runtime; a `ci` pipeline with a live `verify.sh
+--boundary ci` step that also runs the named template step (`gates`,
+`canary`, `pr`) or, for any other ref, names it, where comments and
+GitHub steps under `if: false` do not count; an `accept` block that parses
 and verifies the named criterion; a `scanner` rule in the tool's config.
 Each principle is `active`, `missing` (with a concrete proposed change), or
 `pending-boundary` (the whole boundary is not projected yet). Proposed
@@ -435,6 +440,10 @@ that are not held, holds that went stale (the held file now equals the
 installed copy), and CI pipelines missing a template step (the gates,
 canary and PR-check steps, recognized by command on GitHub, GitLab and
 Jenkins; `ci:<step>` in the holds file records a deliberate omission).
+Comments (`#` in YAML, `//` and `/* */` in a Jenkinsfile) and GitHub steps
+or jobs under `if: false` are not steps. A `ci:<step>` hold for a step the
+pipeline runs is stale and fails; one naming no template step gets a
+recommendation to remove it.
 
 ### Interrupted and unusual installs
 

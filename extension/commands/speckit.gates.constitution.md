@@ -167,13 +167,18 @@ Present the proposal grouped by state:
 For each **missing** surface, apply the proposed change ONLY with explicit
 approval, change by change, using the existing wiring:
 
-- `policy` → edit `.specify/gates/policy.json` (the OVERLAY) to set the key.
+- `policy` → edit `.specify/gates/policy.json` (the OVERLAY) to set the key
+  at the full path the proposal names (`hooks.<hook>.<key>` for a
+  `<hook>.<key>` ref).
   If a 003 contract is live, re-run `/speckit.gates.sync` so the change flows
   into the effective policy exactly like any overlay deviation — never edit
   `policy.effective.json` directly.
 - `agent-hook` / `git-hook` → wire it via the relevant steps of
   `/speckit.gates.init` (project the hook, set the execute bit, reference it).
-- `ci` → project the named check with `/speckit.gates.ci <platform>`.
+- `ci` → project the named check with `/speckit.gates.ci <platform>`. Only a
+  live step counts: a pipeline must run `verify.sh --boundary ci`, plus the
+  step a `gates`, `canary` or `pr` ref names; a commented-out step or one
+  under `if: false` stays `missing`.
 - `accept` → add the `# verifies:` accept block stub to the named feature's
   `tasks.md`.
 - `scanner` → add the rule to the tool's config.
