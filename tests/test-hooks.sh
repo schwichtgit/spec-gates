@@ -349,6 +349,32 @@ check "secret scan: token: 'abcdefgh12' blocked" 1 \
     bash -c "cd '$GF' && printf \"token: 'abcdefgh12'\\n\" >k2.txt && git add k2.txt && git commit -q -m 'chore: k2'"
 ( cd "$GF" && git reset -q -- . >/dev/null 2>&1; rm -f k2.txt )
 
+# The scan reads the staged blobs in one batch per rule (issue #133): a name
+# with a space is one file, binary content is scanned, the staged copy is
+# what counts, and each offending file is reported once, in staged order.
+check "secret scan: a name with a space is scanned as one file" 0 \
+    bash -c "cd '$GF' && printf 'AKIA%s\n' ABCDEFGHIJKLMNOP >'my notes.txt' && git add 'my notes.txt' && ! git commit -q -m 'chore: n' 2>'$WORKDIR/sc.err' && grep -qF 'SECRET: AWS key pattern in my notes.txt' '$WORKDIR/sc.err'"
+( cd "$GF" && git reset -q -- . >/dev/null 2>&1; rm -f 'my notes.txt' )
+check "secret scan: binary staged content is scanned" 1 \
+    bash -c "cd '$GF' && printf 'a\0b\nghp_%s\n' abcdefghijklmnopqrstuvwxyz0123456789 >blob.dat && git add blob.dat && git commit -q -m 'chore: blob'"
+( cd "$GF" && git reset -q -- . >/dev/null 2>&1; rm -f blob.dat )
+check "secret scan: the staged copy is scanned, not the worktree" 1 \
+    bash -c "cd '$GF' && printf 'xoxb-%s\n' 1234567890 >st.txt && git add st.txt && echo clean >st.txt && git commit -q -m 'chore: st'"
+( cd "$GF" && git reset -q -- . >/dev/null 2>&1; rm -f st.txt )
+printf 'BLOCKED: forbidden file: .env\n  SECRET: AWS key pattern in z.txt\n' >"$WORKDIR/sc.want"
+check "secret scan: one line per file, staged order, first rule wins" 0 \
+    bash -c "cd '$GF' && echo X=1 >.env && printf 'AKIA%s\nxoxb-1234567890\n' ABCDEFGHIJKLMNOP >z.txt && echo ok >m.txt && git add -f .env z.txt m.txt && ! git commit -q -m 'chore: z' 2>'$WORKDIR/sc.err' && grep -E '^(BLOCKED|  SECRET)' '$WORKDIR/sc.err' | diff - '$WORKDIR/sc.want' && grep -q 'failed: 2 issue' '$WORKDIR/sc.err'"
+( cd "$GF" && git reset -q -- . >/dev/null 2>&1; rm -f .env z.txt m.txt )
+# A git grep that fails is not a clean scan. The hook is run directly: git
+# puts its own exec path first on PATH for the hooks it runs.
+mkdir -p "$WORKDIR/failgrep"
+# shellcheck disable=SC2016  # $a and $@ belong to the wrapper script
+printf '#!/bin/sh\nfor a; do [ "$a" = grep ] && exit 128; done\nexec %s "$@"\n' "$(command -v git)" >"$WORKDIR/failgrep/git"
+chmod +x "$WORKDIR/failgrep/git"
+check "secret scan: a failing git grep refuses the commit" 0 \
+    bash -c "cd '$GF' && echo ok >fg.txt && git add fg.txt && ! PATH='$WORKDIR/failgrep':\"\$PATH\" '$GITHOOKS/pre-commit' >/dev/null 2>'$WORKDIR/sc.err' && grep -q 'cannot read staged content for the secret scan' '$WORKDIR/sc.err'"
+( cd "$GF" && git reset -q -- . >/dev/null 2>&1; rm -f fg.txt )
+
 # Forbidden-file allowlist: template/example files are committable even when
 # the base name looks sensitive; real secret files still blocked.
 FF="$WORKDIR/forbidden.sh"

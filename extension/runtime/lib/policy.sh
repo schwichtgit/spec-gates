@@ -208,10 +208,14 @@ gates_match_protected() { # <patterns>
         [[ -n "$e" ]] && pats+=("$e")
     done <<<"$1"
     [[ "${#pats[@]}" -eq 0 ]] && { cat >/dev/null; return 0; }
+    # One pass, no subprocess per path: a forked basename per path and
+    # pattern made a 1500-file commit take seconds per hook (issue #133).
+    local base
     while IFS= read -r f; do
         [[ -z "$f" ]] && continue
+        base="${f##*/}"
         for e in "${pats[@]}"; do
-            if gates_glob_match "$f" "$e" || [[ "$(basename "$f")" == "$e" ]]; then
+            if gates_glob_match "$f" "$e" || [[ "$base" == "$e" ]]; then
                 printf '%s\n' "$f"
                 break
             fi

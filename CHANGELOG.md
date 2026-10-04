@@ -249,6 +249,15 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   for a protected path that differs from every merged parent. An amend that
   drops a commit's trailers is caught by `pr-check.sh`, and `git revert`
   runs no commit hooks; both are now documented as covered in CI.
+- **The git hooks are fast on large commits** (#133). Protected-path
+  matching forked a `basename` per staged path and pattern, and the secret
+  scan ran one `git show` plus six `grep` processes per file, so a
+  1500-file commit took tens of seconds per hook. Matching now runs in one
+  pass without subprocesses, and the scan reads the staged content with one
+  `git grep --cached` per rule. Same rules, same one-line-per-file report.
+  File names with spaces are now scanned as one file (they were split into
+  words and skipped), and a scan that cannot read the index refuses the
+  commit instead of passing it.
 
 - **The file and command hooks never silently allow** (#83). Without jq,
   or for input that isn't valid JSON, `protect-files.sh` and
