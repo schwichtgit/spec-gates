@@ -151,6 +151,11 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   unchecked. A timed-out block runs in its own process group, and the
   watchdog stops the whole group (TERM, then KILL), so a child process can
   no longer keep running and writing after verify has returned.
+- **A PR can no longer relax the rules its own text is judged by**
+  (#147). `pr-check.sh` read the message rules (AI-isms, branding,
+  conventional title) from the PR head, so a commit in the PR could turn
+  them off for its own title and description. With a range, they now come
+  from the base's policy, like the protected-change check.
 - **`pr-check.sh` can no longer be switched off by the PR it checks**
   (#123). The protected-change check read the policy from the PR head, so
   a `--no-verify` commit setting `git.protected_change_trailer` to `false`

@@ -215,6 +215,26 @@ expect "base has the trailer rule off, policy.json changed undeclared -> exit 1"
     "$(run GATES_COMMIT_RANGE="$OFFBASE..HEAD")" 1
 
 echo ""
+echo "=== PR text is judged by the base policy too (#147) ==="
+# The head relaxes the text rules in a properly declared commit, so only
+# the text check decides the outcome.
+(
+    cd "$W"
+    git checkout -q -b feat/relax-text "$BASE"
+    printf '%s\n' '{ "hooks": {}, "git": { "forbid_ai_isms": false }, "protected_files": { "extra": ["c.md"] } }' \
+        >.specify/gates/policy.json
+    git add -A
+    git commit -q -m "chore: relax the text rules" -m "Protected-Change: .specify/gates/policy.json
+Approved-By: Reviewer"
+) >/dev/null 2>&1
+expect "head turns forbid_ai_isms off, its AI-ism body is still refused -> exit 1" \
+    "$(run GATES_COMMIT_RANGE="$BASE..HEAD" GATES_PR_TITLE="feat: relax rules" GATES_PR_BODY="I have made this seamless.")" 1
+expect "the refusal comes from the text rules" \
+    "$(grep -c 'violates the message rules' "$WORKDIR/out.txt")" 1
+expect "without a range the checkout's policy applies (nothing to compare against)" \
+    "$(run GATES_PR_TITLE="feat: relax rules" GATES_PR_BODY="I have made this seamless.")" 0
+
+echo ""
 echo "=== merge commits (#123) ==="
 (
     cd "$W"

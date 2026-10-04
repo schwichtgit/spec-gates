@@ -156,8 +156,9 @@ title and description with the same message rules as `commit-msg`
 repository that text becomes the commit on the default branch, and no
 local hook ever sees it. It also re-checks the protected-change rule for
 every commit in the range, catching commits that never passed a local
-hook. The rules come from the policy at the base of the range, not the
-PR head, so a PR cannot switch its own check off; `policy.json` and
+hook. The rules for both checks, the text and the protected changes,
+come from the policy at the base of the range, not the PR head, so a PR
+cannot relax the rules it is judged by; `policy.json` and
 `hooks.local.d/**` are checked even where the base sets
 `git.protected_change_trailer` to `false`. A merge commit is checked for
 the paths it changes against every parent, so merging the base into a PR
