@@ -115,7 +115,8 @@ Enforcement follows the feature's own completion claim, read from
   `- [ ]` task or failing accept block fails the run, naming the feature,
   the task or criterion, and the cause (exit code, `timeout after <N>s`,
   or a working-tree mutation — blocks are read-only by contract and never
-  auto-reverted).
+  auto-reverted). Outside a git work tree blocks fail closed, since there
+  is nothing to check mutations against.
 
 Results land in the attestation record (a `spec` gate entry plus per-run
 counts and per-feature outcomes), a `spec` canary proves the gate still

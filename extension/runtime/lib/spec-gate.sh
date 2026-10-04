@@ -176,51 +176,137 @@ gates_spec_parse() { # <tasks-md> <outdir>
     }' "$file"
 }
 
+# Content snapshot of the working tree for the read-only check (R5): one
+# "XY<TAB>hash<TAB>path[<TAB>orig]" line per `git status --porcelain=v1 -z
+# --untracked-files=all` entry. Status lines alone miss a write to a file
+# that is already dirty or untracked (#136), so each such file's content is
+# hashed as well; clean tracked files are covered by the status itself.
+# Returns nonzero when git cannot produce the snapshot.
+gates_spec_snapshot() { # <root> <scratch-file>
+    local root="$1" scratch="$2" entry xy path orig n=0 i
+    local xys=() paths=() origs=() hashes=() files=() fidx=()
+    git -C "$root" status --porcelain=v1 -z --untracked-files=all \
+        >"$scratch" 2>/dev/null || return 1
+    while IFS= read -r -d '' entry; do
+        xy="${entry:0:2}"
+        path="${entry:3}"
+        orig=""
+        # A staged rename or copy carries its source path as the next entry.
+        case "$xy" in
+            *R* | *C*) IFS= read -r -d '' orig || true ;;
+        esac
+        xys[n]="$xy"
+        paths[n]="$path"
+        origs[n]="$orig"
+        if [[ -L "$root/$path" ]]; then
+            hashes[n]="link:$(readlink "$root/$path" 2>/dev/null || true)"
+        elif [[ -f "$root/$path" ]]; then
+            hashes[n]=""
+            files+=("$path")
+            fidx+=("$n")
+        elif [[ -e "$root/$path" ]]; then
+            hashes[n]="other"
+        else
+            hashes[n]="absent"
+        fi
+        n=$((n + 1))
+    done <"$scratch"
+    if [[ ${#files[@]} -gt 0 ]]; then
+        # One hash-object call for every dirty file, hashes in argument order.
+        git -C "$root" hash-object --no-filters -- "${files[@]}" \
+            >"$scratch" 2>/dev/null || return 1
+        i=0
+        while IFS= read -r entry; do
+            hashes[fidx[i]]="$entry"
+            i=$((i + 1))
+        done <"$scratch"
+        [[ $i -eq ${#files[@]} ]] || return 1
+    fi
+    i=0
+    while [[ $i -lt $n ]]; do
+        printf '%s\t%s\t%s\t%s\n' "${xys[i]}" "${hashes[i]}" "${paths[i]}" "${origs[i]}"
+        i=$((i + 1))
+    done
+}
+
 # Execute one accept block (R4/R5): repo-root cwd, pure-shell watchdog (no
-# timeout(1) on macOS base), before/after `git status --porcelain` snapshots.
-# The exec keeps the killed pid the block itself, not a wrapper subshell.
+# timeout(1) on macOS base), content snapshots before and after. Outside a
+# git work tree the block does not run: a mutation check that cannot happen
+# fails closed. The block is a job of a `set -m` subshell, so it leads its
+# own process group, and a timeout signals that whole group (TERM, then
+# KILL) so no descendant outlives the run (#136).
 # Returns 0 pass, 1 fail, 2 timeout, 3 mutation; detail in SPEC_BLOCK_DETAIL.
 gates_spec_run_block() { # <cmdfile> <timeout-s> <root> <outfile>
     local cmdfile="$1" timeout="$2" root="$3" outfile="$4"
+    local snap="$outfile.snap" marker="$outfile.timedout"
     SPEC_BLOCK_DETAIL=""
-    local in_git=0 before="" after=""
-    if git -C "$root" rev-parse --git-dir >/dev/null 2>&1; then
-        in_git=1
-        before="$(git -C "$root" status --porcelain 2>/dev/null || true)"
+    : >"$outfile"
+    if [[ "$(git -C "$root" rev-parse --is-inside-work-tree 2>/dev/null)" != "true" ]]; then
+        SPEC_BLOCK_DETAIL="cannot check for mutations: not a git work tree"
+        return 1
     fi
-    (cd "$root" && GATES_SPEC_EXEC=1 exec bash "$cmdfile") >"$outfile" 2>&1 &
-    local pid=$!
-    # The watchdog gets /dev/null stdio: it (and the sleep it may orphan)
-    # must not hold inherited fds, or a block that captures a nested
-    # verify.sh via $() would wait on the pipe until the sleep expires.
-    (
-        sleep "$timeout"
-        kill "$pid" 2>/dev/null
-    ) >/dev/null 2>&1 </dev/null &
-    local watcher=$!
+    local before="" after=""
+    if ! before="$(gates_spec_snapshot "$root" "$snap")"; then
+        SPEC_BLOCK_DETAIL="cannot check for mutations: git status failed"
+        return 1
+    fi
+    rm -f "$marker"
     local rc=0
-    wait "$pid" 2>/dev/null || rc=$?
-    kill "$watcher" 2>/dev/null || true
-    wait "$watcher" 2>/dev/null || true
-    if [[ "$rc" -eq 143 ]]; then
+    # The watchdog gets /dev/null stdio: it (and its sleep) must not hold
+    # inherited fds, or a block that captures a nested verify.sh via $()
+    # would wait on the pipe until the sleep expires. It is a job of its
+    # own, so stopping it takes its sleep along.
+    (
+        set -m
+        (cd "$root" && GATES_SPEC_EXEC=1 exec bash "$cmdfile") >"$outfile" 2>&1 </dev/null &
+        pid=$!
+        trap 'kill -TERM -- -"$pid" 2>/dev/null' HUP INT TERM
+        (
+            sleep "$timeout"
+            : >"$marker"
+            kill -TERM -- -"$pid" 2>/dev/null
+            n=0
+            while [[ $n -lt 20 ]] && kill -0 -- -"$pid" 2>/dev/null; do
+                sleep 0.1
+                n=$((n + 1))
+            done
+            kill -KILL -- -"$pid" 2>/dev/null
+        ) >/dev/null 2>&1 </dev/null &
+        watcher=$!
+        brc=0
+        wait "$pid" 2>/dev/null || brc=$?
+        if [[ -f "$marker" ]]; then
+            wait "$watcher" 2>/dev/null
+        else
+            kill -TERM -- -"$watcher" 2>/dev/null
+            wait "$watcher" 2>/dev/null
+        fi
+        exit "$brc"
+    ) 2>/dev/null || rc=$?
+    if [[ -f "$marker" ]]; then
+        rm -f "$marker" "$snap"
         SPEC_BLOCK_DETAIL="timeout after ${timeout}s"
         return 2
     fi
     if [[ "$rc" -ne 0 ]]; then
+        rm -f "$snap"
         SPEC_BLOCK_DETAIL="exit $rc"
         return 1
     fi
-    if [[ "$in_git" == "1" ]]; then
-        after="$(git -C "$root" status --porcelain 2>/dev/null || true)"
-        if [[ "$before" != "$after" ]]; then
-            local changed
-            changed="$({
-                printf '%s\n' "$before"
-                printf '%s\n' "$after"
-            } | grep -v '^$' | sort | uniq -u | cut -c4- | sort -u | tr '\n' ' ')"
-            SPEC_BLOCK_DETAIL="working tree modified: ${changed% }"
-            return 3
-        fi
+    if ! after="$(gates_spec_snapshot "$root" "$snap")"; then
+        rm -f "$snap"
+        SPEC_BLOCK_DETAIL="cannot check for mutations: git status failed"
+        return 1
+    fi
+    rm -f "$snap"
+    if [[ "$before" != "$after" ]]; then
+        local changed
+        changed="$({
+            printf '%s\n' "$before"
+            printf '%s\n' "$after"
+        } | grep -v '^$' | sort | uniq -u | cut -f3 | sort -u | tr '\n' ' ')"
+        SPEC_BLOCK_DETAIL="working tree modified: ${changed% }"
+        return 3
     fi
     return 0
 }

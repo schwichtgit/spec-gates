@@ -65,12 +65,12 @@ regardless of outcome rules — fail closed precedes classification.
 Per executed block (drives `blocks_passed`/`blocks_failed` and failure
 detail):
 
-| Result     | Condition                                       | Reported as                                   |
-| ---------- | ----------------------------------------------- | --------------------------------------------- |
-| `pass`     | exit 0, no tree delta                           | criterion name only                           |
-| `fail`     | nonzero exit                                    | feature, task/criterion, exit code, output    |
-| `timeout`  | killed by watchdog (exit 143 after `timeout_s`) | feature, task/criterion, `timeout after <N>s` |
-| `mutation` | `git status --porcelain` delta after run (R5)   | feature, task/criterion, changed paths        |
+| Result     | Condition                                                   | Reported as                                         |
+| ---------- | ----------------------------------------------------------- | --------------------------------------------------- |
+| `pass`     | exit 0, no tree delta                                       | criterion name only                                 |
+| `fail`     | nonzero exit, or no git work tree to check for mutations    | feature, task/criterion, exit code or cause, output |
+| `timeout`  | process group killed by watchdog after `timeout_s`          | feature, task/criterion, `timeout after <N>s`       |
+| `mutation` | status or dirty/untracked file content delta after run (R5) | feature, task/criterion, changed paths              |
 
 `skipped` is deliberately not a possible result (spec edge case): a missing
 tool inside a block is a nonzero exit → `fail`.

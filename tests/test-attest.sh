@@ -277,6 +277,8 @@ spec_json() { # <dir>
 
 DS="$WORKDIR/spec-shape"
 project "$DS" "$CUSTOM_TRUE"
+# Accept blocks fail closed outside a git work tree (#136).
+git init -q "$DS"
 mkdir -p "$DS/specs/100-done" "$DS/specs/200-wip"
 printf '# Done\n\n**Status**: Complete\n' >"$DS/specs/100-done/spec.md"
 cat >"$DS/specs/100-done/tasks.md" <<'EOF'

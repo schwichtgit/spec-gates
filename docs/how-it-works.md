@@ -252,10 +252,13 @@ tool gates and before `parity`:
 3. **Execute**: for features whose `spec.md` says `**Status**: Complete`
    (and any feature named via `--accept`), blocks run serially from the
    repository root with output captured (shown only on failure), a
-   per-block watchdog (`spec.timeout_s`, default 30s), and
-   `git status --porcelain` snapshots around each block. A block that
-   mutates the working tree fails its criterion, and nothing is ever
-   auto-reverted.
+   per-block watchdog (`spec.timeout_s`, default 30s) that stops the
+   block's whole process group, and working-tree snapshots around each
+   block (`git status` plus a content hash of every dirty or untracked
+   file). A block that mutates the working tree, including a write to a
+   file that was already modified, fails its criterion, and nothing is
+   ever auto-reverted. Outside a git work tree there is nothing to check
+   against, so blocks fail closed.
 4. **Enforce**: a Complete feature fails the `spec` gate on any unchecked
    task or failing block, naming the feature, the task or criterion, and
    the cause. Incomplete features are informational
