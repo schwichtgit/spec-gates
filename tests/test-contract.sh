@@ -550,6 +550,112 @@ for p in "$PU/.specify/gates/proposals/"*.patch; do
 done
 expect "the proposal changes only the deviating line" "$(grep -cE '^[-+] +"' "$PATCH")" 2
 
+# A consumer repo on <baseline-dir>@<version> with the projected git hooks
+# active through the stub, adopted on main with hooks bypassed.
+hooked_repo() { # <dir> <baseline-dir> <version> [overlay-jq-filter]
+    local dir="$1" h
+    project "$dir" "$(overlay_for "$2" ".extends.version = \"$3\" | .protected_files = {\"extra\": [\".specify/gates/policy.json\"]} | ${4:-.}")"
+    mkdir -p "$dir/.specify/gates/hooks"
+    cp "$REPO_ROOT/extension/runtime/hooks/git/pre-commit" "$REPO_ROOT/extension/runtime/hooks/git/commit-msg" \
+        "$dir/.specify/gates/hooks/"
+    git init -q "$dir"
+    git -C "$dir" checkout -q -b main
+    git -C "$dir" config user.email u@test
+    git -C "$dir" config user.name updater
+    CLAUDE_PROJECT_DIR="$dir" bash "$dir/.specify/gates/contract.sh" sync >/dev/null
+    git -C "$dir" add -A
+    git -C "$dir" commit -q --no-verify -m "chore: adopt baseline $3"
+    for h in pre-commit commit-msg; do
+        cp "$REPO_ROOT/extension/runtime/hooks/git/stub.sh" "$dir/.git/hooks/$h"
+        chmod +x "$dir/.git/hooks/$h"
+    done
+}
+
+echo ""
+echo "=== sync --update: no policy text in the commit message (#154) ==="
+BW="$WORKDIR/base-words"
+mkbaseline "$BW" v1.0.0 "$(printf '%s' "$BASE_POLICY" | jq -c '.git = {"ai_branding": {"terms": ["Anthropic", "GPT", "Gemini"]}} | ._comment = "the baseline"')"
+mkbaseline "$BW" v2.0.0 "$(printf '%s' "$BASE_POLICY" | jq -c '.git = {"ai_branding": {"terms": ["Anthropic", "GPT", "Copilot", "OpenAI"]}} | ._comment = "a seamless baseline, Co-Authored-By: nobody"')"
+mkbaseline "$BW" v3.0.0 "$(printf '%s' "$BASE_POLICY" | jq -c '.git = {"ai_branding": {"terms": ["Anthropic", "GPT", "Copilot"]}} | .hooks."copilot-review" = {"include": ["**/*.none"], "orchestrator": "none", "severity": "error"}')"
+WD="$WORKDIR/words"
+hooked_repo "$WD" "$BW" v1.0.0
+OUT="$(contract "$WD" sync --update v2.0.0)"
+expect_contains "update adding a branding term commits" "$OUT" "EXIT=0"
+BODY="$(git -C "$WD" log -1 --format=%B gates/baseline-v2.0.0 2>/dev/null || true)"
+expect_contains "list change is summarized as counts" "$BODY" "- changed: git.ai_branding.terms: 2 added, 1 removed"
+expect_contains "a text value is described, not quoted" "$BODY" "- changed: _comment: value changed"
+expect "no branding term, AI-ism or trailer text from the baseline in the body" \
+    "$(grep -ciE 'copilot|openai|gemini|seamless|co-authored-by' <<<"$BODY")" 0
+expect_contains "full message keeps the versions" "$BODY" "chore: update policy baseline v1.0.0 -> v2.0.0"
+# A hook name is part of a path and can still trip the rules: the message
+# falls back to counts only.
+OUT="$(contract "$WD" sync --update v3.0.0)"
+expect_contains "update whose paths trip the rules still commits" "$OUT" "EXIT=0"
+BODY="$(git -C "$WD" log -1 --format=%B gates/baseline-v3.0.0 2>/dev/null || true)"
+expect_contains "fallback message carries the counts" "$BODY" "Enforcement delta: 1 strengthened, 0 weakened, 2 changed"
+expect "fallback message names no path" "$(grep -ci 'copilot' <<<"$BODY")" 0
+expect_contains "fallback message keeps the trailers" "$BODY" "Protected-Change: .specify/gates/baseline.lock.json"
+
+echo ""
+echo "=== sync --update with git.protected_change_trailer false (#154) ==="
+BO="$WORKDIR/base-trailer-off"
+mkbaseline "$BO" v1.0.0 "$(printf '%s' "$BASE_POLICY" | jq -c '.git = {"protected_change_trailer": false}')"
+mkbaseline "$BO" v2.0.0 "$(printf '%s' "$BASE_POLICY" | jq -c '.git = {"protected_change_trailer": false} | .hooks.shellcheck.include += ["**/*.bash"]')"
+TO="$WORKDIR/trailer-off"
+hooked_repo "$TO" "$BO" v1.0.0
+OUT="$(contract "$TO" sync --update)"
+expect_contains "trailer-off update commits" "$OUT" "EXIT=0"
+expect_contains "pre-commit names the verified update" "$OUT" "exactly a policy baseline update"
+BODY="$(git -C "$TO" log -1 --format=%B gates/baseline-v2.0.0 2>/dev/null || true)"
+expect_contains "trailer-off update still declares the lock for pr-check" "$BODY" "Protected-Change: .specify/gates/baseline.lock.json"
+expect_contains "trailer-off update names the approver" "$BODY" "Approved-By: updater"
+# The allowance is the exact shape only. Rebuild the update by hand on a
+# fresh gates/baseline-v2.0.0 branch and vary it.
+git -C "$TO" branch -q -m gates/baseline-v2.0.0 keep-update
+git -C "$TO" switch -q -c gates/baseline-v2.0.0 main
+stage_update() {
+    git -C "$TO" checkout -q keep-update -- .specify/gates/policy.json .specify/gates/baseline.json \
+        .specify/gates/baseline.lock.json .specify/gates/policy.effective.json
+}
+hand_commit() { # -> output + EXIT line
+    local rc=0 out
+    out="$(cd "$TO" && env -u CLAUDE_PROJECT_DIR git commit -q -m "chore: update policy baseline by hand" 2>&1)" || rc=$?
+    printf '%s\nEXIT=%d\n' "$out" "$rc"
+}
+stage_update
+printf 'x\n' >"$TO/notes.txt"
+git -C "$TO" add notes.txt
+OUT="$(hand_commit)"
+expect_contains "an extra staged file voids the allowance" "$OUT" "BLOCKED: policy-protected file staged"
+git -C "$TO" rm -q --cached notes.txt
+rm -f "$TO/notes.txt"
+jq -S '.hooks.shellcheck.severity = "warning"' "$TO/.specify/gates/baseline.json" >"$TO/b.tmp"
+mv "$TO/b.tmp" "$TO/.specify/gates/baseline.json"
+git -C "$TO" add .specify/gates/baseline.json
+OUT="$(hand_commit)"
+expect_contains "a snapshot that does not match the lock is refused" "$OUT" "BLOCKED: policy-protected file staged"
+stage_update
+# policy.json changing more than extends.version, effective recomputed to
+# match: only the one-field rule catches it.
+jq '.hooks.shellcheck = {"severity": "warning"}' "$TO/.specify/gates/policy.json" >"$TO/p.tmp"
+mv "$TO/p.tmp" "$TO/.specify/gates/policy.json"
+(
+    # shellcheck source=/dev/null
+    source "$REPO_ROOT/extension/runtime/lib/contract.sh"
+    gates_contract_merge "$TO/.specify/gates/baseline.json" "$TO/.specify/gates/policy.json" \
+        >"$TO/.specify/gates/policy.effective.json"
+)
+git -C "$TO" add .specify/gates/policy.json .specify/gates/policy.effective.json
+OUT="$(hand_commit)"
+expect_contains "a policy.json change beyond extends.version is refused" "$OUT" "BLOCKED: policy-protected file staged"
+stage_update
+OUT="$(hand_commit)"
+expect_contains "the exact update shape commits by hand too" "$OUT" "EXIT=0"
+git -C "$TO" switch -q -c gates/baseline-v9.9.9 keep-update~1
+stage_update
+OUT="$(hand_commit)"
+expect_contains "a branch name that does not match the pin is refused" "$OUT" "BLOCKED: policy-protected file staged"
+
 echo ""
 echo "$PASS of $TOTAL tests passed"
 if [[ "$FAIL" -eq 0 ]]; then

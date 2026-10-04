@@ -6,8 +6,9 @@
 #   gates_contract_paths <root>            # artifact path globals
 #   gates_contract_declared <overlay>      # 0 iff extends present; sets fields
 #   gates_contract_merge <snap> <overlay>  # canonical effective JSON on stdout
-#   gates_contract_deviations <snap> <eff> # TSV: class<TAB>path<TAB>from<TAB>to
+#   gates_contract_deviations <snap> <eff> # TSV: class<TAB>path<TAB>from<TAB>to...
 #   gates_contract_check <root>            # the four invariants (R6)
+#   gates_contract_update_staged <root>    # index holds exactly a sync --update commit
 #   gates_contract_fetch <src> <ver> <file> <out>  # sync-time fetch (R2)
 #   gates_contract_version_max             # stdin versions -> highest (R7)
 #
@@ -76,9 +77,14 @@ gates_contract_merge() { # <snapshot> <overlay>
 # strengthened line marked "added": an update review needs every change.
 #
 # Output: one TSV line per deviation:
-#   <class>\t<dot.path>\t<baseline-value>\t<effective-value>\t<path-as-json-array>\t<removed|added|>
+#   <class>\t<dot.path>\t<baseline-value>\t<effective-value>\t<path-as-json-array>\t<summary>\t<removed|added|>
 # The JSON path is what propose feeds to setpath (dot-joined paths would
-# break on keys containing dots).
+# break on keys containing dots). The summary describes the change without
+# quoting policy text (#154): list changes as counts; booleans, numbers and
+# severities as from -> to; any other value as set, unset or changed. The
+# delta lines that become commit and PR text use it, since a quoted value
+# ("Copilot" in git.ai_branding.terms, a word the message rules forbid)
+# would make the repo's own commit-msg refuse the update commit.
 gates_contract_deviations() { # <snapshot> <effective> [delta]
     local snap="${1:-}" eff="${2:-}" mode="${3:-}"
     [[ -f "$snap" && -f "$eff" ]] || return 1
@@ -89,8 +95,25 @@ gates_contract_deviations() { # <snapshot> <effective> [delta]
         def leaves: [ paths(type != "object") | select(all(.[]; type == "string")) ];
         def hook_names: (.hooks // {}) | if type == "object" then
             [ to_entries[] | select(.value | type == "object") | .key ] else [] end;
+        def summary($leaf; $bv; $ev):
+            def plain: type == "boolean" or type == "number" or type == "null";
+            if ($bv | type) == "array" and ($ev | type) == "array" then
+                (($ev - $bv) | length) as $a | (($bv - $ev) | length) as $r
+                | if $a == 0 and $r == 0 then "same entries, order or repeats changed"
+                  else "\($a) added, \($r) removed" end
+            elif ($ev | type) == "array" and $bv == null then "set (\($ev | length) entries)"
+            elif ($bv | type) == "array" and $ev == null then "unset (was \($bv | length) entries)"
+            elif (($bv | plain) and ($ev | plain))
+                 or (($leaf == "severity" or $leaf == "parity")
+                     and (sev_rank[$bv|tostring] != null) and (sev_rank[$ev|tostring] != null)) then
+                "\($bv | tojson) -> \($ev | tojson)"
+            elif $bv == null then "set"
+            elif $ev == null then "unset"
+            else "value changed" end;
         def row($c; $p; $bv; $ev; $kind):
-            [ $c, ($p | map(tostring) | join(".")), ($bv | tojson), ($ev | tojson), ($p | tojson), $kind ]
+            [ $c, ($p | map(tostring) | join(".")), ($bv | tojson), ($ev | tojson), ($p | tojson),
+              (if $kind == "" then summary($p | last | tostring; $bv; $ev) else "hook \($kind)" end),
+              $kind ]
             | join("\t");
         ($b[0] | del(.extends)) as $base
         | ($e[0] | del(.extends)) as $eff
@@ -136,16 +159,17 @@ gates_contract_deviations() { # <snapshot> <effective> [delta]
 # Print deviation TSV (stdin) as one line per deviation, after <prefix>:
 #   <prefix>(<class>): <path>: baseline <from> -> overlay <to>
 #   <prefix>(weakened): <path>: removed
-# The update review uses the "- " form with old/new instead (delta lines).
+# The update review and propose use the "- " form with the summary instead
+# of the values (delta lines): that text becomes commit and PR text (#154).
 gates_contract_print_deviations() { # <prefix> [delta]
-    local prefix="$1" mode="${2:-}" class path from to jpath kind
-    while IFS=$'\t' read -r class path from to jpath kind; do
+    local prefix="$1" mode="${2:-}" class path from to jpath summary kind
+    while IFS=$'\t' read -r class path from to jpath summary kind; do
         [[ -z "$class" ]] && continue
         if [[ "$mode" == "delta" ]]; then
             if [[ -n "$kind" ]]; then
                 printf '%s%s (%s): %s\n' "$prefix" "$kind" "$class" "$path"
             else
-                printf '%s%s: %s: %s -> %s\n' "$prefix" "$class" "$path" "$from" "$to"
+                printf '%s%s: %s: %s\n' "$prefix" "$class" "$path" "$summary"
             fi
         elif [[ -n "$kind" ]]; then
             printf '%s(%s): %s: %s\n' "$prefix" "$class" "$path" "$kind"
@@ -280,6 +304,55 @@ gates_contract_check() { # <root>
         CONTRACT_CHANGED="$(printf '%s\n' "$CONTRACT_DEVIATIONS" | grep -c '^changed' || true)"
     fi
     return 0
+}
+
+# Does the index of the repo at <root> hold exactly the commit `contract.sh
+# sync --update` makes (#154)? pre-commit asks this only where
+# git.protected_change_trailer is false and would otherwise refuse the
+# protected contract artifacts outright. All of these must hold, read from
+# the index and HEAD, never the work tree:
+#   - the branch is gates/baseline-<v> and the staged lock pins <v>;
+#   - nothing is staged but policy.json and the three artifacts, and
+#     policy.json and the lock are among them;
+#   - policy.json differs from HEAD in extends.version only;
+#   - the staged four pass the contract invariants (snapshot matches the
+#     lock digest, declaration matches the lock, effective = recompute).
+# The snapshot's provenance cannot be proven offline; that is what the
+# review of the update branch is for. Returns 0 = exactly an update.
+gates_contract_update_staged() { # <root>
+    local root="${1:-.}" branch version staged f tmp rc=1
+    local has_policy=0 has_lock=0
+    branch="$(git -C "$root" symbolic-ref --short -q HEAD 2>/dev/null)" || return 1
+    [[ "$branch" == gates/baseline-?* ]] || return 1
+    version="${branch#gates/baseline-}"
+    staged="$(git -C "$root" diff --cached --name-only --no-renames 2>/dev/null)" || return 1
+    while IFS= read -r f; do
+        case "$f" in
+            .specify/gates/policy.json) has_policy=1 ;;
+            .specify/gates/baseline.lock.json) has_lock=1 ;;
+            .specify/gates/baseline.json | .specify/gates/policy.effective.json) ;;
+            *) return 1 ;;
+        esac
+    done <<<"$staged"
+    [[ "$has_policy" == "1" && "$has_lock" == "1" ]] || return 1
+    tmp="$(mktemp -d 2>/dev/null || mktemp -d -t gates-update)" || return 1
+    mkdir -p "$tmp/.specify/gates"
+    for f in policy.json baseline.json baseline.lock.json policy.effective.json; do
+        git -C "$root" show ":.specify/gates/$f" >"$tmp/.specify/gates/$f" 2>/dev/null || {
+            rm -rf "$tmp"
+            return 1
+        }
+    done
+    if git -C "$root" show "HEAD:.specify/gates/policy.json" >"$tmp/head.json" 2>/dev/null \
+        && [[ "$(jq -r '.version // ""' "$tmp/.specify/gates/baseline.lock.json" 2>/dev/null)" == "$version" ]] \
+        && jq -e '.extends.version | type == "string"' "$tmp/head.json" >/dev/null 2>&1 \
+        && [[ "$(jq -S 'del(.extends.version)' "$tmp/head.json" 2>/dev/null)" \
+            == "$(jq -S 'del(.extends.version)' "$tmp/.specify/gates/policy.json" 2>/dev/null)" ]] \
+        && (gates_contract_check "$tmp" && [[ "$CONTRACT_STATUS" == "pass" ]]); then
+        rc=0
+    fi
+    rm -rf "$tmp"
+    return "$rc"
 }
 
 # Fetch one document from a versioned git source (R2). Sync-time only --

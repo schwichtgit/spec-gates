@@ -182,7 +182,10 @@ git boundary; `pr-check.sh` re-checks every commit in the range and
 refuses it there unless the PR description declares the path. The trailer is an auditable
 declaration, not a credential: real approval is enforced server-side by
 CODEOWNERS plus branch protection. Setting `git.protected_change_trailer`
-to `false` restores the unconditional refusal.
+to `false` restores the unconditional refusal, except for the commit
+`contract.sh sync --update` makes: on a `gates/baseline-<v>` branch,
+`policy.json` changing `extends.version` alone plus the three contract
+artifacts, consistent with the pin, passes (checked against the index).
 
 ### 3. The CI boundary
 
