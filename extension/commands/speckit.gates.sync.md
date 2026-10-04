@@ -33,10 +33,20 @@ version.
 4. On success, show the deviation inventory the command printed and remind
    the user to COMMIT the three artifacts (`baseline.json`,
    `baseline.lock.json`, `policy.effective.json`) — they are contract
-   state, not build output. For `--update`, point at the created
+   state, not build output. They are protected files: the commit needs a
+   `Protected-Change: <path>` trailer for each artifact it changes (and
+   for `policy.json` when that changed too) plus `Approved-By: <name>`
+   naming the human who approves the change. You cannot edit the
+   artifacts yourself; only `contract.sh sync` writes them. For
+   `--update`, nothing is committed on the current branch: the command
+   commits the artifacts and the new `extends.version` in `policy.json`
+   on its own branch, with the trailers already in place
+   (`Approved-By` names the git committer running it). Point at the created
    `gates/baseline-<version>` branch or opened PR instead; enforcement
    follows only when it merges.
 5. On failure, relay the named cause (branch-name version, chained
-   baseline, schema-invalid baseline, unreachable source). Never edit the
+   baseline, schema-invalid baseline, unreachable source, or a git hook
+   that refused the `--update` commit; the branch is then removed, so
+   fix the cause and re-run). Never edit the
    artifacts by hand to make a failure disappear — the contract gate
    proves them against recomputation on every run.

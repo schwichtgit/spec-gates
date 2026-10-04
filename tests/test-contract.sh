@@ -34,7 +34,7 @@ expect() { # <name> <actual> <wanted>
 
 expect_contains() { # <name> <haystack> <needle>
     TOTAL=$((TOTAL + 1))
-    if printf '%s' "$2" | grep -qF "$3"; then
+    if grep -qF -- "$3" <<<"$2"; then
         echo "PASS: $1"
         PASS=$((PASS + 1))
     else
@@ -296,6 +296,8 @@ expect "branch lock carries the new version" \
     "$(git -C "$UP" show gates/baseline-v1.10.0:.specify/gates/baseline.lock.json | jq -r '.version')" "v1.10.0"
 expect_contains "commit body carries the enforcement delta" \
     "$(git -C "$UP" log -1 --format=%B gates/baseline-v1.10.0)" "Enforcement delta"
+expect_contains "delta names a hook the new baseline adds (#135)" \
+    "$(git -C "$UP" log -1 --format=%B gates/baseline-v1.10.0)" "- added (strengthened): hooks.markdownlint"
 
 OUT="$(contract "$UP" sync --update v1.2.0)"
 expect_contains "explicit version honored" "$OUT" "v1.0.0 -> v1.2.0"
@@ -423,6 +425,130 @@ expect_contains "no tags at the source exits 2" "$OUT" "EXIT=2"
 OUT="$(contract "$DT" propose --rationale "pinned tag gone")"
 expect_contains "propose: missing pinned version named" "$OUT" "pinned version v1.0.0 not found"
 expect_contains "propose: missing pinned version exits 2" "$OUT" "EXIT=2"
+
+# --- #135: the update branch passes its own gates; overlays are partial ---
+echo ""
+echo "=== sync --update under active git hooks (#135) ==="
+
+BH="$WORKDIR/base-hooked"
+mkbaseline "$BH" v1.9.0 "$BASE_POLICY"
+mkbaseline "$BH" v1.10.0 "$(printf '%s' "$BASE_POLICY" | jq -c '.hooks.shellcheck.include += ["**/*.bash"]')"
+HK="$WORKDIR/hooked"
+project "$HK" "$(overlay_for "$BH" '.extends.version = "v1.9.0" | .protected_files = {"extra": [".specify/gates/policy.json"]}')"
+mkdir -p "$HK/.specify/gates/hooks"
+cp "$REPO_ROOT/extension/runtime/hooks/git/pre-commit" "$REPO_ROOT/extension/runtime/hooks/git/commit-msg" \
+    "$HK/.specify/gates/hooks/"
+git init -q "$HK"
+git -C "$HK" checkout -q -b main
+git -C "$HK" config user.email u@test
+git -C "$HK" config user.name updater
+CLAUDE_PROJECT_DIR="$HK" bash "$HK/.specify/gates/contract.sh" sync >/dev/null
+git -C "$HK" add -A
+git -C "$HK" commit -qm "chore: adopt baseline v1.9.0"
+for h in pre-commit commit-msg; do
+    cp "$REPO_ROOT/extension/runtime/hooks/git/stub.sh" "$HK/.git/hooks/$h"
+    chmod +x "$HK/.git/hooks/$h"
+done
+# A commit-msg rule refuses the update commit: the run must fail and
+# leave neither the branch nor the worktree behind.
+mkdir -p "$HK/.specify/gates/hooks.local.d/commit-msg"
+# shellcheck disable=SC2016  # the rule's own $1
+printf '%s\n' '#!/bin/bash' 'if grep -q "policy baseline" "$1"; then echo "updates are frozen" >&2; exit 1; fi' \
+    >"$HK/.specify/gates/hooks.local.d/commit-msg/10-freeze.sh"
+git -C "$HK" add -A
+git -C "$HK" commit -q --no-verify -m "chore: freeze updates"
+OUT="$(contract "$HK" sync --update)"
+expect_contains "refused update commit exits 2" "$OUT" "EXIT=2"
+expect_contains "refused update names the hook's cause" "$OUT" "updates are frozen"
+expect "refused update leaves no branch" \
+    "$(git -C "$HK" rev-parse --verify -q refs/heads/gates/baseline-v1.10.0 >/dev/null && echo yes || echo no)" no
+expect "refused update leaves no worktree" "$(git -C "$HK" worktree list | wc -l | tr -d ' ')" 1
+git -C "$HK" rm -q -r .specify/gates/hooks.local.d
+git -C "$HK" commit -q --no-verify -m "chore: unfreeze updates"
+
+OUT="$(contract "$HK" sync --update)"
+expect_contains "retry after a refused update exits 0" "$OUT" "EXIT=0"
+expect "update branch declares the new version" \
+    "$(git -C "$HK" show gates/baseline-v1.10.0:.specify/gates/policy.json | jq -r '.extends.version')" v1.10.0
+expect "policy.json diff is the version value only" \
+    "$(git -C "$HK" diff main gates/baseline-v1.10.0 -- .specify/gates/policy.json | grep -c '^[-+][^-+]')" 2
+git -C "$HK" worktree add -q "$WORKDIR/hooked-wt" gates/baseline-v1.10.0
+expect "update branch passes its own gate" "$(gate "$WORKDIR/hooked-wt")" 0
+git -C "$HK" worktree remove -f "$WORKDIR/hooked-wt"
+BODY="$(git -C "$HK" log -1 --format=%B gates/baseline-v1.10.0)"
+expect_contains "delta classifies an added include glob" "$BODY" "- strengthened: hooks.shellcheck.include"
+expect_contains "commit declares the lock" "$BODY" "Protected-Change: .specify/gates/baseline.lock.json"
+expect_contains "commit declares policy.json" "$BODY" "Protected-Change: .specify/gates/policy.json"
+expect_contains "commit names the approver" "$BODY" "Approved-By: updater"
+
+echo ""
+echo "=== delta classification (#135) ==="
+CL="$WORKDIR/classify"
+mkdir -p "$CL"
+printf '%s' '{"hooks":{"s":{"include":["a"],"exclude":["v"],"severity":"error"}},"git":{"block_main_commits":true,"protected_change_trailer":true,"conventional_commits":true,"forbid_ai_isms":true}}' >"$CL/old.json"
+printf '%s' '{"hooks":{"s":{"include":["a","b"],"exclude":["v","w"],"severity":"error"},"m":{"severity":"error"}},"git":{"block_main_commits":false,"protected_change_trailer":false,"conventional_commits":false,"forbid_ai_isms":false}}' >"$CL/new.json"
+devs() { # <mode>: printed delta lines for old -> new
+    (
+        # shellcheck source=/dev/null
+        source "$REPO_ROOT/extension/runtime/lib/contract.sh"
+        gates_contract_deviations "$CL/old.json" "$CL/new.json" "$1" | gates_contract_print_deviations "- " delta
+    )
+}
+OUT="$(devs delta)"
+expect_contains "added include glob is a strengthening" "$OUT" "- strengthened: hooks.s.include"
+expect_contains "added exclude glob is a weakening" "$OUT" "- weakened: hooks.s.exclude"
+for k in block_main_commits protected_change_trailer conventional_commits forbid_ai_isms; do
+    expect_contains "git.$k true->false is a weakening" "$OUT" "- weakened: git.$k"
+done
+expect_contains "a hook the new side adds is one line" "$OUT" "- added (strengthened): hooks.m"
+OUT="$(devs "")"
+expect "overlay mode reports no strengthenings or additions" \
+    "$(grep -cE 'strengthened|hooks\.m' <<<"$OUT")" 0
+
+echo ""
+echo "=== partial overlays (#135) ==="
+OX="$WORKDIR/overlay-extends-only"
+project "$OX" "$(jq -nc --arg src "$B" '{extends: {source: $src, version: "v1.0.0"}}')"
+OUT="$(contract "$OX" sync)"
+expect_contains "an overlay that is only extends syncs" "$OUT" "EXIT=0"
+expect "extends-only repo gate passes" "$(gate "$OX")" 0
+OP="$WORKDIR/overlay-partial"
+project "$OP" "$(overlay_for "$B" '.hooks.shellcheck = {"exclude":["vendor/**","gen/**"]}')"
+OUT="$(contract "$OP" sync)"
+expect_contains "a partial hook overlay needs no severity" "$OUT" "EXIT=0"
+expect_contains "the partial overlay's weakening is classified" "$OUT" "deviation (weakened): hooks.shellcheck.exclude"
+OR="$WORKDIR/overlay-remove"
+project "$OR" "$(overlay_for "$B" '.hooks.shellcheck = null')"
+OUT="$(contract "$OR" sync)"
+expect_contains "removing a hook with null syncs" "$OUT" "EXIT=0"
+expect_contains "a removed hook is one weakened deviation" "$OUT" "deviation (weakened): hooks.shellcheck: removed"
+expect "and only one" "$(grep -c 'hooks.shellcheck' <<<"$OUT")" 1
+expect "removed-hook repo gate passes" "$(gate "$OR")" 0
+OS="$WORKDIR/overlay-scalar-hook"
+project "$OS" "$(overlay_for "$B" '.hooks.shellcheck = "off"')"
+OUT="$(contract "$OS" sync)"
+expect_contains "a non-object hook in the overlay is refused" "$OUT" "policy.json itself fails validation"
+expect_contains "the refusal names the hook" "$OUT" "shellcheck: must be an object"
+
+echo ""
+echo "=== propose: minimal upstream diff (#135) ==="
+BU="$WORKDIR/base-unsorted"
+git init -q "$BU"
+printf '%s' '{"spec":{"severity":"error","enabled":true},"hooks":{"shellcheck":{"severity":"error","orchestrator":"none","include":["**/*.sh"]}}}' \
+    | jq . >"$BU/policy.json"
+git -C "$BU" add -A
+git -C "$BU" -c user.email=b@test -c user.name=baseline commit -qm "baseline"
+git -C "$BU" tag v1.0.0
+PU="$WORKDIR/unsorted"
+project "$PU" "$(overlay_for "$BU" '.hooks.shellcheck = {"severity":"warning"}')"
+CLAUDE_PROJECT_DIR="$PU" bash "$PU/.specify/gates/contract.sh" sync >/dev/null
+OUT="$(contract "$PU" propose --rationale "shell is advisory here")"
+expect_contains "propose on an unsorted upstream exits 0" "$OUT" "EXIT=0"
+PATCH=""
+for p in "$PU/.specify/gates/proposals/"*.patch; do
+    [[ -f "$p" ]] && PATCH="$p" && break
+done
+expect "the proposal changes only the deviating line" "$(grep -cE '^[-+] +"' "$PATCH")" 2
 
 echo ""
 echo "$PASS of $TOTAL tests passed"

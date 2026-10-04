@@ -65,48 +65,152 @@ gates_contract_merge() { # <snapshot> <overlay>
 # the effective policy. A "leaf" is a scalar or a whole array reached via
 # object keys only — array interiors are excluded so a list edit is ONE
 # deviation on the list, not one per element. Defined-order fields classify
-# as "weakened";
-# everything else that differs is "changed"; strengthenings and additions
-# are not deviations. Output: one TSV line per deviation:
-#   <weakened|changed>\t<dot.path>\t<baseline-value>\t<effective-value>\t<path-as-json-array>
-# The trailing JSON path is what propose feeds to setpath (dot-joined paths
-# would break on keys containing dots).
-gates_contract_deviations() { # <snapshot> <effective>
-    local snap="${1:-}" eff="${2:-}"
+# as "weakened" or "strengthened": enabled and the git toggles true->false,
+# severity/parity moving right, include losing globs or exclude gaining
+# them. A whole hook the effective side drops (null or absent) is ONE
+# weakened deviation marked "removed". Everything else that differs is
+# "changed". Strengthenings and additions are not deviations.
+#
+# With mode "delta" (sync --update: old baseline vs new baseline) the
+# strengthenings are reported too, and a hook the new side adds is ONE
+# strengthened line marked "added": an update review needs every change.
+#
+# Output: one TSV line per deviation:
+#   <class>\t<dot.path>\t<baseline-value>\t<effective-value>\t<path-as-json-array>\t<removed|added|>
+# The JSON path is what propose feeds to setpath (dot-joined paths would
+# break on keys containing dots).
+gates_contract_deviations() { # <snapshot> <effective> [delta]
+    local snap="${1:-}" eff="${2:-}" mode="${3:-}"
     [[ -f "$snap" && -f "$eff" ]] || return 1
-    jq -r -n --slurpfile b "$snap" --slurpfile e "$eff" '
+    jq -r -n --slurpfile b "$snap" --slurpfile e "$eff" --arg mode "$mode" '
         def sev_rank: { "error": 0, "warning": 1, "info": 2, "off": 3 };
+        def git_toggles: ["block_main_commits", "conventional_commits", "forbid_ai_isms",
+                          "protected_change_trailer", "block_bulk_staging"];
+        def leaves: [ paths(type != "object") | select(all(.[]; type == "string")) ];
+        def hook_names: (.hooks // {}) | if type == "object" then
+            [ to_entries[] | select(.value | type == "object") | .key ] else [] end;
+        def row($c; $p; $bv; $ev; $kind):
+            [ $c, ($p | map(tostring) | join(".")), ($bv | tojson), ($ev | tojson), ($p | tojson), $kind ]
+            | join("\t");
         ($b[0] | del(.extends)) as $base
         | ($e[0] | del(.extends)) as $eff
-        | [ $base | paths(type != "object") | select(all(.[]; type == "string")) ] as $ps
-        | $ps[]
-        | . as $p
-        | ($base | getpath($p)) as $bv
-        | ($eff | getpath($p)) as $ev
-        | select($bv != $ev)
-        | ($p | last | tostring) as $leaf
-        | ($p | map(tostring) | join(".")) as $path
-        | ( if $leaf == "enabled" and $bv == true and $ev == false then "weakened"
-            elif $leaf == "enabled" and $bv == false and $ev == true then "skip"
-            elif ($leaf == "severity" or $leaf == "parity")
-                 and (sev_rank[$bv|tostring] != null) and (sev_rank[$ev|tostring] != null) then
-              ( if sev_rank[$ev|tostring] > sev_rank[$bv|tostring] then "weakened"
-                elif sev_rank[$ev|tostring] < sev_rank[$bv|tostring] then "skip"
-                else "changed" end )
-            elif $leaf == "include" and ($bv | type) == "array" and ($ev | type) == "array" then
-              ( ($bv - $ev) as $removed | ($ev - $bv) as $added
-                | if ($removed | length) > 0 and ($added | length) == 0 then "weakened"
-                  elif ($added | length) > 0 and ($removed | length) == 0 then "skip"
-                  else "changed" end )
-            elif $leaf == "exclude" and ($bv | type) == "array" and ($ev | type) == "array" then
-              ( ($ev - $bv) as $added | ($bv - $ev) as $removed
-                | if ($added | length) > 0 and ($removed | length) == 0 then "weakened"
-                  elif ($removed | length) > 0 and ($added | length) == 0 then "skip"
-                  else "changed" end )
-            else "changed" end ) as $class
-        | select($class != "skip")
-        | "\($class)\t\($path)\t\($bv | tojson)\t\($ev | tojson)\t\($p | tojson)"
+        | ($base | hook_names) as $bh
+        | ($eff | hook_names) as $eh
+        | [ $bh[] | select(IN($eh[]) | not) ] as $removed
+        | [ $eh[] | select(IN($bh[]) | not) ] as $added
+        | ( $removed[] | row("weakened"; ["hooks", .]; $base.hooks[.]; null; "removed") ),
+          ( if $mode == "delta" then
+              $added[] | row("strengthened"; ["hooks", .]; null; $eff.hooks[.]; "added")
+            else empty end ),
+          ( ( ($base | leaves) + (if $mode == "delta" then ($eff | leaves) else [] end) )
+            | unique[]
+            | . as $p
+            | select(($p[0] == "hooks" and (($p[1] // "") | IN(($removed + $added)[])))
+                     or ($p == ["hooks"]) | not)
+            | ($base | try getpath($p) catch null) as $bv
+            | ($eff | try getpath($p) catch null) as $ev
+            | select($bv != $ev)
+            | ($p | last | tostring) as $leaf
+            | ( if ($leaf == "enabled"
+                    or ($p | length) == 2 and $p[0] == "git" and ($leaf | IN(git_toggles[])))
+                   and ($bv | type) == "boolean" and ($ev | type) == "boolean" then
+                  (if $bv then "weakened" else "strengthened" end)
+                elif ($leaf == "severity" or $leaf == "parity")
+                     and (sev_rank[$bv|tostring] != null) and (sev_rank[$ev|tostring] != null) then
+                  ( if sev_rank[$ev|tostring] > sev_rank[$bv|tostring] then "weakened"
+                    elif sev_rank[$ev|tostring] < sev_rank[$bv|tostring] then "strengthened"
+                    else "changed" end )
+                elif ($leaf == "include" or $leaf == "exclude")
+                     and ($bv | type) == "array" and ($ev | type) == "array" then
+                  ( ($ev - $bv | length) as $gained | ($bv - $ev | length) as $lost
+                    | (if $leaf == "include" then [$lost, $gained] else [$gained, $lost] end) as $wl
+                    | if $wl[0] > 0 and $wl[1] == 0 then "weakened"
+                      elif $wl[1] > 0 and $wl[0] == 0 then "strengthened"
+                      else "changed" end )
+                else "changed" end ) as $class
+            | select($mode == "delta" or $class != "strengthened")
+            | row($class; $p; $bv; $ev; "") )
     '
+}
+
+# Print deviation TSV (stdin) as one line per deviation, after <prefix>:
+#   <prefix>(<class>): <path>: baseline <from> -> overlay <to>
+#   <prefix>(weakened): <path>: removed
+# The update review uses the "- " form with old/new instead (delta lines).
+gates_contract_print_deviations() { # <prefix> [delta]
+    local prefix="$1" mode="${2:-}" class path from to jpath kind
+    while IFS=$'\t' read -r class path from to jpath kind; do
+        [[ -z "$class" ]] && continue
+        if [[ "$mode" == "delta" ]]; then
+            if [[ -n "$kind" ]]; then
+                printf '%s%s (%s): %s\n' "$prefix" "$kind" "$class" "$path"
+            else
+                printf '%s%s: %s: %s -> %s\n' "$prefix" "$class" "$path" "$from" "$to"
+            fi
+        elif [[ -n "$kind" ]]; then
+            printf '%s(%s): %s: %s\n' "$prefix" "$class" "$path" "$kind"
+        else
+            printf '%s(%s): %s: baseline %s -> overlay %s\n' "$prefix" "$class" "$path" "$from" "$to"
+        fi
+    done
+    return 0
+}
+
+# Shape check for the overlay (policy.json with extends). The overlay is a
+# partial policy: hooks may be absent, a hook may set only the fields it
+# changes (no severity) or be null (removed). Field values are still
+# checked here so a typo is named against policy.json; completeness is the
+# merged effective policy's job (validated strictly at sync).
+gates_contract_validate_overlay() { # <overlay>
+    local overlay="${1:-}" tmp rc=0
+    [[ -f "$overlay" ]] || return 2
+    if ! jq -e 'type == "object" and ((has("hooks") | not) or (.hooks | type == "object"))' \
+        "$overlay" >/dev/null 2>&1; then
+        echo "ERROR: $overlay must be an object (with \"hooks\", when present, an object)" >&2
+        return 4
+    fi
+    tmp="$(mktemp 2>/dev/null || mktemp -t gates-overlay)" || return 1
+    # Fill what only the merge supplies, then validate the values.
+    jq '.hooks = ((.hooks // {}) | with_entries(
+            if (.value | type) == "object" then
+                .value |= ((if has("severity") then . else . + { severity: "error" } end)
+                    | if .orchestrator == "custom" and (has("custom_command") | not)
+                      then . + { custom_command: "-" } else . end)
+            else . end))' "$overlay" >"$tmp" 2>/dev/null || {
+        rm -f "$tmp"
+        return 3
+    }
+    local out
+    out="$(GATES_POLICY_FILE="$tmp" gates_validate_policy "$tmp" 2>&1)" || rc=$?
+    rm -f "$tmp"
+    # Name the user's file, not the filled-in copy (a few short lines).
+    [[ -n "$out" ]] && printf '%s\n' "${out//"$tmp"/$overlay}" >&2
+    return "$rc"
+}
+
+# Print <overlay> with extends.version set to <version>, changing only that
+# value's text where possible so the reviewed diff is one line (#135). Falls
+# back to a jq rewrite (key order kept) when the text edit is not exact.
+gates_contract_set_version() { # <overlay> <version>
+    local overlay="$1" version="$2" old want got
+    want="$(jq -S --arg v "$version" '.extends.version = $v' "$overlay" 2>/dev/null)" || return 1
+    old="$(jq -r '.extends.version // ""' "$overlay" 2>/dev/null)"
+    if [[ -n "$old" ]]; then
+        got="$(awk -v old="\"$old\"" -v new="\"$version\"" '
+            !done && /"version"[[:space:]]*:/ {
+                i = index($0, "\"version\""); rest = substr($0, i); j = index(rest, old)
+                if (j > 0) {
+                    $0 = substr($0, 1, i - 1) substr(rest, 1, j - 1) new substr(rest, j + length(old))
+                    done = 1
+                }
+            }
+            { print }' "$overlay")"
+        if [[ "$(jq -S . <<<"$got" 2>/dev/null)" == "$want" ]]; then
+            printf '%s\n' "$got"
+            return 0
+        fi
+    fi
+    jq --arg v "$version" '.extends.version = $v' "$overlay"
 }
 
 # The four invariants (R6, contracts/artifact-layout.md), proven offline.

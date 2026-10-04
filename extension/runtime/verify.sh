@@ -203,11 +203,7 @@ if [[ "$CONTRACT_STATUS" != "dormant" ]]; then
         record "contract" "pass" ""
         att_gate "contract" "" "" "" "" "" "pass" "" "$((contract_end - contract_start))"
         if [[ "$JSON" == "0" && -n "$CONTRACT_DEVIATIONS" ]]; then
-            # shellcheck disable=SC2034  # dev_rest swallows the JSON-path field
-            while IFS=$'\t' read -r dev_class dev_path dev_from dev_to dev_rest; do
-                [[ -z "$dev_class" ]] && continue
-                echo "contract: deviation ($dev_class): $dev_path: baseline $dev_from -> overlay $dev_to"
-            done <<<"$CONTRACT_DEVIATIONS"
+            gates_contract_print_deviations "contract: deviation " <<<"$CONTRACT_DEVIATIONS"
         fi
     else
         # A broken contract is never a warning: fixed error severity (R6).

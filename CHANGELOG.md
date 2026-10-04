@@ -196,6 +196,36 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   an empty file, and more than one JSON document. `verify.sh --boundary`
   accepts only `agent`, `git` or `ci`, and `--boundary` or `--accept`
   without a value is a usage error instead of a raw bash error.
+- **`sync --update` builds a branch that passes its own gates** (#135).
+  The update branch moved the pin but left `extends.version` in
+  `policy.json` at the old version, so the branch's pre-commit refused the
+  commit ("extends declaration changed since the last sync"), the command
+  exited 2 and left an empty `gates/baseline-<v>` branch that blocked
+  every retry. The branch now sets `extends.version` (that value only)
+  together with the three artifacts, the commit carries its own
+  `Protected-Change` trailers (`Approved-By` is the git committer running
+  the update), and a refused commit removes both the worktree and the
+  branch. The commit body's delta now classifies every change: added
+  include globs and raised severities as strengthened, added exclude globs
+  and lowered severities as weakened, hooks added or removed as one line
+  each. Turning off `git.block_main_commits`, `protected_change_trailer`,
+  `conventional_commits`, `forbid_ai_isms` or `block_bulk_staging` is a
+  weakened deviation, and `hooks.<name>: null` is one "removed" deviation
+  instead of one per field. An overlay that is only `extends`, or a hook
+  overlay that sets only the fields it changes, is accepted: the overlay
+  is checked for shape and values, the merged effective policy strictly.
+  A non-object hook entry is now named instead of silently skipping the
+  validation of every hook. `propose` keeps the upstream file's key order
+  and indentation, so the proposal diff shows only the deviating values.
+- **The policy-contract artifacts are protected files** (#137).
+  `baseline.json`, `baseline.lock.json` and `policy.effective.json` decide
+  what is enforced, like `policy.json`, but nothing protected them: a
+  consistent hand edit (lock digest and effective policy recomputed) passed
+  pre-commit, the contract gate, `pr-check` and doctor. All three are now
+  built-in protected paths: the agent cannot write them, a Bash command
+  that appears to modify one asks, and a commit that changes one needs
+  `Protected-Change` and `Approved-By` trailers, checked again by
+  `pr-check`. Commit a sync with one `Protected-Change` line per artifact.
 - **Checks no longer miss matches on large input** (#117). Under
   `pipefail`, `echo "$x" | grep -q` read a match as a miss once the input
   outgrew the pipe buffer, so the pre-commit secret scan let a key through

@@ -281,6 +281,17 @@ expect "the merge is counted as checked" \
     "$(grep -c '2 commit(s) checked, 0 touching' "$WORKDIR/out.txt")" 1
 
 echo ""
+echo "=== contract artifacts are built-in protected paths (#137) ==="
+git -C "$W" checkout -q -- .specify/gates/policy.json
+(cd "$W" && printf '{}\n' >.specify/gates/baseline.json && git add .specify/gates/baseline.json \
+    && git commit -q -m "chore: edit the baseline snapshot") >/dev/null 2>&1
+expect "undeclared baseline.json commit -> exit 1" "$(run GATES_COMMIT_RANGE="HEAD^..HEAD")" 1
+expect "the commit counts as touching a protected path" \
+    "$(grep -c '1 touching protected paths' "$WORKDIR/out.txt")" 1
+expect "declared baseline.json commit -> exit 0" \
+    "$(cd "$W" && git commit -q --amend -m $'chore: edit the baseline snapshot\n\nProtected-Change: .specify/gates/baseline.json\nApproved-By: Reviewer' && run GATES_COMMIT_RANGE="HEAD^..HEAD")" 0
+
+echo ""
 echo "$PASS of $TOTAL tests passed."
 [[ "$FAIL" -gt 0 ]] && exit 1
 exit 0

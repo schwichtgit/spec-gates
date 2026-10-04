@@ -62,10 +62,18 @@ One per baseline-vs-effective difference attributable to the overlay.
 | Condition                                                        | Class           |
 | ---------------------------------------------------------------- | --------------- |
 | `enabled` true → false                                           | `weakened`      |
+| `git.block_main_commits`, `git.protected_change_trailer`,        | `weakened`      |
+| `git.conventional_commits`, `git.forbid_ai_isms`,                |                 |
+| `git.block_bulk_staging` true → false                            |                 |
 | severity moves right along `error > warning > off`               | `weakened`      |
 | `include` loses an element / `exclude` gains one (and only that) | `weakened`      |
+| a whole hook removed (`null`): one line, marked `removed`        | `weakened`      |
 | any other difference (commands, orchestrators, mixed list edits) | `changed`       |
 | new hooks/sections added, severities raised, scopes widened      | not a deviation |
+
+The `sync --update` review (old baseline → new baseline) uses the same
+rules and also reports the opposite moves as `strengthened`, plus one
+`added` line per hook the new baseline introduces (#135).
 
 Effect on runs: none (informational lines + attestation counts only).
 

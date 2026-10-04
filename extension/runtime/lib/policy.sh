@@ -168,9 +168,14 @@ gates_policy_at_rev() { # <rev> <dest>
 }
 
 # Protected by the runtime itself, whatever the policy says: the project's
-# own rules in hooks.local.d (#95). Changing one is a reviewed change with a
-# Protected-Change trailer, like any protected_files.extra entry.
-GATES_BUILTIN_PROTECTED=".specify/gates/hooks.local.d/**"
+# own rules in hooks.local.d (#95) and the policy-contract artifacts, which
+# decide what is enforced exactly like policy.json (#137). Changing one is a
+# reviewed change with a Protected-Change trailer, like any
+# protected_files.extra entry. One entry per line.
+GATES_BUILTIN_PROTECTED=".specify/gates/hooks.local.d/**
+.specify/gates/baseline.json
+.specify/gates/baseline.lock.json
+.specify/gates/policy.effective.json"
 
 # protected_files.extra as the UNION of the policies committed at <rev>...,
 # plus the worktree policy when called with no revs (worktree + HEAD). Reading
@@ -306,9 +311,12 @@ gates_validate_policy() {
             if ($v | type) != "array" then ["\($what) must be an array of strings"]
             elif any($v[]; type != "string") then ["\($what) entries must be strings"]
             else [] end;
+        # A null hook is a removed one (a contract overlay drops a baseline
+        # hook with null) and reads as absent; any other non-object is named.
         def hook_errors:
             .hooks
             | to_entries[]
+            | select(.value != null)
             | . as $e
             | if ($e.value | type) != "object" then "\($e.key): must be an object"
               else

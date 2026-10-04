@@ -147,15 +147,23 @@ any artifact by hand blocks the next run naming what drifted.
 
 Drift is reviewable in both directions:
 
-- **Overlays may deviate — transparently.** A repo can weaken a baseline
-  rule (disable, lower a severity, narrow its scope), but every weakening
+- **Overlays may deviate — transparently.** The local `policy.json` is
+  a partial policy: it may hold only `extends`, set just the fields a
+  hook changes, or remove a baseline hook with `null`. A repo can weaken a
+  baseline rule (disable, lower a severity, narrow its scope, turn off a
+  `git` protection, remove a hook), but every weakening
   is a named, attested deviation: `contract: deviation (weakened):
 hooks.shellcheck.severity: baseline "error" -> overlay "warning"`.
   Deviations never change the exit code; they change what the org can see.
 - **Updates arrive as changes, not surprises.** `sync --update` moves the
   pin to a newer baseline version on its own `gates/baseline-<v>` branch
-  with the classified enforcement delta in the commit body; enforcement
-  follows only when it merges.
+  with the classified enforcement delta in the commit body (weakened,
+  strengthened and changed rules, added and removed hooks); enforcement
+  follows only when it merges. That branch moves `extends.version` in
+  `policy.json` with the pin, so it passes its own gates, and its commit
+  carries the `Protected-Change` trailers with you, the person running
+  the update, as `Approved-By`. If a hook refuses the commit, the branch
+  is removed so a retry starts clean.
 - **Deviations can go home.** `/speckit.gates.propose` packages the
   deviation inventory as a change request against the baseline source —
   origin, pinned version, classification, and your rationale included.
@@ -163,7 +171,10 @@ hooks.shellcheck.severity: baseline "error" -> overlay "warning"`.
 The three artifacts (`baseline.json`, `baseline.lock.json`,
 `policy.effective.json`) are committed contract state (formats:
 [`specs/003-policy-contract/contracts/artifact-layout.md`](specs/003-policy-contract/contracts/artifact-layout.md));
-`policy.json` stays the only file you edit. Repos without an `extends`
+`policy.json` stays the only file you edit. The artifacts are built-in
+protected files: only `sync` writes them, and the commit that adds a
+sync needs a `Protected-Change: <path>` trailer for each artifact it
+changes plus `Approved-By: <name>`. Repos without an `extends`
 declaration are completely unaffected.
 
 ## Constitution as an enforceable contract
@@ -364,7 +375,8 @@ delete them (Write/Edit is refused, and a Bash command that appears to
 modify them asks you first), and a commit that adds, changes or removes
 one needs `Protected-Change: <path>` and `Approved-By: <name>` trailers,
 checked again in CI by `pr-check.sh`. The same Bash check covers
-`policy.json`, the constitution and every `protected_files.extra` entry.
+`policy.json`, the constitution, the policy-contract artifacts and every
+`protected_files.extra` entry.
 
 ```bash
 # .specify/gates/hooks.local.d/validate-bash/10-no-vendor-edits.sh

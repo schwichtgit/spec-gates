@@ -11,7 +11,8 @@ set -uo pipefail
 #
 # sync is the only network moment the contract machinery has; verify.sh
 # proves drift offline from the committed artifacts. policy.json is
-# user-owned and never written here.
+# user-owned: the only write is sync --update setting extends.version in
+# the copy on its own review branch (#135), never in the user's checkout.
 #
 # Exit codes: 0 = success (including "nothing to sync/propose"),
 #             1 = usage or environment error,
@@ -42,21 +43,21 @@ gates_contract_paths "$PROJECT_ROOT"
 # Print the deviation inventory (TSV from gates_contract_deviations) as
 # human lines. Reads stdin.
 print_deviations() {
-    local n=0 class path from to rest
-    while IFS=$'\t' read -r class path from to rest; do
-        [[ -z "$class" ]] && continue
-        echo "contract: deviation ($class): $path: baseline $from -> overlay $to"
-        n=$((n + 1))
-    done
-    [[ "$n" -eq 0 ]] && echo "contract: no deviations -- the overlay only adds or strengthens"
-    return 0
+    local devs
+    devs="$(cat)"
+    if [[ -z "$devs" ]]; then
+        echo "contract: no deviations -- the overlay only adds or strengthens"
+        return 0
+    fi
+    gates_contract_print_deviations "contract: deviation " <<<"$devs"
 }
 
-# Fetch + validate + materialize <version>, writing the three artifacts
-# only after every check passes. Echoes nothing on the happy path except
-# the summary; all failures name their cause and leave prior state intact.
-materialize() { # <version>
-    local version="$1"
+# Fetch + validate + materialize <version> against <overlay> (default
+# policy.json), writing the three artifacts only after every check passes.
+# Echoes nothing on the happy path except the summary; all failures name
+# their cause and leave prior state intact.
+materialize() { # <version> [overlay]
+    local version="$1" overlay="${2:-$CONTRACT_OVERLAY}"
     local work
     work="$(mktemp -d 2>/dev/null || mktemp -d -t gates-sync)" || {
         echo "contract: mktemp failed" >&2
@@ -87,7 +88,7 @@ materialize() { # <version>
         return 2
     fi
     # Materialize and validate the merge result too.
-    if ! gates_contract_merge "$work/baseline.json" "$CONTRACT_OVERLAY" >"$work/effective.json"; then
+    if ! gates_contract_merge "$work/baseline.json" "$overlay" >"$work/effective.json"; then
         rm -rf "$work"
         echo "contract: could not merge baseline and overlay" >&2
         return 2
@@ -141,8 +142,12 @@ cmd_sync() {
         echo "contract: no extends declared in policy.json -- nothing to sync"
         return 0
     fi
-    if ! GATES_POLICY_FILE="$CONTRACT_OVERLAY" gates_validate_policy "$CONTRACT_OVERLAY" >/dev/null 2>&1; then
-        echo "contract: policy.json itself fails validation -- fix it before syncing" >&2
+    # The overlay is a partial policy: shape and values here, completeness on
+    # the merged effective policy in materialize.
+    local val
+    if ! val="$(gates_contract_validate_overlay "$CONTRACT_OVERLAY" 2>&1)"; then
+        echo "contract: policy.json itself fails validation -- fix it before syncing:" >&2
+        printf '%s\n' "$val" | sed 's/^/  /' >&2
         return 2
     fi
 
@@ -179,15 +184,34 @@ cmd_sync() {
         echo "contract: already up to date ($current)"
         return 0
     fi
+    # The declaration moves with the pin (#135): the branch's policy.json
+    # must name the new version, or its own contract gate (declaration vs
+    # lock) refuses it. The effective policy is materialized against that
+    # updated overlay, since it re-attaches extends verbatim.
+    local overlay_new
+    overlay_new="$(mktemp 2>/dev/null || mktemp -t gates-overlay)" || {
+        echo "contract: mktemp failed" >&2
+        return 1
+    }
+    if ! gates_contract_set_version "$CONTRACT_OVERLAY" "$target" >"$overlay_new"; then
+        rm -f "$overlay_new"
+        echo "contract: could not set extends.version in policy.json" >&2
+        return 2
+    fi
     local rc=0
-    materialize "$target" || rc=$?
-    [[ "$rc" -ne 0 ]] && return "$rc"
+    materialize "$target" "$overlay_new" || rc=$?
+    if [[ "$rc" -ne 0 ]]; then
+        rm -f "$overlay_new"
+        return "$rc"
+    fi
     local work="$MATERIALIZED_DIR"
+    mv "$overlay_new" "$work/policy.json"
 
-    # Enforcement delta for the review body.
+    # Enforcement delta for the review body: every classified change between
+    # the two baselines, strengthenings and added or removed hooks included.
     local delta
-    delta="$(gates_contract_deviations "$CONTRACT_SNAPSHOT" "$work/baseline.json" 2>/dev/null \
-        | awk -F'\t' '{ printf "- %s: %s: %s -> %s\n", $1, $2, $3, $4 }')"
+    delta="$(gates_contract_deviations "$CONTRACT_SNAPSHOT" "$work/baseline.json" delta 2>/dev/null \
+        | gates_contract_print_deviations "- " delta)"
     [[ -z "$delta" ]] && delta="- no rule-level differences (metadata/ordering only)"
 
     if ! git -C "$PROJECT_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -208,35 +232,61 @@ cmd_sync() {
     # A temporary worktree keeps the user's checkout untouched (SC-003:
     # current enforcement stays at the old pin until the branch merges).
     local wt="$work/wt"
-    if ! git -C "$PROJECT_ROOT" worktree add -q -b "$branch" "$wt" HEAD 2>/dev/null; then
+    # A failure from here on removes the worktree AND the branch, so a
+    # retry does not stop at "branch already exists" (#135).
+    discard_update() {
+        git -C "$PROJECT_ROOT" worktree remove -f "$wt" >/dev/null 2>&1
+        git -C "$PROJECT_ROOT" worktree prune >/dev/null 2>&1
+        git -C "$PROJECT_ROOT" branch -D "$branch" >/dev/null 2>&1
         rm -rf "$work"
+    }
+    if ! git -C "$PROJECT_ROOT" worktree add -q -b "$branch" "$wt" HEAD 2>/dev/null; then
+        discard_update
         echo "contract: could not create a worktree for $branch" >&2
         return 2
     fi
     mkdir -p "$wt/.specify/gates"
+    cp "$work/policy.json" "$wt/.specify/gates/policy.json"
     cp "$work/baseline.json" "$wt/.specify/gates/baseline.json"
     cp "$work/baseline.lock.json" "$wt/.specify/gates/baseline.lock.json"
     cp "$work/effective.json" "$wt/.specify/gates/policy.effective.json"
-    local msg new_digest
+    local msg new_digest protected trailers=""
     new_digest="$(jq -r '.digest' "$work/baseline.lock.json")"
+    if ! git -C "$wt" add .specify/gates/policy.json .specify/gates/baseline.json \
+        .specify/gates/baseline.lock.json .specify/gates/policy.effective.json; then
+        discard_update
+        echo "contract: could not stage the update on $branch" >&2
+        return 2
+    fi
+    # The artifacts (and usually policy.json) are protected files (#137):
+    # the commit declares each one it changes, judged by the branch's own
+    # policy as commit-msg will judge it. The approver is the person running
+    # the update (git committer name): they declare the change, the review
+    # of the branch approves it.
+    protected="$(cd "$wt" && GATES_POLICY_FILE="" CLAUDE_PROJECT_DIR="$wt" gates_staged_protected_paths)"
+    if [[ -n "$protected" ]] \
+        && (cd "$wt" && GATES_POLICY_FILE="" CLAUDE_PROJECT_DIR="$wt" gates_protected_trailer_enabled); then
+        local approver
+        approver="$(git -C "$wt" var GIT_COMMITTER_IDENT 2>/dev/null | sed 's/ <.*$//')"
+        trailers="$(while IFS= read -r p; do printf 'Protected-Change: %s\n' "$p"; done <<<"$protected")
+Approved-By: ${approver:-unknown}"
+    fi
     msg="chore: update policy baseline $current -> $target
 
 Source: $CONTRACT_SOURCE ($CONTRACT_BASEFILE)
 New digest: $new_digest
 
 Enforcement delta (baseline $current -> $target):
-$delta"
-    (
-        cd "$wt" \
-            && git add .specify/gates/baseline.json .specify/gates/baseline.lock.json .specify/gates/policy.effective.json \
-            && git -c commit.gpgsign=false commit -q -m "$msg"
-    ) || {
-        git -C "$PROJECT_ROOT" worktree remove -f "$wt" >/dev/null 2>&1
-        rm -rf "$work"
-        echo "contract: could not commit the update on $branch" >&2
+$delta${trailers:+
+
+$trailers}"
+    if ! (cd "$wt" && git -c commit.gpgsign=false commit -q -m "$msg"); then
+        discard_update
+        echo "contract: could not commit the update on $branch (cause above); branch and worktree removed -- fix the cause and re-run" >&2
         return 2
-    }
+    fi
     git -C "$PROJECT_ROOT" worktree remove -f "$wt" >/dev/null 2>&1 || true
+    git -C "$PROJECT_ROOT" worktree prune >/dev/null 2>&1 || true
     rm -rf "$work"
     echo "contract: update $current -> $target committed on branch $branch"
     printf '%s\n' "$delta"
@@ -323,17 +373,30 @@ cmd_propose() {
     # Apply exactly the deviating paths onto the baseline document.
     local paths_json
     paths_json="$(printf '%s\n' "$deviations" | awk -F'\t' '{print $5}' | jq -s -c '.')"
-    jq -S --slurpfile eff "$CONTRACT_EFFECTIVE" --argjson ps "$paths_json" '
-        reduce $ps[] as $p (.; setpath($p; ($eff[0] | getpath($p))))
-    ' "$work/src/$CONTRACT_BASEFILE" >"$work/proposed.json" \
-        && mv "$work/proposed.json" "$work/src/$CONTRACT_BASEFILE"
+    # Keep the upstream file's key order and indentation (no -S), so the
+    # proposal diff shows the deviating values and nothing else (#135). A
+    # hook the overlay removes is deleted, not set to null.
+    local upstream="$work/src/$CONTRACT_BASEFILE" indent lead
+    indent=(--indent 2)
+    lead="$(awk '/^[ \t]+"/ { match($0, /^[ \t]+/); print substr($0, 1, RLENGTH); exit }' "$upstream")"
+    if [[ "$lead" == $'\t'* ]]; then
+        indent=(--tab)
+    elif [[ -n "$lead" && "${#lead}" -le 7 ]]; then
+        indent=(--indent "${#lead}")
+    fi
+    jq "${indent[@]}" --slurpfile eff "$CONTRACT_EFFECTIVE" --argjson ps "$paths_json" '
+        reduce $ps[] as $p (.;
+            ($eff[0] | getpath($p)) as $v
+            | if $v == null then delpaths([$p]) else setpath($p; $v) end)
+    ' "$upstream" >"$work/proposed.json" \
+        && mv "$work/proposed.json" "$upstream"
     local body
     body="Origin: $consumer
 Pinned baseline: $CONTRACT_SOURCE@$pinned_version
 Rationale: $rationale
 
 Deviations proposed:
-$(printf '%s\n' "$deviations" | awk -F'\t' '{ printf "- %s: %s: %s -> %s\n", $1, $2, $3, $4 }')"
+$(gates_contract_print_deviations "- " delta <<<"$deviations")"
     (
         cd "$work/src" \
             && git add "$CONTRACT_BASEFILE" \

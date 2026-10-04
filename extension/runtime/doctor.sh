@@ -616,11 +616,7 @@ if declare -f gates_contract_check >/dev/null 2>&1 \
                 echo "${OK}snapshot matches the pin; effective policy matches recomputation"
                 if [[ -n "$CONTRACT_DEVIATIONS" ]]; then
                     echo "  deviations: $CONTRACT_WEAKENED weakened, $CONTRACT_CHANGED changed"
-                    # shellcheck disable=SC2034  # dev_rest swallows the JSON-path field
-                    while IFS=$'\t' read -r dev_class dev_path dev_from dev_to dev_rest; do
-                        [[ -z "$dev_class" ]] && continue
-                        echo "  [dev]  ($dev_class) $dev_path: baseline $dev_from -> overlay $dev_to"
-                    done <<<"$CONTRACT_DEVIATIONS"
+                    gates_contract_print_deviations "  [dev]  " <<<"$CONTRACT_DEVIATIONS"
                 else
                     echo "${OK}no deviations -- the overlay only adds or strengthens"
                 fi
