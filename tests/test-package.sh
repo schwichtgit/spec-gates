@@ -271,6 +271,33 @@ if (cd "$IW/asset" && tar -cJf "$IW/good.tar.xz" shellcheck-v9.9.9) 2>/dev/null 
     expect "--update refuses a download that differs from the published digest" \
         "$(inst Linux x86_64 "$IW/evil.tar.xz" --update)" "1"
 
+    # Run from the packaging source (#159): the installer in
+    # extension/runtime/ of a git work tree, no CLAUDE_PROJECT_DIR, started
+    # from another directory. The project pins live in the project's
+    # .specify/gates/, never next to the script.
+    SRC="$IW/proj/extension/runtime"
+    mkdir -p "$SRC"
+    cp "$REPO_ROOT/extension/runtime/install-shellcheck.sh" "$IW/proj/.specify/gates/shellcheck.sha256" "$SRC/"
+    git -C "$IW/proj" init -q
+    rm -f "$IW/proj/.specify/gates/shellcheck.local.sha256"
+    inst_src() { # <os> <arch> [args...] -> exit code; output in $IW/out
+        local os="$1" arch="$2" rc=0
+        shift 2
+        rm -rf "${IW:?}/bin"
+        (cd "$IW" && env -u CLAUDE_PROJECT_DIR PATH="$IW/stub:$PATH" STUB_OS="$os" STUB_ARCH="$arch" \
+            STUB_ASSET="$IW/good.tar.xz" STUB_LOG="$IW/log" STUB_RELEASE="$IW/release.json" \
+            bash "$SRC/install-shellcheck.sh" "${@:-$IW/bin}") >"$IW/out" 2>&1 || rc=$?
+        echo "$rc"
+    }
+    expect "from the source tree: --update succeeds" "$(inst_src Linux x86_64 --update)" "0"
+    expect "from the source tree: --update writes the project's .specify/gates pin file" \
+        "$(grep -c "^$GOOD_SHA  shellcheck-v9.9.9\." "$IW/proj/.specify/gates/shellcheck.local.sha256" 2>/dev/null)" "4"
+    expect "from the source tree: nothing written next to the script" \
+        "$(present "$SRC/shellcheck.local.sha256")" "no"
+    expect "from the source tree: the project pin is honoured on install" "$(inst_src Darwin arm64)" "0"
+    rm -f "$IW/proj/.specify/gates/shellcheck.local.sha256"
+    rm -rf "$IW/proj/.git" "$IW/proj/extension"
+
     printf 'nodejs 22\n' >"$IW/proj/.tool-versions"
     expect "no shellcheck pin in .tool-versions: refused" "$(inst Linux x86_64 "$IW/good.tar.xz")" "1"
     expect "no shellcheck pin: says so" "$(grep -c 'declares no shellcheck version' "$IW/out")" "1"

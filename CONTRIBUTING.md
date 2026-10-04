@@ -65,6 +65,26 @@ criteria become executable `accept` blocks in its `tasks.md`, and flipping its
 spec to `Status: Complete` turns enforcement of those criteria on — see
 `docs/how-it-works.md` for the pipeline.
 
+### Bumping the shellcheck pin
+
+The shellcheck checksums spec-gates ships, and this repository's CI uses,
+live in `extension/runtime/shellcheck.sha256`. Nothing refreshes them
+automatically. To move to another shellcheck release, change the version in
+`.tool-versions`, then:
+
+```bash
+bash extension/runtime/install-shellcheck.sh --update
+v="$(awk '$1 == "shellcheck" { print $2 }' .tool-versions)"
+grep -F "shellcheck-v$v." .specify/gates/shellcheck.local.sha256 \
+  >extension/runtime/shellcheck.sha256
+rm .specify/gates/shellcheck.local.sha256
+```
+
+`--update` checks every asset against GitHub's published digest and writes
+the four lines to `.specify/gates/shellcheck.local.sha256` (gitignored here);
+the `grep` moves them into the shipped file. Commit `.tool-versions` and
+`extension/runtime/shellcheck.sha256` together.
+
 ## Reporting issues
 
 Use the issue forms (bug report / feature request). For anything

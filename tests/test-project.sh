@@ -358,6 +358,28 @@ ok "husky: the hooks were checked statically, not run" test ! -e "$D/ran.txt"
 rc_is "husky: a second run changes nothing" 0 "$D" --skip-canary --wire-manager
 ok "husky: still one call-through line" test "$(grep -cF '.specify/gates/hooks/pre-commit' "$D/.husky/pre-commit")" -eq 1
 
+# husky 8 layout (#159): core.hooksPath=.husky, so git runs .husky/<hook>
+# itself and skips one without the execute bit. A created script is
+# executable; an existing one git would skip fails the git check.
+fixture
+mkdir -p "$D/.husky"
+printf 'npm test\n' >"$D/.husky/pre-commit"
+chmod +x "$D/.husky/pre-commit"
+git -C "$D" config core.hooksPath .husky
+rc_is "husky 8 with --wire-manager" 0 "$D" --skip-canary --wire-manager
+ok "husky 8: created commit-msg script is executable" test -x "$D/.husky/commit-msg"
+ok "husky 8: created pre-merge-commit script is executable" test -x "$D/.husky/pre-merge-commit"
+ok "husky 8: the static check passes" grep -q 'git check (static): another tool owns commit-msg and calls the gates hook' <<<"$OUT"
+fixture
+mkdir -p "$D/.husky"
+printf 'npm test\n' >"$D/.husky/pre-commit"
+chmod 644 "$D/.husky/pre-commit"
+git -C "$D" config core.hooksPath .husky
+rc_is "husky 8: appended to a non-executable script -> exit 1" 1 "$D" --skip-canary --wire-manager
+ok "husky 8: the call-through was appended" grep -qF '.specify/gates/hooks/pre-commit' "$D/.husky/pre-commit"
+ok "husky 8: the user's file keeps its mode" test ! -x "$D/.husky/pre-commit"
+ok "husky 8: the skipped script is named with the fix" grep -qF 'FAILED: git static: .husky/pre-commit is not executable, so git skips it (fix: chmod +x .husky/pre-commit)' <<<"$OUT"
+
 # lefthook: config at the root, generated scripts in .git/hooks.
 fixture
 printf 'colors: false\n' >"$D/lefthook.yml"

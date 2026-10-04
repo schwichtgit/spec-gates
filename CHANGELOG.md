@@ -425,6 +425,20 @@ false`, pre-commit refused the protected artifacts outright; it now
   now says the hook is pending until `lefthook install` or
   `pre-commit install --hook-type <hook>` runs (exit 1: wiring needs the
   maintainer), and doctor names that command until the hook exists.
+- **husky 8 hooks created by `--wire-manager` run, and the shellcheck pins
+  stay in the project** (#159). Under husky 8 (`core.hooksPath=.husky`)
+  git runs `.husky/<hook>` itself, and `--wire-manager` created that
+  script without the execute bit, so git skipped it while `project.sh`'s
+  static check passed. A created script is now executable; an existing
+  one without the bit keeps its mode, and the git check fails naming the
+  `chmod +x` fix. `install-shellcheck.sh --update` wrote
+  `shellcheck.local.sha256` next to itself, which in the spec-gates
+  source tree is the packaging source `extension/runtime/`; it now always
+  writes the project's `.specify/gates/shellcheck.local.sha256`, with the
+  project root taken from the script's own work tree, not the working
+  directory. CONTRIBUTING.md describes how a maintainer bumps the shipped
+  pin. The coverage CI job installs the pinned, checksum-verified
+  shellcheck instead of the distro package.
 
 ## 0.3.6 — 2026-10-02
 

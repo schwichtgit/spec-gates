@@ -821,6 +821,16 @@ git -C "$GPD" config core.hooksPath .husky/_
 run_doctor "$GPD" >/dev/null
 has "husky: the call-through in .husky/<hook> passes (static)" "$GPD" "[ok]  commit-msg (static)"
 expect "husky: doctor did not run the husky chain" "$([[ -e "$GPD/ran.txt" ]] && echo ran || echo not-run)" "not-run"
+# husky 8 layout (#159): git runs .husky/<hook> itself, so a script without
+# the execute bit is skipped although it calls the gates hook.
+chmod 644 "$GPD/.husky/commit-msg"
+git -C "$GPD" config core.hooksPath .husky
+run_doctor "$GPD" >/dev/null
+has "husky 8: a non-executable .husky/<hook> is flagged" "$GPD" "[MISSING] commit-msg installed but NOT executable"
+expect "husky 8: no static pass for a hook git skips" "$(grep -c '\[ok\]  commit-msg (static)' "$GPD/out.txt")" "0"
+chmod +x "$GPD/.husky/commit-msg"
+run_doctor "$GPD" >/dev/null
+has "husky 8: an executable .husky/<hook> passes (static)" "$GPD" "[ok]  commit-msg (static)"
 git -C "$GPD" config --unset core.hooksPath
 fx_cleanup "$GPD"
 

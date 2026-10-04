@@ -127,6 +127,14 @@ gates_hook_static() { # <root> <hook>
     GATES_PROBE_MSG=""
     needle=".specify/gates/hooks/$hook"
     dir="$(gates_hooks_dir "$root")" || { GATES_PROBE_MSG="not a git work tree"; return 1; }
+    # The file git runs must be executable, or git skips it silently
+    # (#159: husky 8 runs .husky/<hook> itself, via core.hooksPath=.husky).
+    # The files a manager reads (.husky/<hook> under husky 9, the YAML
+    # configs) need no execute bit.
+    if [[ -e "$dir/$hook" && ! -x "$dir/$hook" ]]; then
+        GATES_PROBE_MSG="${dir#"$root"/}/$hook is not executable, so git skips it (fix: chmod +x ${dir#"$root"/}/$hook)"
+        return 1
+    fi
     for f in "$dir/$hook" "$root/.husky/$hook" "$root/lefthook.yml" "$root/.lefthook.yml" \
         "$root/lefthook.yaml" "$root/.lefthook.yaml" "$root/lefthook-local.yml" \
         "$root/.pre-commit-config.yaml"; do
@@ -290,7 +298,7 @@ gates_manager_appendable() { # <root> <manager> <hook>
 }
 
 gates_manager_apply() { # <root> <manager> <hook>
-    local root="$1" mgr="$2" hook="$3" rel f nl="" ind="  " first
+    local root="$1" mgr="$2" hook="$3" rel f nl="" ind="  " first new=0
     gates_manager_appendable "$root" "$mgr" "$hook" || return 1
     rel="$(gates_manager_file "$root" "$mgr" "$hook")" || return 1
     f="$root/$rel"
@@ -298,7 +306,15 @@ gates_manager_apply() { # <root> <manager> <hook>
     case "$mgr" in
         husky)
             mkdir -p "$root/.husky" || return 1
+            [[ -e "$f" ]] || new=1
             printf '%s%s' "$nl" "$(gates_manager_entry husky "$hook")"$'\n' >>"$f" || return 1
+            # husky 8 (core.hooksPath=.husky) has git run this file itself,
+            # and git skips one without the execute bit (#159); husky 9
+            # does not need it. A file the user already had keeps its mode:
+            # the git check reports one git would skip.
+            if [[ "$new" -eq 1 ]]; then
+                chmod +x "$f" || return 1
+            fi
             ;;
         lefthook)
             printf '%s%s' "$nl" "$(gates_manager_entry lefthook "$hook")"$'\n' >>"$f" || return 1
