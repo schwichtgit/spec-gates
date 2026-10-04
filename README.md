@@ -259,6 +259,11 @@ Then, in Claude Code:
 /speckit.gates.ci github   # project the CI boundary (github | gitlab | jenkins)
 ```
 
+Commit the adoption on a branch. Its first commit stages
+`.specify/gates/policy.json`, a protected file, so end the message with
+`Protected-Change: .specify/gates/policy.json` and `Approved-By: <name>`
+(see [Commit and PR message rules](#commit-and-pr-message-rules)).
+
 From that point the normal Spec Kit loop is unchanged —
 `/speckit.specify → clarify → plan → tasks → implement` — but during
 `implement` every edit is auto-formatted, protected files and dangerous
@@ -274,22 +279,23 @@ installed and ends with a single reviewable projection step.
 ```bash
 V=X.Y.Z   # the release to install
 U=https://github.com/schwichtgit/spec-gates/releases/download/v$V
-cp -R .specify/gates /tmp/gates-backup-$(date +%Y%m%d%H%M%S)   # 1. back up
+D="$(mktemp -d)"   # downloads stay out of the project tree
+cp -R .specify/gates "$D/gates-backup"   # 1. back up
 
 # 2. Download and verify the release; stop if a check fails (no cosign on
 #    this machine? see "No cosign" below).
-curl -fsSLO "$U/gates-$V.zip" -O "$U/gates-$V.zip.sha256" -O "$U/gates-$V.zip.sigstore.json" -O "$U/SHA256SUMS"
-sha256sum -c "gates-$V.zip.sha256"     # behind Artifactory: sha256sum -c --ignore-missing SHA256SUMS
-cosign verify-blob --bundle "gates-$V.zip.sigstore.json" \
+(cd "$D" && curl -fsSLO "$U/gates-$V.zip" -O "$U/gates-$V.zip.sha256" -O "$U/gates-$V.zip.sigstore.json" -O "$U/SHA256SUMS" \
+  && sha256sum -c "gates-$V.zip.sha256")   # behind Artifactory: sha256sum -c --ignore-missing SHA256SUMS
+cosign verify-blob --bundle "$D/gates-$V.zip.sigstore.json" \
   --certificate-identity-regexp '^https://github.com/schwichtgit/spec-gates/.github/workflows/release.yml@' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com "gates-$V.zip"
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com "$D/gates-$V.zip"
 
-# 3. Swap the installed extension (policy.json and config stay).
+# 3. Swap the installed extension (policy.json stays).
 specify extension remove gates --keep-config --force
 specify extension add gates --from "$U/gates-$V.zip"
 
 # 4. Confirm the installed files are the verified zip.
-unzip -q "gates-$V.zip" -d /tmp/gates-verified && diff -r /tmp/gates-verified/gates .specify/extensions/gates
+unzip -q "$D/gates-$V.zip" -d "$D/verified" && diff -r "$D/verified/gates" .specify/extensions/gates
 
 # 5. Project: review the plan, then run it once.
 bash .specify/extensions/gates/runtime/project.sh --dry-run
@@ -308,7 +314,7 @@ checksum check is still required, and the signature can be checked
 elsewhere. Run the `cosign verify-blob` command on any machine that has
 cosign (a CI job or another workstation), note the zip's
 `sha256sum` there, and on this machine confirm that
-`sha256sum gates-$V.zip` prints the same value. That gives the same
+`sha256sum "$D/gates-$V.zip"` prints the same value. That gives the same
 assurance as running cosign locally. Skipping the signature entirely is
 a deliberate choice for the maintainer to make, never a default: the
 `.sha256` file and `SHA256SUMS` come from the same release page as the

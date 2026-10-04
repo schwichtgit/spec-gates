@@ -24,8 +24,8 @@ There is exactly one upgrade path (README "Upgrade"). Walk the user
 through it in order and STOP at the first failure.
 
 1. **Back up** `.specify/gates/` (a copy outside the repo is enough).
-2. **Download and verify** the versioned release asset, never
-   `releases/latest`: `gates-X.Y.Z.zip`, its `.sha256`, and its
+2. **Download and verify**, into a temp directory outside the project
+   (`mktemp -d`), the versioned release asset, never `releases/latest`: `gates-X.Y.Z.zip`, its `.sha256`, and its
    `.sigstore.json`. Run `sha256sum -c gates-X.Y.Z.zip.sha256` (behind a
    proxy that rewrites `.sha256` URLs, `sha256sum -c --ignore-missing
 SHA256SUMS`) and `cosign verify-blob` with the identity and issuer
@@ -74,7 +74,7 @@ SHA256SUMS`) and `cosign verify-blob` with the identity and issuer
    canary result, and any git hook another tool owns. For husky,
    lefthook or the pre-commit framework, offer `--wire-manager` (it
    appends the gates entry to that tool's own file) as in
-   `/speckit.gates.init` step 3; for any other owner, give the user the
+   `/speckit.gates.init` step 4; for any other owner, give the user the
    call-through line.
 
 ## Rules

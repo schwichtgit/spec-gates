@@ -109,6 +109,14 @@ add` forms at the agent boundary. `project.sh` lists new settings like
 
 ### Fixed
 
+- **A fresh init no longer fails before the user does anything wrong**
+  (#119). `/speckit.gates.init` installs the pinned linters before it
+  projects, so the canaries no longer report a missing prettier as a
+  broken gate, and the report gives the `Protected-Change` and
+  `Approved-By` trailers the adoption commit needs (README "Install" says
+  so too). The README upgrade steps download into a temp directory instead
+  of the project root, and `policy-infer.sh` prefixes its summary with its
+  own name.
 - **Installing no longer warns about `policy.json`** (#118). The manifest
   declared `policy.json` as a config template, which Spec Kit 1.x refuses
   to scaffold (it keeps only `<id>-config.yml` files), so every install
