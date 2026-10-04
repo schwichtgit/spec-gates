@@ -1,14 +1,41 @@
 // spec-gates CI boundary — stage fragment for an existing Jenkinsfile
 // (projected/inserted by /speckit.gates.ci jenkins)
+//
+// The agent needs bash, git, jq, python3, node/npm, and curl + xz for the
+// shellcheck installer. Nothing here uses sudo: shellcheck goes to the
+// workspace's @tmp directory, which is put on PATH for the gate steps.
 stage('Quality Gates') {
     steps {
-        sh 'bash .specify/gates/verify.sh --boundary ci'
-        // A failure here means a BROKEN GATE (a canary violation was
-        // accepted), not a dirty tree.
-        sh 'bash .specify/gates/canary.sh'
-        // PR title (CHANGE_TITLE; Jenkins exposes no description) and
-        // Protected-Change declarations across origin/CHANGE_TARGET..HEAD.
-        // Needs a full-history checkout; skips itself outside PR builds.
-        sh 'bash .specify/gates/pr-check.sh'
+        // Lockfile-pinned linters keep CI on the versions local runs use
+        // (the parity gate compares them); latest only when the repo pins
+        // nothing.
+        sh '''
+            if [ -f package-lock.json ]; then
+                npm ci
+            else
+                npm install --no-save prettier markdownlint-cli2
+            fi
+        '''
+        // shellcheck at the version pinned in .tool-versions, from the
+        // upstream release for this agent's architecture, refused unless it
+        // matches the checksums in .specify/gates/shellcheck.sha256. Without
+        // a pin, the agent's own shellcheck (if any) is used: unpinned, so CI
+        // and local runs may disagree.
+        sh '''
+            if grep -qs '^shellcheck[[:space:]]' .tool-versions; then
+                bash .specify/gates/install-shellcheck.sh "$WORKSPACE@tmp/gates-bin"
+            fi
+        '''
+        withEnv(["PATH+GATES=${env.WORKSPACE}@tmp/gates-bin"]) {
+            sh 'bash .specify/gates/verify.sh --boundary ci'
+            // A failure here means a BROKEN GATE (a canary violation was
+            // accepted, or a linter the policy enables is not installed),
+            // not a dirty tree.
+            sh 'bash .specify/gates/canary.sh'
+            // PR title (CHANGE_TITLE; Jenkins exposes no description) and
+            // Protected-Change declarations across origin/CHANGE_TARGET..HEAD.
+            // Needs a full-history checkout; skips itself outside PR builds.
+            sh 'bash .specify/gates/pr-check.sh'
+        }
     }
 }

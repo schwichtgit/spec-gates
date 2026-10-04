@@ -142,7 +142,12 @@ to `false` restores the unconditional refusal.
 
 When work leaves the machine. The projected pipeline job runs
 `verify.sh --boundary ci` and the canary suite. Because it is the same
-script and the same policy, CI is a backstop, never a surprise.
+script and the same policy, CI is a backstop, never a surprise. The same
+tool versions too: the job installs the lockfile's linters with `npm ci`
+and the shellcheck pinned in `.tool-versions` with
+`.specify/gates/install-shellcheck.sh`, which picks the release asset for
+the runner's architecture and refuses one whose SHA-256 does not match
+`.specify/gates/shellcheck.sha256`.
 
 A third step, `pr-check.sh`, needs context only a pull or merge request
 has, so it is deliberately not a `verify.sh` gate. It checks the PR/MR
@@ -192,9 +197,11 @@ because no legitimate run looks like that.
 
 **Canaries.** `canary.sh` (projected next to `verify.sh`) plants known
 violations in `mktemp` sandboxes and requires the real entrypoints to
-reject them, 14 probes in all:
+reject them, 15 probes in all:
 
-- the format and shell probes run through `verify.sh` itself;
+- the format, markdown and shell probes run through `verify.sh` itself;
+  when the tool is missing but the policy enables it, the probe fails as
+  an enforcement gap, so a CI job that installed no linters is red;
 - the hook probes pipe crafted tool calls through the projected hooks, the
   command and file probes once with jq and once without it;
 - `bulk` and `local` prove the bulk-staging setting and that a project rule

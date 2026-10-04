@@ -91,6 +91,43 @@ for needle in "pr-check.sh" 'GIT_DEPTH: "0"' "python3" "curl" "timeout:" "if [ -
     fi
 done
 
+# Every template installs the tools the gate resolves (#138): the pinned,
+# checksum-verified shellcheck through the projected installer, and the
+# lockfile linters. Comment lines (# and //) do not count.
+JK_T="$REPO_ROOT/extension/ci/jenkins/Jenkinsfile.gates"
+code_lines() { grep -vE '^[[:space:]]*(#|//)' "$1"; }
+for tpl in "$GH_T" "$GL_T" "$JK_T"; do
+    name="${tpl#"$REPO_ROOT"/extension/ci/}"
+    if grep -qE 'bash \.specify/gates/install-shellcheck\.sh' <<<"$(code_lines "$tpl")"; then
+        pass "$name installs shellcheck with the projected installer"
+    else
+        fail "$name does not run .specify/gates/install-shellcheck.sh"
+    fi
+    if grep -qE '^shellcheck|[[:space:]]shellcheck([[:space:]]|$)' \
+        <<<"$(code_lines "$tpl" | grep -E 'apt-get install' | grep -vE '^[[:space:]]*(sudo )?apt-get install -y -q shellcheck$')"; then
+        fail "$name installs the distro shellcheck unconditionally"
+    else
+        pass "$name installs the distro shellcheck only without a pin"
+    fi
+    if grep -qE 'npm ci' <<<"$(code_lines "$tpl")"; then
+        pass "$name installs the lockfile linters (npm ci)"
+    else
+        fail "$name does not run npm ci"
+    fi
+    if grep -qF 'bash .specify/gates/canary.sh' <<<"$(code_lines "$tpl")"; then
+        pass "$name runs the canary suite (fails on a policy-enabled tool that is missing)"
+    else
+        fail "$name does not run canary.sh"
+    fi
+done
+# shellcheck disable=SC2016  # a literal $WORKSPACE, as the Jenkinsfile has it
+if grep -qF 'PATH+GATES=' <<<"$(code_lines "$JK_T")" \
+    && grep -qF 'install-shellcheck.sh "$WORKSPACE@tmp/gates-bin"' <<<"$(code_lines "$JK_T")"; then
+    pass "jenkins puts the installed shellcheck on the gate steps' PATH"
+else
+    fail "jenkins installs shellcheck where the gate steps do not look"
+fi
+
 # ===========================================================================
 # Part 2: the gate lives in exactly one place
 # ===========================================================================

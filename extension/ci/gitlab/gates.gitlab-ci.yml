@@ -10,15 +10,29 @@ gates:
     GIT_DEPTH: "0"
   before_script:
     # python3: the PR checks need it. curl: pr-check fetches a truncated MR
-    # description from the API (python3 is the fallback when curl is absent).
-    - apt-get update -q && apt-get install -y -q jq shellcheck git python3 curl
+    # description from the API (python3 is the fallback when curl is absent)
+    # and the shellcheck installer downloads with it. xz-utils: the
+    # shellcheck release is a .tar.xz.
+    - apt-get update -q && apt-get install -y -q jq git python3 curl xz-utils
+    # Install shellcheck at the version pinned in .tool-versions, from the
+    # upstream release for this runner's architecture, refused unless it
+    # matches the checksums in .specify/gates/shellcheck.sha256 (Debian
+    # ships an older release whose findings differ; the parity gate fails
+    # on the drift). Without a pin, the distro package is installed
+    # instead: unpinned, so CI and local runs may disagree.
+    - |
+      if grep -qs '^shellcheck[[:space:]]' .tool-versions; then
+        bash .specify/gates/install-shellcheck.sh
+      else
+        apt-get install -y -q shellcheck
+      fi
     # Lockfile-pinned linters keep CI on the versions local runs use (the
     # parity gate compares them); latest only when the repo pins nothing.
     - if [ -f package-lock.json ]; then npm ci; else npm install -g prettier markdownlint-cli2; fi
   script:
     - bash .specify/gates/verify.sh --boundary ci
-    # A failure here means a BROKEN GATE (a canary violation was accepted),
-    # not a dirty tree.
+    # A failure here means a BROKEN GATE (a canary violation was accepted,
+    # or a linter the policy enables is not installed), not a dirty tree.
     - bash .specify/gates/canary.sh
     # MR title/description against the commit-message rules, and
     # Protected-Change declarations across the MR's commits. Skips itself

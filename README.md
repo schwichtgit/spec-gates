@@ -60,12 +60,12 @@ self-evidencing:
   in `--json`: the policy's SHA-256, and per gate the resolved binary,
   detected version, lockfile pin, candidate vs checked file counts,
   result, and duration. Evidence, never file contents.
-- **Canaries** — `canary.sh` plants 14 known violations in disposable
-  sandboxes (dirty files, dangerous tool calls with and without jq, staged
-  secrets, undeclared protected changes, branding, a failing accept block,
-  a tampered effective policy, and more) and requires the real gate or hook
-  to reject each one. An accepted probe fails the suite naming the broken
-  gate; CI runs it on every build. On demand:
+- **Canaries** — `canary.sh` plants 15 known violations in disposable
+  sandboxes (dirty and lint-failing files, dangerous tool calls with and
+  without jq, staged secrets, undeclared protected changes, branding, a
+  failing accept block, a tampered effective policy, and more) and requires
+  the real gate or hook to reject each one. An accepted probe fails the
+  suite naming the broken gate; CI runs it on every build. On demand:
   `bash .specify/gates/canary.sh` (or `doctor.sh --canary`). The full list
   is in [How it works](docs/how-it-works.md#evidence-canaries-and-verified-parity).
 - **Verified parity** — a synthetic `parity` gate compares each tool's
@@ -214,7 +214,11 @@ its enforcement frontmatter — one registry, two consumers.
 - **shellcheck** if you lint shell. Its findings change between releases
   (0.9.0 reports SC2015 where 0.11.0 does not), so declare the version in
   `.tool-versions` (`shellcheck 0.11.0`) and install that one everywhere —
-  the parity gate reads it and fails any boundary that drifts.
+  the parity gate reads it and fails any boundary that drifts. The CI
+  templates install exactly that version, checksum-verified, with
+  `bash .specify/gates/install-shellcheck.sh` (Linux and macOS, x86_64
+  and aarch64); for a version spec-gates ships no checksums for, run it
+  with `--update` and commit `.specify/gates/shellcheck.local.sha256`.
 - **Claude Code** for the agent boundary. The git and CI boundaries are
   agent-agnostic.
 
