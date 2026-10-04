@@ -174,8 +174,8 @@ for plat in linux.x86_64 linux.aarch64; do
         "$(awk -v a="shellcheck-v$PINNED_SC.$plat.tar.xz" '$2 == a { n++ } END { print n + 0 }' \
             "$STAGE/runtime/shellcheck.sha256")" "1"
 done
-expect "shipped checksums match this repository's own CI pins" \
-    "$(cmp -s "$REPO_ROOT/extension/runtime/shellcheck.sha256" "$REPO_ROOT/.github/shellcheck.sha256" && echo same || echo differ)" "same"
+# This repository's CI runs the same installer and checksums (test-parity
+# checks the workflow), so there is no second pin file to compare (#148).
 
 IW="$WORKDIR/installer"
 mkdir -p "$IW/proj/.specify/gates" "$IW/stub" "$IW/asset/shellcheck-v9.9.9" "$IW/evil/shellcheck-v9.9.9"

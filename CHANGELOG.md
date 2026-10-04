@@ -128,6 +128,19 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   stubs, so doctor reported the projection as not current. `doctor.sh
 --ci` leaves out the git hook wiring and the git boundary section and
   runs every other check.
+- **CI and test follow-ups from the 0.4.0 fixes** (#148). The GitLab
+  template ran `node:22-slim`; it now runs `node:26-slim`, the major the
+  GitHub template and this repository's CI use, and a parity test keeps
+  them aligned. This repository's CI ran its own copy of the shellcheck
+  installer with its own checksum file; it now runs the shipped
+  `extension/runtime/install-shellcheck.sh` and `shellcheck.sha256`, and
+  the copy is gone. `tests/test-doctor.sh` no longer fails two
+  constitution cases on a host without `node_modules` (doctor now always
+  runs; only the exit-code case skips), and `tests/test-hooks.sh` projects
+  the runtime its PR-hook and commit-msg cases need into a fixture, so a
+  fresh clone passes without projecting first. The bulk-staging docs in
+  `docs/how-it-works.md` and `/speckit.gates.init` list every form the
+  hook refuses.
 - **The test suite passes on a host without python3** (#120). The GitLab
   "no curl" case assumed python3's `urllib` as the fallback fetcher; it
   now skips visibly without it, and a new case checks that with neither
