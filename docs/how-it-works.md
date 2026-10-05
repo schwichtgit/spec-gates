@@ -32,19 +32,29 @@ spec-gates uses four of them:
   files, private keys and certificates, exact credential file names
   (`credentials.json`, `.netrc`, cloud service-account files), sensitive
   directories, lock files, the project's own rules in
-  `.specify/gates/hooks.local.d/`, `.specify/gates/policy.json` and
-  `.specify/memory/constitution.md` (always, whatever the policy says),
-  and every `protected_files.extra` entry. It resolves `.`, `..` and `//`
-  in the path first and matches ignoring case, since macOS filesystems are
-  case-insensitive by default. An `extra` entry also matches under
-  another spelling of the project root (`/tmp` and `/private/tmp`, a
-  symlinked checkout), compared by real path.
+  `.specify/gates/hooks.local.d/`, `.specify/gates/policy.json` (always,
+  whatever the policy says), and every `protected_files.extra` entry. A
+  Write or Edit to `.specify/memory/constitution.md` asks instead, under
+  any policy (an `extra` entry naming it included): the constitution
+  commands write it as one of their steps, so you approve that write once.
+  It resolves `.`, `..` and `//` in the path first and matches ignoring
+  case, since macOS filesystems are case-insensitive by default. Every
+  rule, built-in or `extra`, also judges the fully resolved real path,
+  with every symlink in the file and its parents followed, so a link
+  inside the project (`gdir -> .specify/gates`, `pol.json -> policy.json`)
+  or another spelling of the project root (`/tmp` and `/private/tmp`, a
+  symlinked checkout) reaches the same verdict. A hard link to
+  `policy.json`, the constitution, a contract artifact or a project rule is
+  recognized as that file. A path whose links it cannot resolve (a loop)
+  asks.
 - `PreToolUse(Bash)` → `validate-bash.sh`: refuses destructive commands
-  (`rm` of root, home or a path outside the temp directories, force push,
-  hard reset, `chmod 777`, piping a download into a shell, discarding the
-  whole working tree with `git checkout` or `git restore` of `.`, `:/` or
-  other pathspec magic in any option order, `git clean` with `-f` or
-  `--force` anywhere, …). With
+  (`rm` of root, home or a path outside the temp directories, force push
+  with `-f`, `--force`, `--force-with-lease`, `--mirror` or a `+ref`
+  refspec, hard reset, `chmod 777`, piping a download into a shell,
+  discarding the whole working tree with `git checkout`, `git restore` or
+  `git rm` of `.`, `:/` or other pathspec magic in any option order,
+  `git checkout -f`, `git switch -f` or `--discard-changes`,
+  `git stash clear`, `git clean` with `-f` or `--force` anywhere, …). With
   `git.block_bulk_staging` it also refuses bulk staging: `git add` or
   `git stage` with `-A` (also in a cluster such as `-vA`), `--all`,
   `--no-ignore-removal`, `--pathspec-from-file`, `.`, `:/` and other
@@ -54,7 +64,8 @@ spec-gates uses four of them:
   options (`-C`, `--no-pager`, …). An argument it cannot resolve (`"$f"`,
   a backtick substitution, arguments from `xargs`, a path after a `cd` it
   cannot follow) asks. `validate-pr.sh`: checks the title and body of
-  `gh pr create|edit`, `glab mr create|update` and `gh api` calls on a
+  `gh pr create|new|edit`, `glab mr create|new|update` (also with `-R` or
+  `--repo` before the subcommand) and `gh api` calls on a
   `repos/<owner>/<repo>/pulls` endpoint with the commit-message rules. It
   reads each value as the shell would pass it and refuses one it cannot
   read literally: a variable, a command substitution (except the
@@ -63,11 +74,15 @@ spec-gates uses four of them:
   command inside `sh -c` or `eval`.
 - `PostToolUse(Write|Edit)` → `post-edit.sh`: formats the touched file per
   policy.
-- `Stop` → `format-changed.sh` + `verify-quality.sh`: the session may not
-  end while `verify.sh` is red. The agent gets the failure list and keeps
+- `Stop` → `format-changed.sh` + `verify-quality.sh`: a stop while
+  `verify.sh` is red is refused. The agent gets the failure list and keeps
   working. This turns "the tasks say run the tests" from a suggestion into
   an invariant, the property that matters for long, semi-attended
-  `/speckit.implement` runs.
+  `/speckit.implement` runs. The refusal holds once per stop: when the
+  agent stops again right after it, Claude Code marks the retry with
+  `stop_hook_active` and both hooks let it through, so a gate the agent
+  cannot turn green never locks the session. A red tree still cannot be
+  committed (`pre-commit`) or merged (CI).
 
 Every refusal says why and what to do instead, so the agent is redirected
 rather than stopped cold.
@@ -78,15 +93,26 @@ the PreToolUse `permissionDecision: ask` answer, which prompts in every
 permission mode. The hooks ask when a file name merely contains a word
 such as `secret` or `token` (a test like `test_no_secret_leak.py` is not a
 credential), when a Bash command appears to modify a protected path
-(`rm`, `mv`, `sed -i`, a redirect, `tee`, `find -delete`, `git rm`, also
-as `/bin/rm`, `\rm`, `xargs rm`, inside `sh -c` or `eval`, or an
-interpreter one-liner such as `python3 -c`, naming one, its parent
-directory, a brace or backslash spelling of it, or a path relative to a
-`cd` into one; telling
+(`rm`, `mv`, `sed -i` or `--in-place`, a redirect (also `>|`), an
+`--out`/`--output` option, `tee`, `find -delete`, `git rm`, also as
+`/bin/rm`, `\rm`, `xargs rm`, inside `sh -c` or `eval`, or an
+interpreter one-liner such as `python3 -c`, or an `ln` whose target or
+link resolves to, contains or lies under one, naming one, its parent
+directory, a brace, backslash or split-quote spelling of it, a variable
+the same command assigns, a variable or substitution it cannot resolve
+in front of the file name, a glob `extra` entry such as `**/*.lock.md`,
+or a path relative to a
+`cd` into one or to the session's working directory (the hook input
+`cwd`, which Claude Code keeps between calls); telling
 a modification from a read by the command text is a heuristic, so it asks
-rather than blocks), when a Bash command names a secret file the file hook
+rather than blocks; a read-only command such as `grep -n rm <path>` and
+the literal message of a `git commit -m` do not count as a change), when a Bash command names a secret file the file hook
 refuses (`cat .env`), when it bypasses the git hooks (`--no-verify`,
-`git commit -n`, a `core.hooksPath` setting), and in any state they
+`git commit -n`, a `core.hooksPath` setting, or a hook manager's skip
+variable such as `HUSKY=0`, `LEFTHOOK=0` or `SKIP=`), when it creates
+commits that git runs no commit hook for (`git cherry-pick`, `git rebase`,
+`git am`, `git revert`, see the git boundary), when it deletes a remote
+branch (`git push origin :main`, `--delete`), and in any state they
 cannot evaluate. A project rule in `hooks.local.d` runs before any of
 these questions, so its refusal wins. They never
 silently allow. Without jq, or for input that is not valid JSON, they read
@@ -98,14 +124,21 @@ internal error, an undecodable, missing or repeated field, or a
 hook asks before every edit and the Bash hook before every command that
 appears to change a file. Doctor keeps failing until jq is installed.
 
+**The Bash checks are heuristics.** `validate-bash.sh` reads the command
+text, not what the shell will run. It recognises the common spellings
+listed above, blocks where a match is certain and asks where it is not,
+but it cannot parse every shell form. The git hooks and the CI boundary
+(`pre-commit`, `commit-msg`, `pr-check.sh`) are the enforcement backstop.
+
 **The Stop hook does not fail closed.** When `verify.sh` cannot run (no
 jq, no git, no policy), `verify-quality.sh` lets the session end and says
 why. That is deliberate: a missing tool must never lock the agent in a
 session it cannot finish. The gate still holds where it can: `pre-commit`
 refuses every commit while `verify.sh` cannot run, `pr-check.sh` and
 `verify.sh` in CI exit with an error, and the Write/Edit and Bash hooks
-keep working in raw mode. Only a red gate, never a missing tool, keeps the
-session open.
+keep working in raw mode. Only a red gate, never a missing tool, refuses
+a stop, and only the first one: the agent's next stop is let through
+(see `Stop` above).
 
 **Project rules.** A project adds its own refusals as scripts in
 `.specify/gates/hooks.local.d/<hook>/` for `protect-files`,
@@ -122,7 +155,9 @@ When work becomes history. `pre-commit` blocks commits to `main`, scans
 staged content for secrets and forbidden files (renamed and typechanged
 files included), and runs the same verify
 entrypoint. `commit-msg` enforces Conventional Commits and refuses
-AI-isms, emoji, AI branding and `Co-Authored-By` trailers. The branding
+AI-isms, emoji (anywhere in the message, not only the subject; comment
+lines and the scissors section are dropped first), AI branding and
+`Co-Authored-By` trailers. The branding
 list is policy (`git.ai_branding.terms`); a legitimate phrase that contains
 a term, such as a product name a repository integrates, is allowed via
 `git.ai_branding.allow_phrases` (matched literally, ignoring case, like the
@@ -134,9 +169,17 @@ the `fixup!`, `squash!` and `amend!` subjects of `git commit --fixup` and
 `--squash`. A prefix counts only when the rest of the subject is the
 subject of an existing commit, as git writes it; `fixup! anything` typed by
 hand is judged like any other subject. Every other message rule still
-applies to them. `git revert`
-runs no commit hooks at all (git's own behavior), so a revert is checked
-only at the CI boundary.
+applies to them.
+
+`git cherry-pick`, `git rebase`, `git am` and `git revert` create commits
+without running `pre-commit` or `commit-msg` (git's own behavior), so
+neither the refusal of commits to `main` nor the secret scan nor the
+message rules see them. The same holds for `--continue` and `--skip`,
+which replay further commits (only a `cherry-pick` stopped on a conflict
+runs the hooks for that one commit). Their result is checked only at the CI
+boundary. The agent's Bash hook asks before each of them, as it does for
+`--no-verify`; `--abort`, `--quit`, `--edit-todo` and
+`--show-current-patch` create no commit and are allowed.
 
 A merge commit never runs `pre-commit`: git runs `pre-merge-commit` and
 `commit-msg` instead. The `pre-merge-commit` hook runs the `pre-commit`
@@ -214,7 +257,8 @@ config calls but whose install command has not run yet is reported by
 command, since a commit runs no gates check until then.
 
 **Protected files** get different treatment at the two local boundaries.
-The agent may never edit them. At the git boundary a human is the
+The agent may never edit them, except the constitution, whose Write/Edit
+asks you first. At the git boundary a human is the
 committer, so an approved amendment has a path through: every staged
 protected path (added, modified, deleted, or renamed) must be declared in
 the message's trailer block, with an approver:
@@ -716,7 +760,8 @@ principle, rewrite its own hook wiring: `.claude/settings.json`, the
 projected hooks in `.claude/hooks/gates/` and the runtime in
 `.specify/gates/` are not protected by default. Add them to
 `protected_files.extra` to have Write/Edit refused and Bash changes asked
-about, as `policy.json`, the constitution and the project's own rules are.
+about, as `policy.json` and the project's own rules are (the constitution
+asks for both).
 The Bash check is itself a heuristic over command text, which is why it
 asks rather than claims to block.
 

@@ -103,109 +103,202 @@ FILE_PATH="$(printf '%s\n' "$FILE_PATH" | awk '{
     for (i = 1; i <= k; i++) out = out (i > 1 ? "/" : "") s[i]
     print (abs ? "/" : "") out }')"
 [[ -n "$FILE_PATH" ]] || FILE_PATH="$ORIG_PATH"
+
+# real_path <absolute path>: the path with every symlink resolved, in the
+# file and in each parent, the way the kernel walks it (#193): a component
+# that is a link is replaced by its target and the walk goes on from there,
+# so `..` after a link leaves the link's target. Components that do not
+# exist yet are kept as written. Returns 1 on a link loop or a link it
+# cannot read, which the caller turns into "ask".
+real_path() {
+    local todo="$1" out="" comp link hops=0
+    while [[ -n "$todo" ]]; do
+        while [[ "$todo" == /* ]]; do todo="${todo#/}"; done
+        [[ -n "$todo" ]] || break
+        if [[ "$todo" == */* ]]; then
+            comp="${todo%%/*}"
+            todo="${todo#*/}"
+        else
+            comp="$todo"
+            todo=""
+        fi
+        case "$comp" in
+            . | '') continue ;;
+            ..) out="${out%/*}"; continue ;;
+        esac
+        if [[ -L "$out/$comp" ]]; then
+            hops=$((hops + 1))
+            [[ "$hops" -le 40 ]] || return 1
+            command -v readlink >/dev/null 2>&1 || return 1
+            link="$(readlink "$out/$comp")" || return 1
+            [[ -n "$link" ]] || return 1
+            [[ "$link" == /* ]] && out=""
+            todo="$link${todo:+/$todo}"
+        else
+            out="$out/$comp"
+        fi
+    done
+    printf '%s' "${out:-/}"
+}
+
+# Every rule below also judges the fully resolved real path (#193): a
+# symlink inside the project (gdir -> .specify/gates, pol.json ->
+# policy.json) must not turn a protected file into an editable one. A
+# relative path is taken from the session's cwd.
+if [[ -z "$DEGRADED" ]]; then
+    _cwd="$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)" || _cwd=""
+else
+    _cwd="$(raw_field cwd)" || _cwd=""
+fi
+_abs="$ORIG_PATH"
+[[ "$_abs" == /* ]] || _abs="${_cwd:-$PWD}/$_abs"
+REAL_PATH="$(real_path "$_abs")" \
+    || ask "cannot resolve the symlinks in $ORIG_PATH (a loop or an unreadable link); confirm this edit"
+REAL_BASE="${REAL_PATH##*/}"
+
 shopt -s nocasematch
 
 BASENAME=$(basename "$FILE_PATH")
 
 BLOCKED=""
+NAMEASK=""
+CONSTASK=""
 
 # Allowlist: .example / .sample / .template files are safe to edit even when
 # the base name looks sensitive (e.g. .env.example). Mirrors the git
-# pre-commit forbidden-file allowlist so the two boundaries agree.
-if [[ "$BASENAME" == *.example ]] || [[ "$BASENAME" == *.sample ]] \
-    || [[ "$BASENAME" == *.template ]]; then
+# pre-commit forbidden-file allowlist so the two boundaries agree. Both
+# names must qualify: x.sample linked to policy.json is policy.json.
+allowlisted() { [[ "$1" == *.example || "$1" == *.sample || "$1" == *.template ]]; }
+if allowlisted "$BASENAME" && allowlisted "$REAL_BASE"; then
     exit 0
 fi
 
-# Environment files
-if [[ "$BASENAME" == ".env" ]] || [[ "$BASENAME" == .env.* ]]; then
-    BLOCKED="Environment file"
-fi
+# builtin_rules <path>: the shipped rules for one spelling of the target,
+# setting BLOCKED, NAMEASK and CONSTASK. Run for the path as given
+# (normalized) and for its real path.
+builtin_rules() {
+    local FILE_PATH="$1" BASENAME
+    BASENAME="${1##*/}"
+    allowlisted "$BASENAME" && return 0
 
-# SSH keys
-case "$BASENAME" in
-    id_rsa*|id_ed25519*|id_ecdsa*|authorized_keys|known_hosts)
-        BLOCKED="SSH key/config file"
-        ;;
-esac
+    # Environment files
+    if [[ "$BASENAME" == ".env" ]] || [[ "$BASENAME" == .env.* ]]; then
+        BLOCKED="Environment file"
+    fi
 
-# Certificates and key stores
-case "$BASENAME" in
-    *.pem|*.key|*.crt|*.p12|*.pfx|*.jks|*.keystore)
-        BLOCKED="Certificate/key file"
-        ;;
-esac
+    # SSH keys
+    case "$BASENAME" in
+        id_rsa*|id_ed25519*|id_ecdsa*|authorized_keys|known_hosts)
+            BLOCKED="SSH key/config file"
+            ;;
+    esac
 
-# Credentials (#71): an exact credential file name is strong evidence and
-# blocks. A sensitive word that merely appears in the name (a test such as
-# test_no_secret_leak.py, a token parser) asks the human instead: blocking
-# it outright left no way to edit such files at all.
-case "$BASENAME" in
-    credentials|credentials.json|credentials.yml|credentials.yaml|.netrc|.pypirc)
-        BLOCKED="Credentials file"
-        ;;
-esac
-NAMEASK=""
-if [[ -z "$BLOCKED" ]]; then
-    _word="$(echo "$BASENAME" | grep -oiE 'credentials|secret|password|token|keystore' | head -n 1 || true)"
-    [[ -n "$_word" ]] && NAMEASK="the file name contains '$_word'; confirm $FILE_PATH does not hold a credential"
-fi
+    # Certificates and key stores
+    case "$BASENAME" in
+        *.pem|*.key|*.crt|*.p12|*.pfx|*.jks|*.keystore)
+            BLOCKED="Certificate/key file"
+            ;;
+    esac
 
-# Cloud configs
-if grep -qiE '^(gcloud-.*\.json|service-account.*\.json|aws-credentials)$' <<<"$BASENAME"; then
-    BLOCKED="Cloud credentials file"
-fi
+    # Credentials (#71): an exact credential file name is strong evidence and
+    # blocks. A sensitive word that merely appears in the name (a test such as
+    # test_no_secret_leak.py, a token parser) asks the human instead: blocking
+    # it outright left no way to edit such files at all.
+    case "$BASENAME" in
+        credentials|credentials.json|credentials.yml|credentials.yaml|.netrc|.pypirc)
+            BLOCKED="Credentials file"
+            ;;
+    esac
+    if [[ -z "$BLOCKED" && -z "$NAMEASK" ]]; then
+        _word="$(echo "$BASENAME" | grep -oiE 'credentials|secret|password|token|keystore' | head -n 1 || true)"
+        [[ -n "$_word" ]] && NAMEASK="the file name contains '$_word'; confirm $FILE_PATH does not hold a credential"
+    fi
 
-# The project's own rules (#95): hooks.local.d holds the refusals the
-# project added on top of the shipped ones. The agent must not be able to
-# rewrite or delete them; a human changes them, and a commit that does
-# needs a Protected-Change trailer.
-case "$FILE_PATH" in
-    .specify/gates/hooks.local.d/* | */.specify/gates/hooks.local.d/*)
-        BLOCKED="Project rule in .specify/gates/hooks.local.d/ (a human edits these; the commit needs a Protected-Change trailer)"
-        ;;
-esac
+    # Cloud configs
+    if grep -qiE '^(gcloud-.*\.json|service-account.*\.json|aws-credentials)$' <<<"$BASENAME"; then
+        BLOCKED="Cloud credentials file"
+    fi
 
-# The policy-contract artifacts (#137) decide what is enforced, like
-# policy.json. Only contract.sh sync writes them; a hand edit, even a
-# consistent one the contract gate cannot tell from a sync, is refused.
-case "$FILE_PATH" in
-    .specify/gates/baseline.json | */.specify/gates/baseline.json \
-        | .specify/gates/baseline.lock.json | */.specify/gates/baseline.lock.json \
-        | .specify/gates/policy.effective.json | */.specify/gates/policy.effective.json)
-        BLOCKED="Policy-contract artifact (written by contract.sh sync, never by hand; the commit needs a Protected-Change trailer)"
-        ;;
-esac
+    # The project's own rules (#95): hooks.local.d holds the refusals the
+    # project added on top of the shipped ones. The agent must not be able to
+    # rewrite or delete them; a human changes them, and a commit that does
+    # needs a Protected-Change trailer.
+    case "$FILE_PATH" in
+        .specify/gates/hooks.local.d/* | */.specify/gates/hooks.local.d/*)
+            BLOCKED="Project rule in .specify/gates/hooks.local.d/ (a human edits these; the commit needs a Protected-Change trailer)"
+            ;;
+    esac
 
-# The policy and the constitution are protected whatever protected_files.extra
-# says and whether or not jq is present (#165): an agent that could rewrite
-# them could switch off every other rule, and the policy is exactly what an
-# invalid or unread policy cannot vouch for.
-case "$FILE_PATH" in
-    .specify/gates/policy.json | */.specify/gates/policy.json \
-        | .specify/memory/constitution.md | */.specify/memory/constitution.md)
-        BLOCKED="Gates policy or constitution (a human edits these; the commit needs a Protected-Change trailer)"
-        ;;
-esac
+    # The policy-contract artifacts (#137) decide what is enforced, like
+    # policy.json. Only contract.sh sync writes them; a hand edit, even a
+    # consistent one the contract gate cannot tell from a sync, is refused.
+    case "$FILE_PATH" in
+        .specify/gates/baseline.json | */.specify/gates/baseline.json \
+            | .specify/gates/baseline.lock.json | */.specify/gates/baseline.lock.json \
+            | .specify/gates/policy.effective.json | */.specify/gates/policy.effective.json)
+            BLOCKED="Policy-contract artifact (written by contract.sh sync, never by hand; the commit needs a Protected-Change trailer)"
+            ;;
+    esac
 
-# Lock files
-case "$BASENAME" in
-    package-lock.json|yarn.lock|pnpm-lock.yaml|Cargo.lock|poetry.lock)
-        BLOCKED="Lock file (auto-generated)"
-        ;;
-esac
+    # The policy is protected whatever protected_files.extra says and whether
+    # or not jq is present (#165): an agent that could rewrite it could switch
+    # off every other rule, and it is exactly what an invalid or unread policy
+    # cannot vouch for.
+    case "$FILE_PATH" in
+        .specify/gates/policy.json | */.specify/gates/policy.json)
+            BLOCKED="Gates policy (a human edits it; the commit needs a Protected-Change trailer)"
+            ;;
+    esac
 
-# Sensitive directories
-if grep -qiE '(^|/)(\.ssh|\.gnupg|\.aws|\.gcloud)/' <<<"$FILE_PATH"; then
-    BLOCKED="File in sensitive directory"
+    # The constitution asks instead (#200): /speckit-constitution and
+    # /speckit.gates.constitution write it as their own step, so a refusal
+    # would push the agent to Bash. Every Write/Edit to it, under any policy
+    # (an extra entry naming it included), needs one human approval.
+    case "$FILE_PATH" in
+        .specify/memory/constitution.md | */.specify/memory/constitution.md)
+            CONSTASK="this edits the project constitution; confirm the change (committing it needs a Protected-Change trailer when protected_files.extra lists it)"
+            ;;
+    esac
+
+    # Lock files
+    case "$BASENAME" in
+        package-lock.json|yarn.lock|pnpm-lock.yaml|Cargo.lock|poetry.lock)
+            BLOCKED="Lock file (auto-generated)"
+            ;;
+    esac
+
+    # Sensitive directories
+    if grep -qiE '(^|/)(\.ssh|\.gnupg|\.aws|\.gcloud)/' <<<"$FILE_PATH"; then
+        BLOCKED="File in sensitive directory"
+    fi
+    return 0
+}
+builtin_rules "$FILE_PATH"
+[[ -n "$BLOCKED" || "$REAL_PATH" == "$FILE_PATH" ]] || builtin_rules "$REAL_PATH"
+
+# A hard link shares no path with the file it aliases: compare an existing
+# target with the project's own protected files by device and inode.
+PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+if [[ -z "$BLOCKED" && -z "$CONSTASK" && -f "$REAL_PATH" ]]; then
+    for _pf in "$PROJECT_ROOT"/.specify/gates/policy.json "$PROJECT_ROOT"/.specify/gates/baseline.json \
+        "$PROJECT_ROOT"/.specify/gates/baseline.lock.json "$PROJECT_ROOT"/.specify/gates/policy.effective.json \
+        "$PROJECT_ROOT"/.specify/gates/hooks.local.d/*/*; do
+        if [[ -f "$_pf" && "$REAL_PATH" -ef "$_pf" ]]; then
+            BLOCKED="Link to the protected file ${_pf#"$PROJECT_ROOT"/}"
+            break
+        fi
+    done
+    _pf="$PROJECT_ROOT/.specify/memory/constitution.md"
+    if [[ -z "$BLOCKED" && -f "$_pf" && "$REAL_PATH" -ef "$_pf" ]]; then
+        CONSTASK="this edits the project constitution through a link; confirm the change"
+    fi
 fi
 
 # Policy-declared extra protected paths (protected_files.extra). Matched against
 # both the project-relative path and the basename so exact entries and globs
 # (e.g. ".specify/memory/constitution.md", "docs/**") both work.
 ASK=""
-if [[ -z "$BLOCKED" ]]; then
-    PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+if [[ -z "$BLOCKED" && -z "$CONSTASK" ]]; then
     POLICY_LIB="$PROJECT_ROOT/.specify/gates/lib/policy.sh"
     POLICY_FILE="$PROJECT_ROOT/.specify/gates/policy.json"
     if [[ -n "$DEGRADED" ]]; then
@@ -235,32 +328,20 @@ if [[ -z "$BLOCKED" ]]; then
         # A case-insensitive match (nocasematch), so the cut is by length.
         [[ "$FILE_PATH" == "$PROJECT_ROOT/"* ]] && REL="${FILE_PATH:$((${#PROJECT_ROOT} + 1))}"
         # The same file under another spelling of the root (#165): /tmp and
-        # /private/tmp on macOS, a symlinked checkout, ../proj/x. Compare the
-        # real project root with the target's real parent directory (or its
-        # nearest existing ancestor, since a Write may create directories).
-        # A relative path is taken from the session's cwd.
+        # /private/tmp on macOS, a symlinked checkout, ../proj/x, or a link
+        # inside the project (#193). Compare the real project root with the
+        # target's fully resolved real path.
         REAL_REL=""
         REAL_ROOT="$(cd "$PROJECT_ROOT" 2>/dev/null && pwd -P)" || REAL_ROOT=""
-        _cwd="$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)" || _cwd=""
-        _abs="$FILE_PATH"
-        [[ "$_abs" == /* ]] || _abs="${_cwd:-$PWD}/$_abs"
-        _dir="${_abs%/*}"
-        _rest="${_abs##*/}"
-        while [[ -n "$_dir" && ! -d "$_dir" ]]; do
-            _rest="${_dir##*/}/$_rest"
-            _dir="${_dir%/*}"
-        done
-        _real="$(cd "${_dir:-/}" 2>/dev/null && pwd -P)" || _real=""
-        if [[ -n "$REAL_ROOT" && -n "$_real" ]]; then
-            _real="${_real%/}/$_rest"
-            [[ "$_real" == "$REAL_ROOT/"* ]] && REAL_REL="${_real:$((${#REAL_ROOT} + 1))}"
+        if [[ -n "$REAL_ROOT" && "$REAL_PATH" == "$REAL_ROOT/"* ]]; then
+            REAL_REL="${REAL_PATH:$((${#REAL_ROOT} + 1))}"
         fi
         while IFS= read -r entry; do
             [[ -z "$entry" ]] && continue
             if gates_glob_match "$REL" "$entry" \
                 || { [[ -n "$REAL_REL" ]] && gates_glob_match "$REAL_REL" "$entry"; } \
                 || gates_glob_match "$FILE_PATH" "$entry" \
-                || [[ "$BASENAME" == "$entry" ]]; then
+                || [[ "$BASENAME" == "$entry" || "$REAL_BASE" == "$entry" ]]; then
                 BLOCKED="Protected by policy (protected_files.extra: $entry)"
                 break
             fi
@@ -293,6 +374,7 @@ if compgen -G "$LROOT/.specify/gates/hooks.local.d/protect-files/*.sh" >/dev/nul
     fi
 fi
 
+[[ -n "$CONSTASK" ]] && ask "$CONSTASK"
 [[ -n "$ASK" ]] && ask "$ASK"
 [[ -n "$NAMEASK" ]] && ask "$NAMEASK"
 

@@ -2,13 +2,16 @@
 set -euo pipefail
 
 # PreToolUse hook for Bash commands that create or edit a pull/merge request:
-# `gh pr create|edit`, `glab mr create|update`, and `gh api` on a pulls
-# endpoint. Checks the title and body
+# `gh pr create|new|edit`, `glab mr create|new|update` (also with the global
+# -R/--repo flag before the subcommand), and `gh api` on a pulls endpoint.
+# Checks the title and body
 # (inline, heredoc, or --body-file) with the shared message rules in
 # lib/message.sh -- the same rules commit-msg and the CI PR check apply.
 # Exit 0 = allow or not a PR command, Exit 2 = block (Claude Code convention).
 
-PR_RE='(gh[[:space:]]+pr[[:space:]]+(create|edit)|glab[[:space:]]+mr[[:space:]]+(create|update)|gh[[:space:]]+api[[:space:]])'
+# A -R/--repo value before the subcommand: `gh -R o/r pr create` (#192).
+REPO_OPT='([[:space:]]+(-R|--repo)([[:space:]]+|=)?[^[:space:]]+)*'
+PR_RE="(gh${REPO_OPT}[[:space:]]+pr[[:space:]]+(create|new|edit)|glab${REPO_OPT}[[:space:]]+mr[[:space:]]+(create|new|update)|gh[[:space:]]+api[[:space:]])"
 
 # refuse <reason...>: block the PR command (exit 2) with a reason the agent
 # can act on.
@@ -188,20 +191,37 @@ def refuse(msg):
     out(error=msg)
 
 
+PR_SUBS = {
+    "gh": ("pr", ("create", "new", "edit")),
+    "glab": ("mr", ("create", "new", "update")),
+}
+
+
 def find_pr(seg):
     """Return (kind, args) when the segment runs a PR command."""
     i = 0
     while i < len(seg) and (ASSIGN.match(seg[i][0]) or seg[i][0] in WRAPPERS):
         i += 1
-    w = [t[0] for t in seg[i:i + 3]]
-    if len(w) >= 1 and w[0].split("/")[-1] in ("gh", "glab"):
-        tool = w[0].split("/")[-1]
-        if tool == "gh" and w[1:3] in (["pr", "create"], ["pr", "edit"]):
-            return "gh", seg[i + 3:]
-        if tool == "glab" and w[1:3] in (["mr", "create"], ["mr", "update"]):
-            return "glab", seg[i + 3:]
-        if tool == "gh" and w[1:2] == ["api"]:
-            return "api", seg[i + 2:]
+    if i >= len(seg) or seg[i][0].split("/")[-1] not in ("gh", "glab"):
+        return None, None
+    tool = seg[i][0].split("/")[-1]
+    i += 1
+    # The global repository flag may come before the subcommand (#192):
+    # -R <repo>, -R<repo>, --repo <repo>, --repo=<repo>.
+    while i < len(seg) and seg[i][0].startswith("-"):
+        a = seg[i][0]
+        if a in ("-R", "--repo"):
+            i += 2
+        elif a.startswith("--repo=") or (a.startswith("-R") and len(a) > 2):
+            i += 1
+        else:
+            return None, None
+    w = [t[0] for t in seg[i:i + 2]]
+    group, actions = PR_SUBS[tool]
+    if len(w) == 2 and w[0] == group and w[1] in actions:
+        return tool, seg[i + 2:]
+    if tool == "gh" and w[:1] == ["api"]:
+        return "api", seg[i + 1:]
     return None, None
 
 
@@ -297,7 +317,9 @@ def parse_api(args):
     return found
 
 
-pr_re = re.compile(r"(gh\s+pr\s+(create|edit)|glab\s+mr\s+(create|update)|gh\s+api\b)")
+repo_opt = r"(\s+(-R|--repo)(\s+|=)?\S+)*"
+pr_re = re.compile(r"(gh" + repo_opt + r"\s+pr\s+(create|new|edit)|glab" + repo_opt
+                   + r"\s+mr\s+(create|new|update)|gh\s+api\b)")
 result = None
 for seg in lex(command):
     kind, args = find_pr(seg)

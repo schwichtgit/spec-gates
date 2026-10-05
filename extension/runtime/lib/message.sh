@@ -9,10 +9,12 @@
 # on stderr and sets GATES_MSG_ERRORS / GATES_MSG_WARNINGS. Returns 1 when
 # there is at least one error.
 #
+# Emoji are checked in the whole text, subject and body (#190); commit-msg
+# drops comment lines and the scissors section before it calls this.
 # Modes differ only where the text differs:
-#   commit -- emoji checked in the subject; body lines > 100 chars warn.
-#   pr     -- <text> is "title\n\nbody"; emoji checked everywhere (a PR body
-#             is free-form markdown, so no line-length rule).
+#   commit -- body lines > 100 chars warn.
+#   pr     -- <text> is "title\n\nbody" (a PR body is free-form markdown,
+#             so no line-length rule).
 # "generated" marks a subject git wrote itself (a merge, fixup!/squash!/
 # amend!): the conventional-format rule is skipped, every other rule runs.
 #
@@ -83,10 +85,8 @@ gates_message_check() { # <commit|pr> <text> [generated]
         _warn "Subject line exceeds 72 characters (${#subject})."
     fi
 
-    local emoji_scope="$subject"
-    [[ "$mode" == "pr" ]] && emoji_scope="$msg"
     local emoji_rc=0
-    _gates_msg_has_emoji "$emoji_scope" || emoji_rc=$?
+    _gates_msg_has_emoji "$msg" || emoji_rc=$?
     if [[ "$emoji_rc" -eq 0 ]]; then
         _err "Emoji detected in the message."
     elif [[ "$emoji_rc" -eq 2 ]]; then

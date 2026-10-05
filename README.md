@@ -14,7 +14,7 @@
 Spec Kit is a guidance layer: templates, prompts, and checklists _ask_ the
 agent to comply. spec-gates is the enforcement layer underneath it: hooks
 and pipelines that _force_ compliance — the bash call is rejected, the
-protected file is refused, the session cannot end with failing checks.
+protected file is refused, a stop with failing checks is sent back to the agent.
 
 Extracted from
 [claude-project-foundation](https://github.com/schwichtgit/claude-project-foundation)
@@ -324,8 +324,8 @@ Commit the adoption on a branch. Its first commit stages
 From that point the normal Spec Kit loop is unchanged —
 `/speckit.specify → clarify → plan → tasks → implement` — but during
 `implement` every edit is auto-formatted, protected files and dangerous
-bash are refused with actionable messages, and the session cannot stop
-with red checks. After `implement`, the extension's `after_implement`
+bash are refused with actionable messages, and a stop with red checks is
+sent back to the agent with the failure list. After `implement`, the extension's `after_implement`
 hook offers a gate run before you move to commit/PR.
 
 ## Upgrade
@@ -426,7 +426,10 @@ modify them asks you first), and a commit that adds, changes or removes
 one needs `Protected-Change: <path>` and `Approved-By: <name>` trailers,
 checked again in CI by `pr-check.sh`. The same Bash check covers
 `policy.json`, the constitution, the policy-contract artifacts and every
-`protected_files.extra` entry.
+`protected_files.extra` entry. The Bash checks are best-effort heuristics: they
+recognise common spellings, block on certainty and ask on uncertainty,
+but cannot parse every shell form, so the git hooks and CI remain the
+enforcement backstop.
 
 ```bash
 # .specify/gates/hooks.local.d/validate-bash/10-no-vendor-edits.sh
@@ -442,16 +445,19 @@ Two settings in `.specify/gates/policy.json` cover the most common cases:
   `git -C <dir>`) at the agent boundary, so an untracked directory
   cannot be swept into a commit. `git stage`, `env git add`,
   `GIT_DIR=… git add` and `git --no-pager add` count too; an argument the
-  check cannot resolve (`"$f"`) asks. Explicit files, `-u` and `-p` stay
-  allowed. The git boundary cannot tell how files were staged, so this is
-  an agent-boundary rule.
+  check cannot resolve (`"$f"`) asks. Explicit files, `-p`, and the forms
+  that stage only tracked changes (`git add -u`, `--renormalize`,
+  `git commit -a`) stay allowed: they cannot sweep in an untracked file. The git boundary cannot tell how
+  files were staged, so this is an agent-boundary rule.
 - The file hook blocks only on strong evidence: `.env` files, keys and
   certificates (`*.pem`, `*.key`, `*.p12`, `*.jks`, `*.keystore`, …),
   exact credential file names (`credentials.json`, `.netrc`, `.pypirc`,
   cloud service-account files), sensitive directories, lock files, and
   `protected_files.extra`. A file whose name merely contains a word like
   `secret` or `token` (`test_no_secret_leak.py`) gets an "ask" instead,
-  so you confirm the edit.
+  so you confirm the edit. So does the constitution: `/speckit-constitution`
+  and `/speckit.gates.constitution` write it as one of their steps, and
+  you approve that write once.
 
 ## Coexisting with other hook managers
 
@@ -485,13 +491,20 @@ CI) apply the same rules, from `lib/message.sh`:
 - A Conventional Commits subject, at most 72 characters
   (`git.conventional_commits`).
 - No AI-isms and no self-referential phrasing (`git.forbid_ai_isms`), no
-  emoji.
+  emoji anywhere in the message, subject or body (comment lines and the
+  `git commit -v` diff below the scissors line are not part of it).
 - No AI branding: the terms in `git.ai_branding.terms` (default
   `Anthropic`, `GPT`, `OpenAI`, `Copilot`), and a standalone `Claude`.
   `Claude Code`, `CLAUDE.md`, `.claude/` paths and `claude-*`
   identifiers are allowed.
 - No `Co-Authored-By` trailer, whatever the policy says, and in PR text
   no "Generated with Claude Code" attribution line.
+
+`git cherry-pick`, `git rebase`, `git am` and `git revert` (also with
+`--continue` or `--skip`) create commits without running any commit hook,
+so `pre-commit` and `commit-msg` never see them and only CI checks the
+result. The agent's Bash hook asks before each of them, as it does for
+`--no-verify`.
 
 **Agent attribution.** Claude Code adds a `Co-Authored-By: Claude …`
 trailer to commits and a "Generated with Claude Code" line to PRs by

@@ -128,9 +128,12 @@ _gates_run_tool() {
 # Returns 0 on success, on exclude-skip, or when no formatter is installed
 # for the extension. Returns nonzero only when a present formatter actually
 # fails on the path. Callers that care about severity (format-changed,
-# post-edit) check this rc.
+# post-edit) check this rc. A skip for a missing prettier also sets
+# GATES_FORMAT_SKIPPED to the reason, so a caller can say why.
+# shellcheck disable=SC2034  # GATES_FORMAT_SKIPPED is read by the caller
 format_file() {
     local file_path="$1"
+    GATES_FORMAT_SKIPPED=""
     [[ -z "$file_path" ]] && return 0
     [[ ! -f "$file_path" ]] && return 0
 
@@ -148,14 +151,20 @@ format_file() {
                 && _gates_path_excluded_for_tool markdownlint "$file_path"; then
                 return 0
             fi
+            # The pinned prettier, as verify.sh resolves it, never bare npx:
+            # without prettier installed, npx fails (or downloads one), and
+            # a missing tool is a skip, not a tool failure (#195).
+            local pbin=""
             if PRETTIER_ROOT=$(find_prettier_root "$file_path"); then
-                if command -v npx >/dev/null 2>&1; then
-                    _gates_run_tool npx --prefix "$PRETTIER_ROOT" prettier \
-                        --write "$file_path" || rc=$?
-                fi
-            elif command -v prettier >/dev/null 2>&1; then
-                _gates_run_tool prettier --write "$file_path" || rc=$?
+                pbin="$(_gates_tool_bin prettier "$PRETTIER_ROOT")"
+            else
+                pbin="$(_gates_tool_bin prettier "$(_gates_dispatch_project_root)")"
             fi
+            if [[ -z "$pbin" ]]; then
+                GATES_FORMAT_SKIPPED="prettier not installed (node_modules/.bin or PATH)"
+                return 0
+            fi
+            _gates_run_tool "$pbin" --write "$file_path" || rc=$?
             ;;
         py)
             if command -v ruff >/dev/null 2>&1; then

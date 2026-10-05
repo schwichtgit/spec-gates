@@ -139,6 +139,61 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   edit let a refused protected commit through. The switch is now read
   from the staged policy and `HEAD`'s (the working tree only when neither
   carries a policy).
+- **The PR hook checks `gh pr new`, `glab mr new` and a leading `-R`**
+  (#192). `validate-pr.sh` matched only `gh pr create|edit` and
+  `glab mr create|update` spelled exactly, so the `new` alias and a
+  `-R`/`--repo` flag before the subcommand (`gh -R o/r pr create`) let an
+  unchecked title and body through. Both are now recognized.
+- **Agent hooks: a missing prettier is a skip, and fewer false asks**
+  (#195). With `post-edit.severity: error` and prettier not installed,
+  every `.md` edit failed as a tool failure (bare `npx` fails without
+  prettier) while `verify.sh` reported `[skipped]`; the formatter now
+  resolves prettier as `verify.sh` does and skips with a note.
+  `grep -n rm <protected path>` and a commit message naming a protected
+  path no longer ask. The docs now say that the Stop hook lets the stop
+  right after a refusal through (`stop_hook_active`).
+- **Symlinks inside the project no longer bypass the file hook** (#193).
+  `protect-files` compared only the path as written, so a link such as
+  `gdir -> .specify/gates` or `pol.json -> policy.json` made a protected
+  file editable. Every rule now also judges the fully resolved real path
+  (file and parents, with and without jq), hard links to protected files
+  are recognized, and `validate-bash` asks for an `ln` that links to or
+  through a protected path.
+- **A Write or Edit to the constitution asks instead of being refused**
+  (#200). `/speckit-constitution` and `/speckit.gates.constitution` write
+  `.specify/memory/constitution.md` as one of their steps, and the file
+  hook refused that write with no way through. It now asks, under any
+  policy; `policy.json`, `hooks.local.d` and the contract artifacts stay
+  refused.
+- **validate-bash catches more command variants** (#194). A `>|`
+  redirect, `sed --in-place`, split quotes (`pol""icy.json`), a variable
+  in front of the file name, `--out` to a protected path and a glob
+  `extra` entry with no literal prefix (`**/*.lock.md`) now ask. Force
+  pushes with a `+ref` refspec, `--force-with-lease` or `--mirror`,
+  `git checkout -f`, `git switch -f`/`--discard-changes`, `git rm` of the
+  whole tree and `git stash clear` are refused; a remote branch deletion
+  and a hook manager's skip variable (`HUSKY=0`, `LEFTHOOK=0`, `SKIP=`)
+  ask. The docs now call the Bash checks heuristics, with the git hooks
+  and CI as the backstop.
+- **validate-bash resolves relative protected paths against `cwd`**
+  (#191). Claude Code keeps the Bash working directory between calls, so
+  after `cd .specify/gates` a later `rm policy.json` changed the policy
+  without an ask (jq and raw mode alike). The hook now reads protected
+  paths relative to the input `cwd` too, also under another spelling of
+  the project root, and asks for any change made from inside a protected
+  directory.
+- **Emoji are checked in the whole commit message** (#190). commit-msg
+  checked emoji in the subject only; it now checks the body too, after
+  dropping comment lines and the scissors section. The docs now say
+  which forms `git.block_bulk_staging` refuses; `git add -u`,
+  `--renormalize` and `git commit -a` stay allowed, since they stage
+  only tracked changes.
+- **Commits made without commit hooks ask first** (#187). Like
+  `git revert`, the only one documented, `git cherry-pick`, `git rebase`
+  and `git am` create commits without running `pre-commit` or
+  `commit-msg`; validate-bash allowed all four. It now asks before each
+  (also `--continue` and `--skip`), naming the CI boundary as the only
+  check, and the docs list all four.
 - **An unknown `--accept` feature is refused before any gate runs**
   (#179). `verify.sh --accept <name>` with a name that is not a feature
   ran the lint and quality gates first and refused only at the spec gate,
