@@ -389,7 +389,7 @@ refused before any gate runs.
 whole policy, so set on one command it would drop every gate the
 repository declares. The git hooks, `verify.sh --boundary git|ci` and
 `pr-check.sh` ignore it and enforce the policy the repository commits;
-`verify.sh` at the agent boundary (or with no `--boundary`) applies it.
+`verify.sh` at the agent boundary applies it.
 Either way the run says so: a stderr line, an `[override] policy` line in
 the text report, and a `policy_override` object (`file`, `applied`) in the
 `--json` output and the attestation, whose `policy_sha256` hashes the
