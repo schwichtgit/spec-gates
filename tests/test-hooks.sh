@@ -1037,7 +1037,7 @@ for c in 'git add -A' 'git add --all' 'git add .' 'git add :/' 'git add src/' 'g
     'git commit -m x && git add . && git push' 'git -C sub add .'; do
     bulk "knob on blocks: $c" 2 "$c"
 done
-for c in 'git add a.txt' 'git add -p a.txt' 'echo git add .' 'git status'; do
+for c in 'git add a.txt' 'git add -u' 'git add -p a.txt' 'echo git add .' 'git status'; do
     bulk "knob on allows: $c" 0 "$c"
 done
 bulk "knob off allows git add -A" 0 'git add -A' '{ "hooks": {} }'
@@ -1330,14 +1330,14 @@ for c in 'git add a.txt' 'echo git add .' 'git commit -m "feat: drop the -a flag
     'git commit --allow-empty -m "feat: x"' 'git commit -ma "feat: x"'; do
     vb_allows "explicit staging allowed: $c" "$c"
 done
-# #190: forms that stage every tracked change count as bulk staging.
+# #190 (decision): forms that stage only tracked changes stay allowed.
 for c in 'git add -u' 'git add --update' 'git add -vu' 'git stage -u' 'git add --renormalize' \
     'git commit -a -m "feat: x"' 'git commit -am "feat: x"' 'git commit --all -m "feat: x"' \
     'git commit -F msg.txt -a'; do
-    check "tracked-change bulk staging refused: $c" 0 bash -c "out=\$(printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$VB' '$HOOKS/validate-bash.sh' 2>&1); [[ \$? -eq 2 ]] && grep -q 'Bulk staging (git [a-z]* -' <<<\"\$out\"" _ "$(vb_payload "$c")"
+    check "tracked-change staging allowed: $c" 0 bash -c "out=\$(printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$VB' '$HOOKS/validate-bash.sh' 2>&1) && ! grep -q 'Bulk staging' <<<\"\$out\"" _ "$(vb_payload "$c")"
 done
 vb_payload 'git commit -am "feat: x"' >"$WORKDIR/vb190.json"
-check "raw mode: git commit -a refused without jq" 2 bash -c "PATH='$NOJQ' CLAUDE_PROJECT_DIR='$VB' '$HOOKS/validate-bash.sh' <'$WORKDIR/vb190.json'"
+check "raw mode: git commit -a allowed without jq" 0 bash -c "PATH='$NOJQ' CLAUDE_PROJECT_DIR='$VB' '$HOOKS/validate-bash.sh' <'$WORKDIR/vb190.json' >/dev/null"
 for c in 'cat .env' 'cat config/.env.prod' 'cp ~/.ssh/id_rsa /tmp/k' 'grep KEY .ENV' 'source .env'; do
     askcheck "naming a secret file asks: $c" "$(vb_payload "$c")" validate-bash.sh CLAUDE_PROJECT_DIR="$VB"
 done

@@ -183,9 +183,8 @@ fi
 
 # Bulk staging (#71): with policy git.block_bulk_staging on, refuse a
 # `git add` that stages everything or a whole directory, so an untracked
-# directory cannot be swept into a commit, and the forms that stage every
-# tracked change (`git add -u`, `git commit -a`, #190). Explicit files and
-# -p stay allowed. Agent boundary only: pre-commit sees the index, not how
+# directory cannot be swept into a commit. Explicit files, -u, --renormalize,
+# `git commit -a` and -p stay allowed: they stage only tracked changes. Agent boundary only: pre-commit sees the index, not how
 # it was filled. bulk_staging_on: 0 on, 1 off, 2 the policy cannot be read.
 bulk_staging_on() {
     local pf="$LROOT/.specify/gates/policy.json" v
@@ -203,11 +202,9 @@ bulk_staging_on() {
 # environment assignments, env, command, sudo, exec, nohup, time or nice,
 # and after git's global options (-C, -c, --no-pager, ...) -- and print one
 # finding per line:
-#   BULK <cmd>   `git add`/`git stage` staging in bulk: -A, --all, -u,
-#                --update, --renormalize, `.`, a directory (quoted or
-#                not), "$PWD", a glob or a pathspec with magic (`:/`,
-#                `:(top)`), which git expands itself; `git commit` with -a
-#                or --all
+#   BULK <cmd>   `git add`/`git stage` staging in bulk: -A, --all, `.`, a
+#                directory (quoted or not), "$PWD", a glob or a pathspec
+#                with magic (`:/`, `:(top)`), which git expands itself
 #   BULKQ <arg>  an argument this check cannot resolve (an unbalanced quote,
 #                an escaped space, a variable or a command substitution)
 #   HOOKS <what> a git hook bypass: --no-verify, `commit -n`, a
@@ -331,14 +328,9 @@ git_scan() {
                     --) dashdash=1; continue ;;
                     --no-veri*) printf 'HOOKS %s\n' "$a"; continue ;;
                 esac
-                # `-a` stages every tracked change (#190), also inside a
-                # cluster (`-am`), up to the first option that takes a
-                # value; the value itself (`-m "drop -a"`) is skipped.
+                # A commit option's value (`-m "drop --no-verify"`) is
+                # skipped, so its text is not read as options.
                 if [[ "$sub" == commit && "$a" == -* ]]; then
-                    if [[ "$a" == --all ]] \
-                        || [[ "$a" != --* && "${a%%[mFcCtSu]*}" == *a* ]]; then
-                        printf 'BULK git commit %s\n' "$a"
-                    fi
                     v=""
                     case "$a" in
                         --*=*) v="${a#*=}" ;;
@@ -467,13 +459,12 @@ git_scan() {
             [[ "$sub" == add || "$sub" == stage ]] || continue
             if [[ "$dashdash" -eq 0 ]]; then
                 case "$a" in
-                    -A | --all | --no-ignore-removal | --pathspec-from-file* \
-                        | -u | --u* | --renormalize)
+                    -A | --all | --no-ignore-removal | --pathspec-from-file*)
                         printf 'BULK git %s %s\n' "$sub" "$a"
                         continue
                         ;;
                     --*) continue ;;
-                    -*A* | -*u*)
+                    -*A*)
                         printf 'BULK git %s %s\n' "$sub" "$a"
                         continue
                         ;;

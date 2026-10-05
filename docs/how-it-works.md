@@ -57,9 +57,7 @@ spec-gates uses four of them:
   `git stash clear`, `git clean` with `-f` or `--force` anywhere, …). With
   `git.block_bulk_staging` it also refuses bulk staging: `git add` or
   `git stage` with `-A` (also in a cluster such as `-vA`), `--all`,
-  `--no-ignore-removal`, `--pathspec-from-file`, `-u`/`--update` and
-  `--renormalize` (which stage every tracked change, as does
-  `git commit -a`/`--all`, also refused), `.`, `:/` and other
+  `--no-ignore-removal`, `--pathspec-from-file`, `.`, `:/` and other
   pathspec magic, globs (quoted or not), `"$PWD"`, `~` and directory
   arguments (relative to an earlier `cd` in the same command), including
   behind `env`, `command`, `sudo`, variable assignments and git's global

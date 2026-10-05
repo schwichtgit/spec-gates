@@ -58,9 +58,8 @@ files must survive the extension being removed.
   orchestrator, severity). Apply requested edits. This is a conversation,
   not a dump — the user must understand what will be enforced.
 - Offer the settings the seed leaves at their defaults, one question each:
-  `git.block_bulk_staging` (refuse `git commit -a`/`--all`, and
-  `git add`/`git stage` with `-A`, `--all`, `-u`/`--update`,
-  `--renormalize`, `--no-ignore-removal`, `--pathspec-from-file`, `.`, `:/` and
+  `git.block_bulk_staging` (refuse `git add`/`git stage` with `-A`,
+  `--all`, `--no-ignore-removal`, `--pathspec-from-file`, `.`, `:/` and
   other pathspec magic, globs, `"$PWD"`, `~` and directory arguments at
   the agent boundary, asking on an argument it cannot resolve; off by
   default) and the branding
