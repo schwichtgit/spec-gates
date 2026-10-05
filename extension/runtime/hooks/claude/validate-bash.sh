@@ -449,6 +449,15 @@ fi
 if grep -qE '(^|[^A-Za-z0-9_])GATES_SPEC_EXEC\+?=|export[[:space:]]+([^;&|]*[[:space:]])?GATES_SPEC_EXEC([[:space:];&|]|$)' <<<"$COMMAND"; then
     defer_ask "this command sets GATES_SPEC_EXEC, so any verify.sh it runs skips the spec gate (accept blocks); confirm it"
 fi
+# Other variables that weaken enforcement (#196): another policy file, the
+# git boundary's emergency skip and main-branch override, another pr-check
+# runtime, the test-only projection without canaries. Unsetting is fine.
+GATES_WEAK_VARS='GATES_POLICY_FILE|GATES_SKIP|GATES_ALLOW_MAIN_COMMIT|GATES_RUNTIME_DIR|GATES_TEST'
+WEAK_SET="$(grep -oE "(^|[^A-Za-z0-9_])($GATES_WEAK_VARS)\+?=|export[[:space:]]+([^;&|]*[[:space:]])?($GATES_WEAK_VARS)([[:space:];&|]|$)" <<<"$COMMAND" || true)"
+if [[ -n "$WEAK_SET" ]]; then
+    WEAK_SET="$(grep -oE "$GATES_WEAK_VARS" <<<"$WEAK_SET" || true)"
+    defer_ask "this command sets ${WEAK_SET%%$'\n'*}, which weakens what the gates enforce; confirm it"
+fi
 
 if [[ -n "$BLOCKED" ]]; then
     echo "BLOCKED: $BLOCKED" >&2

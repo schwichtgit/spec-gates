@@ -117,6 +117,16 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   or times out, and a rule that leaves a process running refuses, as an
   accept block does. A non-numeric `GATES_LOCAL_TIMEOUT` disabled the
   timeout; any value that is not a whole number above 0 now refuses.
+- **`GATES_POLICY_FILE` no longer drops gates at the git and CI
+  boundaries** (#196). Set on a commit it replaced the whole policy, so the
+  lint gates vanished without a `skipped` line and the canaries passed
+  unblocked. The git hooks, `verify.sh --boundary git|ci` and
+  `pr-check.sh` now ignore it and say so; at the agent boundary it still
+  applies and is reported in the text, `--json` and the attestation
+  (`policy_override`). validate-bash asks before a command sets
+  `GATES_POLICY_FILE`, `GATES_SKIP`, `GATES_ALLOW_MAIN_COMMIT`,
+  `GATES_RUNTIME_DIR` or `GATES_TEST`, and `GATES_SKIP=1` now prints that
+  the quality gate did not run.
 - **An unknown `--accept` feature is refused before any gate runs**
   (#179). `verify.sh --accept <name>` with a name that is not a feature
   ran the lint and quality gates first and refused only at the spec gate,

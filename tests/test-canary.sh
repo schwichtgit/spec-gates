@@ -98,6 +98,15 @@ expect "hook canaries all report status=blocked" \
 expect "hook canaries report failed=0" \
     "$(printf '%s' "$JSON" | jq -r '.failed')" 0
 
+# --- an inherited GATES_POLICY_FILE does not empty the sandboxes' policy (#196) ---
+printf '%s' '{"hooks":{}}' >"$WORKDIR/min-policy.json"
+PF_ONLY="secret,credential,protected,branding"
+have_node_linters && PF_ONLY="format,markdown,$PF_ONLY"
+expect "GATES_POLICY_FILE: no canary accepted ($PF_ONLY)" \
+    "$(GATES_POLICY_FILE="$WORKDIR/min-policy.json" CLAUDE_PROJECT_DIR="$FIX" \
+        bash "$FIX/.specify/gates/canary.sh" --json --only "$PF_ONLY" 2>/dev/null \
+        | jq -r '[.canaries[] | select(.status != "blocked") | .id] | join(",")')" ""
+
 # --- without git the suite cannot run, and says why (#172) ---
 NOGIT="$WORKDIR/path-nogit"
 mkdir -p "$NOGIT"

@@ -693,6 +693,13 @@ echo a >"$EC/a.txt"
 ( cd "$EC" && git add -A && git commit -q --no-verify -m "chore: seed" ) >/dev/null 2>&1
 check "main: an empty commit on main is refused" 0 \
     bash -c "cd '$EC' && ! git commit -q --allow-empty -m 'chore: empty' 2>'$WORKDIR/ec.err' && grep -q \"Direct commits to 'main' are blocked\" '$WORKDIR/ec.err'"
+# #196: GATES_POLICY_FILE would replace the repository's policy; the git
+# boundary ignores it and says so, in pre-commit and in commit-msg.
+printf '%s' '{ "hooks": {}, "git": { "block_main_commits": false, "conventional_commits": false } }' >"$WORKDIR/lax-policy.json"
+check "main: GATES_POLICY_FILE does not lift the main-branch block" 0 \
+    bash -c "cd '$EC' && ! GATES_POLICY_FILE='$WORKDIR/lax-policy.json' git commit -q --allow-empty -m 'chore: empty' 2>'$WORKDIR/ec.err' && grep -q \"Direct commits to 'main' are blocked\" '$WORKDIR/ec.err' && grep -q 'GATES_POLICY_FILE=.* is ignored at the git boundary' '$WORKDIR/ec.err'"
+check "commit-msg: GATES_POLICY_FILE does not lift the subject format" 0 \
+    bash -c "cd '$EC' && printf 'another subject\n' >'$WORKDIR/ec.msg' && ! GATES_POLICY_FILE='$WORKDIR/lax-policy.json' '$GITHOOKS/commit-msg' '$WORKDIR/ec.msg' 2>'$WORKDIR/ec.err' && grep -q 'is ignored at the git boundary' '$WORKDIR/ec.err'"
 check "main: a delete-only commit on main is refused" 1 \
     bash -c "cd '$EC' && git rm -q a.txt && git commit -q -m 'chore: drop a'"
 ( cd "$EC" && git reset -q --hard ) >/dev/null 2>&1
@@ -1268,6 +1275,15 @@ for c in 'GATES_SPEC_EXEC=1 git commit -m "feat: x"' 'env GATES_SPEC_EXEC=1 bash
     askcheck "setting the spec recursion guard asks: $c" "$(vb_payload "$c")" validate-bash.sh CLAUDE_PROJECT_DIR="$VB"
 done
 vb_allows "clearing the spec recursion guard is allowed" 'env -u GATES_SPEC_EXEC bash tests/run.sh'
+# #196: overrides that weaken enforcement ask too.
+for c in 'GATES_POLICY_FILE=/tmp/min.json git commit -m "feat: x"' 'env GATES_POLICY_FILE=/tmp/m.json bash .specify/gates/canary.sh' \
+    'export GATES_POLICY_FILE=/tmp/m.json' 'GATES_SKIP=1 git commit -m "feat: x"' \
+    'GATES_ALLOW_MAIN_COMMIT=1 git commit -m "chore: x"' 'GATES_RUNTIME_DIR=/tmp/rt bash .specify/gates/pr-check.sh' \
+    'GATES_TEST=1 bash .specify/gates/project.sh --skip-canary'; do
+    askcheck "setting a weakening override asks: $c" "$(vb_payload "$c")" validate-bash.sh CLAUDE_PROJECT_DIR="$VB"
+done
+vb_allows "clearing the policy override is allowed" 'env -u GATES_POLICY_FILE bash tests/run.sh'
+vb_allows "a longer variable name is not the override" 'GATES_SKIP_REASON=x git status'
 mkdir -p "$VB/.specify/gates/lib" "$VB/.specify/gates/hooks.local.d/validate-bash"
 cp "$REPO_ROOT/extension/runtime/lib/local-hooks.sh" "$VB/.specify/gates/lib/"
 printf '%s\n' 'if grep -q "vendor/"; then echo "vendor/ is generated" >&2; exit 1; fi' \
