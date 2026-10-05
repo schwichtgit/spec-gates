@@ -460,10 +460,16 @@ add. Where each entry goes:
 [How it works, "Other hook managers"](docs/how-it-works.md#the-three-boundary-model).
 
 Doctor checks such hooks statically: it looks for the gates call-through in
-the file the tool reads, and does not run the hook, since that would run
-the tool's own steps too (husky's default is `npm test`). A commented-out
-line, or one after a top-level `exit`, does not count.
-`doctor --probe-git` runs the full chain when you want proof. A hook gates
+the file the tool that runs the hook reads, and does not run the hook,
+since that would run the tool's own steps too (husky's default is
+`npm test`). The call-through counts only where that tool runs it for that
+hook: under the hook's own key in lefthook, not skipped, and running while
+nothing is staged; in a pre-commit framework item whose `stages:` include
+the hook. A commented-out line, or one after a top-level `exit` or
+`exec <command>`, does not count. A manager config that calls gates while
+git runs no hook for it (its install command never ran) fails.
+`doctor --probe-git` runs the full chain when you want proof; under
+lefthook it runs only the gates job. A hook gates
 installs itself (the stub) is always run with a probe signal, because only
 gates code executes there.
 

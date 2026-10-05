@@ -197,6 +197,19 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   silently: it is reported as `skipped` with the reason, and validate-bash
   asks before a command that sets it. New `spec.snapshot_exclude` exempts
   untracked or ignored paths another process writes during the run.
+- **Hook-manager wiring is checked per hook** (#167). The static check
+  counted a gates call-through anywhere in any manager's config: under
+  lefthook's `pre-push:` or a skipped job, in a pre-commit item staged for
+  another hook, or in a stale config of a manager that does not own the
+  hooks. It now reads only the owning manager's config, where it runs for
+  that hook. lefthook's `pre-commit` entry now runs with nothing staged,
+  so empty commits and amends on `main` are refused (an entry written
+  before this is reported until it gets `files:` and `{files}`); `--wire-manager` no
+  longer creates `lefthook.yml` next to a `lefthook.toml`/`.json`/`.jsonc`;
+  doctor fails when a manager config calls gates but git runs no hook for
+  it; `--probe-git` runs only lefthook's gates job, without `--force`; and
+  a husky line after `exec <command>` or `if ...; then exit` no longer
+  counts.
 - **The git hooks refuse a branch whose runtime was never projected**
   (#159). In a clone that tracks `policy.json` but gitignores the runtime,
   commit-msg took the missing `.runtime-version` for a pre-0.3.4 runtime

@@ -422,7 +422,10 @@ OUT="$(cd "$D" && CLAUDE_PROJECT_DIR="$D" bash .specify/gates/doctor.sh 2>&1)" |
 ok "doctor: still flags the hook until lefthook install" grep -q 'pre-merge-commit not installed — lefthook.yml calls the gates hook, but git runs no pre-merge-commit hook until you run `lefthook install`' <<<"$OUT"
 if have_yaml; then
     ok "lefthook: pre-merge-commit runs the gates hook" test "$(yamlq "$D/lefthook.yml" 'doc["pre-merge-commit"].commands["spec-gates"].run')" = "bash .specify/gates/hooks/pre-merge-commit"
-    ok "lefthook: the result parses and runs the gates pre-commit" test "$(yamlq "$D/lefthook.yml" 'doc["pre-commit"].commands["spec-gates"].run')" = "bash .specify/gates/hooks/pre-commit"
+    ok "lefthook: the result parses and runs the gates pre-commit" test "$(yamlq "$D/lefthook.yml" 'doc["pre-commit"].commands["spec-gates"].run')" = "bash .specify/gates/hooks/pre-commit # {files}"
+    # lefthook skips a pre-commit job while nothing is staged unless it has
+    # files to inspect (#167): the config file is always there.
+    ok "lefthook: the gates pre-commit runs with nothing staged" test "$(yamlq "$D/lefthook.yml" 'doc["pre-commit"].commands["spec-gates"].files')" = "echo lefthook.yml"
     ok "lefthook: commit-msg passes the message file" test "$(yamlq "$D/lefthook.yml" 'doc["commit-msg"].commands["spec-gates"].run')" = "bash .specify/gates/hooks/commit-msg {1}"
     ok "lefthook: existing keys kept" test "$(yamlq "$D/lefthook.yml" 'doc.colors')" = "false"
 else
@@ -441,6 +444,33 @@ if have_yaml; then
     ok "lefthook: the file still parses (no duplicate key)" test "$(yamlq "$D/lefthook.yml" 'doc["pre-commit"].commands.lint.run')" = "npm run lint"
 fi
 ok "lefthook: the generated hook is untouched" grep -q 'lefthook generated' "$D/.git/hooks/pre-commit"
+# A call-through under another hook key does not wire the hook (#167).
+fixture
+printf 'pre-commit:\n  commands:\n    lint:\n      run: echo user-lint\npre-push:\n  commands:\n    spec-gates:\n      run: "bash .specify/gates/hooks/pre-commit # {files}"\n      files: echo lefthook.yml\n' >"$D/lefthook.yml"
+rc_is "lefthook: gates only under pre-push: -> exit 1" 1 "$D" --skip-canary
+ok "lefthook: pre-commit is planned although the file mentions its hook" grep -q 'lefthook owns the git hooks and does not run gates for: pre-commit' <<<"$OUT"
+rc_is "lefthook: --wire-manager still leaves pre-commit to the user" 1 "$D" --skip-canary --wire-manager
+ok "lefthook: told to merge pre-commit by hand" grep -q 'merge this spec-gates command into your existing pre-commit: block' <<<"$OUT"
+# lefthook reads lefthook.toml / .json / .jsonc too (#167): a lefthook.yml
+# next to them would replace the user's configuration.
+for cfg in lefthook.toml .lefthook.jsonc .config/lefthook.json; do
+    fixture
+    mkdir -p "$D/.config"
+    case "$cfg" in
+        *.toml) printf '[pre-commit.commands.lint]\nrun = "npm run lint"\n' >"$D/$cfg" ;;
+        *) printf '{ "pre-commit": { "commands": { "lint": { "run": "npm run lint" } } } }\n' >"$D/$cfg" ;;
+    esac
+    sum="$(cksum <"$D/$cfg")"
+    rc_is "lefthook ($cfg): --wire-manager -> exit 1" 1 "$D" --skip-canary --wire-manager
+    ok "lefthook ($cfg): no lefthook.yml created" test ! -e "$D/lefthook.yml"
+    ok "lefthook ($cfg): the config is untouched" test "$sum" = "$(cksum <"$D/$cfg")"
+    ok "lefthook ($cfg): told to add the entry by hand" grep -qF "$cfg is lefthook's configuration and gates edits only YAML" <<<"$OUT"
+    ok "lefthook ($cfg): the pre-commit entry names the config" grep -qF "echo $cfg" <<<"$OUT"
+done
+fixture
+printf 'colors = false\n' >"$D/lefthook.toml"
+rc_is "lefthook (toml): planned without the flag -> exit 1" 1 "$D" --skip-canary
+ok "lefthook (toml): the entry is printed as TOML" grep -qF '[pre-commit.commands.spec-gates]' <<<"$OUT"
 
 # pre-commit framework: .pre-commit-config.yaml; repos: last, both indents.
 for ind in "" "  "; do
