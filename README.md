@@ -414,7 +414,11 @@ one. It reads the tool call JSON on stdin (agent hooks) or gets the hook's
 arguments (`commit-msg` gets the message file as `$1`). Exit 0 allows;
 any other exit refuses, with the rule's stderr as the message. A rule that
 cannot be read (including a dangling symlink) refuses, and so does one still
-running after 10 seconds (`GATES_LOCAL_TIMEOUT`).
+running after 10 seconds (`GATES_LOCAL_TIMEOUT`, a whole number above 0;
+any other value refuses): it is stopped with every process in its process
+group. A rule that exits but leaves a process running refuses too, and the
+process is stopped; a child that leaves the group (`setsid`) is out of
+reach.
 
 The rules are the project's, not the agent's: the agent cannot write or
 delete them (Write/Edit is refused, and a Bash command that appears to

@@ -996,6 +996,30 @@ rm -f "$LR/.specify/gates/hooks.local.d/validate-bash/20-dangling.sh"
 rule validate-bash 30-hangs.sh 'sleep 20'
 check "a rule still running after the timeout refuses" 0 bash -c "out=\$(printf '%s' '{\"tool_input\":{\"command\":\"ls\"}}' | GATES_LOCAL_TIMEOUT=1 CLAUDE_PROJECT_DIR='$LR' '$HOOKS/validate-bash.sh' 2>&1); rc=\$?; [[ \$rc -eq 2 ]] && grep -q 'still running after 1s' <<<\"\$out\""
 rm -f "$LR/.specify/gates/hooks.local.d/validate-bash/30-hangs.sh"
+# #189: a background child holding the rule's stderr no longer makes the
+# hook wait for it; it is stopped, and leaving it running refuses. The
+# rules record the child's pid so the test can see it is gone.
+BGPID="$WORKDIR/rule-bg.pid"
+rule validate-bash 30-leaves-child.sh "(sleep 20) & echo \$! >'$BGPID'; exit 0"
+check "a rule that exits leaving a child running refuses at once, child stopped" 0 bash -c "SECONDS=0; out=\$(printf '%s' '{\"tool_input\":{\"command\":\"ls\"}}' | GATES_LOCAL_TIMEOUT=5 CLAUDE_PROJECT_DIR='$LR' '$HOOKS/validate-bash.sh' 2>&1); rc=\$?; [[ \$rc -eq 2 && \$SECONDS -lt 4 ]] && grep -q 'left a process running' <<<\"\$out\" && ! kill -0 \$(cat '$BGPID') 2>/dev/null"
+rm -f "$LR/.specify/gates/hooks.local.d/validate-bash/30-leaves-child.sh" "$BGPID"
+rule validate-bash 30-hangs-with-child.sh "nohup sleep 20 >/dev/null 2>&1 & echo \$! >'$BGPID'; sleep 20"
+check "a timed-out rule is stopped with the child it started" 0 bash -c "SECONDS=0; out=\$(printf '%s' '{\"tool_input\":{\"command\":\"ls\"}}' | GATES_LOCAL_TIMEOUT=1 CLAUDE_PROJECT_DIR='$LR' '$HOOKS/validate-bash.sh' 2>&1); rc=\$?; [[ \$rc -eq 2 && \$SECONDS -lt 6 ]] && grep -q 'still running after 1s' <<<\"\$out\" && ! kill -0 \$(cat '$BGPID') 2>/dev/null"
+rm -f "$LR/.specify/gates/hooks.local.d/validate-bash/30-hangs-with-child.sh" "$BGPID"
+# A child that leaves the process group is out of reach, but it must not
+# hold the hook either: the rule's stderr is a file, not the hook's pipe.
+if command -v perl >/dev/null 2>&1; then
+    rule validate-bash 30-escapes.sh "perl -e 'setpgrp(0, 0); sleep 20' & echo \$! >'$BGPID'; exit 0"
+    check "a child that leaves the rule's group does not hold the hook" 0 bash -c "SECONDS=0; printf '%s' '{\"tool_input\":{\"command\":\"ls\"}}' | GATES_LOCAL_TIMEOUT=5 CLAUDE_PROJECT_DIR='$LR' '$HOOKS/validate-bash.sh' >/dev/null 2>&1; rc=\$?; [[ \$rc -eq 0 && \$SECONDS -lt 4 ]]"
+    [[ -s "$BGPID" ]] && kill "$(cat "$BGPID")" 2>/dev/null
+    rm -f "$LR/.specify/gates/hooks.local.d/validate-bash/30-escapes.sh" "$BGPID"
+fi
+rule validate-bash 30-exits-124.sh 'echo "rule says no" >&2; exit 124'
+check "a rule's own exit 124 is its refusal, not a timeout" 0 bash -c "out=\$(printf '%s' '{\"tool_input\":{\"command\":\"ls\"}}' | CLAUDE_PROJECT_DIR='$LR' '$HOOKS/validate-bash.sh' 2>&1); rc=\$?; [[ \$rc -eq 2 ]] && grep -q 'validate-bash/30-exits-124.sh): rule says no' <<<\"\$out\""
+rm -f "$LR/.specify/gates/hooks.local.d/validate-bash/30-exits-124.sh"
+for t in abc 0 -5 1.5; do
+    check "GATES_LOCAL_TIMEOUT=$t refuses" 0 bash -c "out=\$(printf '%s' '{\"tool_input\":{\"command\":\"ls\"}}' | GATES_LOCAL_TIMEOUT='$t' CLAUDE_PROJECT_DIR='$LR' '$HOOKS/validate-bash.sh' 2>&1); rc=\$?; [[ \$rc -eq 2 ]] && grep -q 'GATES_LOCAL_TIMEOUT=$t is not a whole number' <<<\"\$out\""
+done
 # Through a file: Linux caps a single argv string at 128 KB.
 { printf 'echo '; head -c 200000 /dev/zero | tr '\0' x; } >"$WORKDIR/rule-big.txt"
 jq -n --rawfile c "$WORKDIR/rule-big.txt" '{tool_input:{command:$c}}' >"$WORKDIR/rule-big.json"

@@ -109,6 +109,14 @@ add` forms at the agent boundary. `project.sh` lists new settings like
 
 ### Fixed
 
+- **A project rule's timeout covers what the rule started** (#189). A
+  rule that exited after starting a background child (`(sleep 25) &`,
+  `nohup … &`) made the hook wait for the child, past the timeout or
+  forever, since the child held the captured stderr pipe. The rule's
+  stderr now goes to a file, its process group is stopped when it exits
+  or times out, and a rule that leaves a process running refuses, as an
+  accept block does. A non-numeric `GATES_LOCAL_TIMEOUT` disabled the
+  timeout; any value that is not a whole number above 0 now refuses.
 - **An unknown `--accept` feature is refused before any gate runs**
   (#179). `verify.sh --accept <name>` with a name that is not a feature
   ran the lint and quality gates first and refused only at the spec gate,
