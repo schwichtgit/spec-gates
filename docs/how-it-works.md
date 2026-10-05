@@ -48,11 +48,13 @@ spec-gates uses four of them:
   recognized as that file. A path whose links it cannot resolve (a loop)
   asks.
 - `PreToolUse(Bash)` → `validate-bash.sh`: refuses destructive commands
-  (`rm` of root, home or a path outside the temp directories, force push,
-  hard reset, `chmod 777`, piping a download into a shell, discarding the
-  whole working tree with `git checkout` or `git restore` of `.`, `:/` or
-  other pathspec magic in any option order, `git clean` with `-f` or
-  `--force` anywhere, …). With
+  (`rm` of root, home or a path outside the temp directories, force push
+  with `-f`, `--force`, `--force-with-lease`, `--mirror` or a `+ref`
+  refspec, hard reset, `chmod 777`, piping a download into a shell,
+  discarding the whole working tree with `git checkout`, `git restore` or
+  `git rm` of `.`, `:/` or other pathspec magic in any option order,
+  `git checkout -f`, `git switch -f` or `--discard-changes`,
+  `git stash clear`, `git clean` with `-f` or `--force` anywhere, …). With
   `git.block_bulk_staging` it also refuses bulk staging: `git add` or
   `git stage` with `-A` (also in a cluster such as `-vA`), `--all`,
   `--no-ignore-removal`, `--pathspec-from-file`, `.`, `:/` and other
@@ -91,18 +93,24 @@ the PreToolUse `permissionDecision: ask` answer, which prompts in every
 permission mode. The hooks ask when a file name merely contains a word
 such as `secret` or `token` (a test like `test_no_secret_leak.py` is not a
 credential), when a Bash command appears to modify a protected path
-(`rm`, `mv`, `sed -i`, a redirect, `tee`, `find -delete`, `git rm`, also
-as `/bin/rm`, `\rm`, `xargs rm`, inside `sh -c` or `eval`, or an
+(`rm`, `mv`, `sed -i` or `--in-place`, a redirect (also `>|`), an
+`--out`/`--output` option, `tee`, `find -delete`, `git rm`, also as
+`/bin/rm`, `\rm`, `xargs rm`, inside `sh -c` or `eval`, or an
 interpreter one-liner such as `python3 -c`, or an `ln` whose target or
 link resolves to, contains or lies under one, naming one, its parent
-directory, a brace or backslash spelling of it, or a path relative to a
+directory, a brace, backslash or split-quote spelling of it, a variable
+the same command assigns, a variable or substitution it cannot resolve
+in front of the file name, a glob `extra` entry such as `**/*.lock.md`,
+or a path relative to a
 `cd` into one or to the session's working directory (the hook input
 `cwd`, which Claude Code keeps between calls); telling
 a modification from a read by the command text is a heuristic, so it asks
 rather than blocks; a read-only command such as `grep -n rm <path>` and
 the literal message of a `git commit -m` do not count as a change), when a Bash command names a secret file the file hook
 refuses (`cat .env`), when it bypasses the git hooks (`--no-verify`,
-`git commit -n`, a `core.hooksPath` setting), and in any state they
+`git commit -n`, a `core.hooksPath` setting, or a hook manager's skip
+variable such as `HUSKY=0`, `LEFTHOOK=0` or `SKIP=`), when it deletes a
+remote branch (`git push origin :main`, `--delete`), and in any state they
 cannot evaluate. A project rule in `hooks.local.d` runs before any of
 these questions, so its refusal wins. They never
 silently allow. Without jq, or for input that is not valid JSON, they read
@@ -113,6 +121,12 @@ internal error, an undecodable, missing or repeated field, or a
 `policy.json` cannot say what it protects either, so with jq the Write/Edit
 hook asks before every edit and the Bash hook before every command that
 appears to change a file. Doctor keeps failing until jq is installed.
+
+**The Bash checks are heuristics.** `validate-bash.sh` reads the command
+text, not what the shell will run. It recognises the common spellings
+listed above, blocks where a match is certain and asks where it is not,
+but it cannot parse every shell form. The git hooks and the CI boundary
+(`pre-commit`, `commit-msg`, `pr-check.sh`) are the enforcement backstop.
 
 **The Stop hook does not fail closed.** When `verify.sh` cannot run (no
 jq, no git, no policy), `verify-quality.sh` lets the session end and says

@@ -426,7 +426,10 @@ modify them asks you first), and a commit that adds, changes or removes
 one needs `Protected-Change: <path>` and `Approved-By: <name>` trailers,
 checked again in CI by `pr-check.sh`. The same Bash check covers
 `policy.json`, the constitution, the policy-contract artifacts and every
-`protected_files.extra` entry.
+`protected_files.extra` entry. The Bash checks are best-effort heuristics: they
+recognise common spellings, block on certainty and ask on uncertainty,
+but cannot parse every shell form, so the git hooks and CI remain the
+enforcement backstop.
 
 ```bash
 # .specify/gates/hooks.local.d/validate-bash/10-no-vendor-edits.sh

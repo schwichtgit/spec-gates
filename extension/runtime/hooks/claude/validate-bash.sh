@@ -207,17 +207,25 @@ bulk_staging_on() {
 #                with magic (`:/`, `:(top)`), which git expands itself
 #   BULKQ <arg>  an argument this check cannot resolve (an unbalanced quote,
 #                an escaped space, a variable or a command substitution)
-#   HOOKS <what> a git hook bypass: --no-verify, `commit -n`, or a
-#                core.hooksPath setting
-#   DESTRUCT <what>  a whole-tree discard (#170): `checkout`/`restore` of
-#                `.`, `:/` or other pathspec magic, in any spelling and
-#                position (`restore --staged` alone only unstages), and
-#                `clean` with -f or --force anywhere
+#   HOOKS <what> a git hook bypass: --no-verify, `commit -n`, a
+#                core.hooksPath setting, or a hook manager's skip variable
+#                (HUSKY=0, LEFTHOOK=0, SKIP=...) before a hook-running git
+#                command (#194)
+#   DESTRUCT <what>  a whole-tree discard (#170): `checkout`/`restore`/`rm`
+#                of `.`, `:/` or other pathspec magic, in any spelling and
+#                position (`restore --staged` and `rm --cached` alone only
+#                unstage), `clean` with -f or --force anywhere, and (#194)
+#                `checkout -f` without a pathspec, `switch -f` or
+#                `--discard-changes`, `stash clear`
+#   FORCE <what> a force push (#194): -f, --force, --force-with-lease,
+#                --mirror or a `+ref` refspec
+#   PUSHDEL <what>  a remote branch deletion: `:ref`, -d, --delete
 # Arguments come from xargs (`xargs git add < list`) are unknown (BULKQ).
 # A `cd <dir>` segment moves the directory later relative paths resolve
 # against; a `cd` this cannot resolve makes them unknown too.
 git_scan() {
-    local seg t t2 q a base cdir sub n i dashdash xa whole staged wtree
+    local seg t t2 q a base cdir sub n i dashdash xa whole staged wtree force
+    local hskip=""
     local scwd="$CWD"
     local asg='^[A-Za-z_][A-Za-z0-9_]*='
     local -a w
@@ -242,9 +250,14 @@ git_scan() {
         xa=0
         while [[ "$i" -lt "$n" ]]; do
             t="${w[i]}"
+            # A hook manager's skip variable (#194), set for this command
+            # or exported before it: husky, lefthook, pre-commit.
+            case "${t//[\"\']/}" in
+                HUSKY=0 | LEFTHOOK=0 | LEFTHOOK=false | SKIP=?* | LEFTHOOK_EXCLUDE=?*) hskip="${t//[\"\']/}" ;;
+            esac
             if [[ ! "$t" =~ $asg ]]; then
                 case "$t" in
-                    sudo | env | command | exec | nohup | time | nice) ;;
+                    sudo | env | command | exec | nohup | time | nice | export) ;;
                     xargs)
                         # xargs runs the command with arguments read
                         # elsewhere: skip its options up to the command.
@@ -282,6 +295,11 @@ git_scan() {
         done
         sub="${w[i]:-}"
         i=$((i + 1))
+        case "$sub" in
+            commit | push | merge | am | rebase | cherry-pick | revert | pull)
+                [[ -z "$hskip" ]] || printf 'HOOKS %s\n' "$hskip"
+                ;;
+        esac
         base="$scwd"
         if [[ -n "$cdir" ]]; then
             cdir="${cdir#[\"\']}"
@@ -295,6 +313,7 @@ git_scan() {
         whole=""
         staged=0
         wtree=0
+        force=""
         while [[ "$i" -lt "$n" ]]; do
             a="${w[i]}"
             i=$((i + 1))
@@ -314,6 +333,49 @@ git_scan() {
             t="${a//\"/}"
             t="${t//\'/}"
             case "$sub" in
+                push)
+                    if [[ "$dashdash" -eq 0 ]]; then
+                        case "$t" in
+                            --force* | --mirror) printf 'FORCE git push %s\n' "$t" ;;
+                            --delete) printf 'PUSHDEL git push %s\n' "$t" ;;
+                            --*) ;;
+                            -*f*) printf 'FORCE git push %s\n' "$t" ;;
+                            -*d*) printf 'PUSHDEL git push %s\n' "$t" ;;
+                        esac
+                    fi
+                    # `+ref` forces that ref; `:ref` deletes it.
+                    case "$t" in
+                        +?*) printf 'FORCE git push %s\n' "$t" ;;
+                        :?*) printf 'PUSHDEL git push %s\n' "$t" ;;
+                    esac
+                    continue
+                    ;;
+                stash)
+                    [[ "$t" == clear ]] && printf 'DESTRUCT git stash clear\n'
+                    break
+                    ;;
+                switch)
+                    if [[ "$dashdash" -eq 0 ]]; then
+                        case "$t" in
+                            --discard-changes | --force) printf 'DESTRUCT git switch %s\n' "$t" ;;
+                            --*) ;;
+                            -*f*) printf 'DESTRUCT git switch %s\n' "$t" ;;
+                        esac
+                    fi
+                    continue
+                    ;;
+                rm)
+                    if [[ "$dashdash" -eq 0 ]]; then
+                        case "$t" in
+                            --cached) staged=1; continue ;;
+                            -*) continue ;;
+                        esac
+                    fi
+                    case "$t" in
+                        . | ./ | '*' | ./'*' | :*) whole="$a" ;;
+                    esac
+                    continue
+                    ;;
                 clean)
                     if [[ "$dashdash" -eq 0 ]]; then
                         case "$t" in
@@ -329,10 +391,12 @@ git_scan() {
                         case "$t" in
                             --staged) staged=1; continue ;;
                             --worktree) wtree=1; continue ;;
+                            --force) [[ "$sub" == checkout ]] && force="$t"; continue ;;
                             --*) continue ;;
                             -*)
                                 [[ "$t" == *S* ]] && staged=1
                                 [[ "$t" == *W* ]] && wtree=1
+                                [[ "$sub" == checkout && "$t" == *f* ]] && force="$t"
                                 continue
                                 ;;
                         esac
@@ -409,6 +473,10 @@ git_scan() {
         if [[ -n "$whole" ]] && { [[ "$sub" == checkout ]] || [[ "$staged" -eq 0 || "$wtree" -eq 1 ]]; }; then
             printf 'DESTRUCT git %s %s\n' "$sub" "$whole"
         fi
+        # `checkout -f` without a pathspec throws away every local change.
+        if [[ -n "$force" && "$dashdash" -eq 0 ]]; then
+            printf 'DESTRUCT git checkout %s\n' "$force"
+        fi
     done < <(printf '%s\n' "$COMMAND" | awk '
         # A `...` substitution is an argument this cannot resolve: it
         # stands in as $SUBST, and its own text is scanned as a command.
@@ -425,6 +493,14 @@ GIT_SCAN="$(git_scan)"
 DESTRUCT="$(awk '/^DESTRUCT / { sub(/^DESTRUCT /, ""); print; exit }' <<<"$GIT_SCAN")"
 if [[ -n "$DESTRUCT" ]]; then
     BLOCKED="$DESTRUCT (discards uncommitted work)"
+fi
+FORCE="$(awk '/^FORCE / { sub(/^FORCE /, ""); print; exit }' <<<"$GIT_SCAN")"
+if [[ -n "$FORCE" ]]; then
+    BLOCKED="$FORCE (force push)"
+fi
+PUSHDEL="$(awk '/^PUSHDEL / { sub(/^PUSHDEL /, ""); print; exit }' <<<"$GIT_SCAN")"
+if [[ -n "$PUSHDEL" ]]; then
+    defer_ask "$PUSHDEL deletes a remote branch; confirm it"
 fi
 if [[ -z "$BLOCKED" ]] && grep -q '^BULK' <<<"$GIT_SCAN"; then
     rc=0
@@ -542,7 +618,7 @@ protected_prefixes() {
 # shellcheck disable=SC2016  # the backtick is a literal command separator
 VERB_START='(^|[;&|(`[:space:]/]|(-c|eval)[[:space:]]+["'"'"'])'
 MUTATE_VERB="$VERB_START"'(rm|rmdir|unlink|shred|mv|cp|ln|install|truncate|tee|chmod|chown|dd|rsync)([[:space:]]|$)'
-MUTATE_EDIT="$VERB_START"'(sed|perl)[[:space:]]+([^;&|]*[[:space:]])?-[a-zA-Z]*i|'"$VERB_START"'git[[:space:]]+(rm|mv|checkout|restore|reset|clean|stash)([[:space:]]|$)'
+MUTATE_EDIT="$VERB_START"'(sed|perl)[[:space:]]+([^;&|]*[[:space:]])?(-[a-zA-Z]*i|--in-place)|'"$VERB_START"'git[[:space:]]+(rm|mv|checkout|restore|reset|clean|stash)([[:space:]]|$)'
 MUTATE_FIND="$VERB_START"'find[[:space:]]([^;&|]*[[:space:]])?-(delete|exec|execdir|ok|okdir)([[:space:]]|$)'
 MUTATE_INTERP="$VERB_START"'(python[0-9.]*|perl|ruby|node|deno|bun)[[:space:]]+([^;&|]*[[:space:]])?-[a-zA-Z]*[ce]([[:space:]]|$)'
 # The command with path spellings normalized, lowercased. The project root
@@ -718,24 +794,53 @@ for _c in "${CWD%/}" "$_creal"; do
         break 2
     done
 done
+# The texts the paths are matched in (#194): NCMD, NCMD with its quotes
+# removed as the shell does ("pol""icy.json", pol''icy.json), and that with
+# the command's own simple assignments expanded (f=.specify/gates; rm
+# $f/policy.json), one per line.
+NCMD_DQ="$(tr -d "\"'" <<<"$NCMD")"
+PCMD="$NCMD"
+[[ "$NCMD_DQ" == "$NCMD" ]] || PCMD="$PCMD"$'\n'"$NCMD_DQ"
+_xp="$(awk '
+    function rep(s, p, r, word,    i, out, nx) {
+        out = ""
+        while ((i = index(s, p)) > 0) {
+            nx = substr(s, i + length(p), 1)
+            if (word && nx ~ /[a-z0-9_]/) r2 = p; else r2 = r
+            out = out substr(s, 1, i - 1) r2; s = substr(s, i + length(p))
+        }
+        return out s
+    }
+    { line[NR] = $0; s = $0
+      while (match(s, /(^|[[:space:];&|(])[a-z_][a-z0-9_]*=[^[:space:];&|()]*/)) {
+          a = substr(s, RSTART, RLENGTH); sub(/^[[:space:];&|(]/, "", a)
+          e = index(a, "="); v[substr(a, 1, e - 1)] = substr(a, e + 1)
+          s = substr(s, RSTART + RLENGTH)
+      } }
+    END { for (k = 1; k <= NR; k++) {
+              o = line[k]
+              for (n in v) { o = rep(o, "${" n "}", v[n], 0); o = rep(o, "$" n, v[n], 1) }
+              print o
+          } }' <<<"$NCMD_DQ")"
+[[ "$_xp" == "$NCMD_DQ" ]] || PCMD="$PCMD"$'\n'"$_xp"
 # pp_spelled <spelling> <anchored>: set _named, _entered and _redirect when
-# NCMD names <spelling> (or a parent of it) in a change, changes into it or
-# redirects to it. An anchored spelling, one relative to cwd, counts only
-# at the start of an argument.
+# PCMD names <spelling> (or a parent of it) in a change, changes into it, or
+# redirects or writes (--out, --output) to it. An anchored spelling, one
+# relative to cwd, counts only at the start of an argument.
 pp_spelled() {
     local sp="$1" anch="$2" pre dir e head
     pre="$(ere_escape "$sp")"
     head=""
     [[ "$anch" -eq 1 ]] && head="$TOKEN_START"
     if [[ "$anch" -eq 0 ]]; then
-        grep -qF -- "$sp" <<<"$NCMD" && _named=1
+        grep -qF -- "$sp" <<<"$PCMD" && _named=1
     else
-        grep -qE -- "$head$pre(/|$TOKEN_END)" <<<"$NCMD" && _named=1
+        grep -qE -- "$head$pre(/|$TOKEN_END)" <<<"$PCMD" && _named=1
     fi
     dir="$sp"
     while :; do
         e="$(ere_escape "$dir")"
-        if grep -qE "(^|[;&|(\`[:space:]])(cd|pushd)[[:space:]]+[\"']?$e/?[\"']?$TOKEN_END|[[:space:]]-c[[:space:]]+[\"']?$e/?[\"']?$TOKEN_END" <<<"$NCMD"; then
+        if grep -qE "(^|[;&|(\`[:space:]])(cd|pushd)[[:space:]]+[\"']?$e/?[\"']?$TOKEN_END|[[:space:]]-c[[:space:]]+[\"']?$e/?[\"']?$TOKEN_END" <<<"$PCMD"; then
             _entered=1
         fi
         # A parent directory counts only as a whole argument (or with a
@@ -754,11 +859,33 @@ pp_spelled() {
     done
     # Redirects read the command with commit-message text blanked (#195).
     if [[ "$anch" -eq 0 ]]; then
-        grep -qE ">>?[[:space:]]*[\"']?[^[:space:];&|]*$pre" <<<"$BCMD" && _redirect=1
+        grep -qE "${WRITE_TO}[\"']?[^[:space:];&|]*$pre" <<<"$BCMD" && _redirect=1
     else
-        grep -qE ">>?[[:space:]]*[\"']?$pre(/|$TOKEN_END)" <<<"$BCMD" && _redirect=1
+        grep -qE "${WRITE_TO}[\"']?$pre(/|$TOKEN_END)" <<<"$BCMD" && _redirect=1
     fi
     return 0
+}
+# A redirect (also `>|`) or an output option, up to its target.
+WRITE_TO='(>[>|]?[[:space:]]*|--(out|output)(=|[[:space:]]+))'
+# glob_hit <path> <glob>: protected_files.extra glob matching as in
+# gates_glob_match, `*` crossing `/`, also for a `**/` entry at the top.
+glob_hit() {
+    # shellcheck disable=SC2053  # the glob is a pattern on purpose
+    [[ "$1" == $2 ]] && return 0
+    # shellcheck disable=SC2053
+    [[ "$2" == \*\*/* && "$1" == ${2#\*\*/} ]] && return 0
+    return 1
+}
+# protected_globs: the extra glob entries with no literal prefix
+# (`**/*.lock.md`), which protected_prefixes cannot match by text.
+protected_globs() {
+    {
+        if [[ -n "$DEGRADED" ]]; then
+            [[ -n "$RAW_EXTRA" ]] && printf '%s\n' "$RAW_EXTRA"
+        elif [[ -f "$POLICY" ]]; then
+            jq -r '(.protected_files.extra // [])[] | select(type == "string")' "$POLICY" 2>/dev/null || true
+        fi
+    } | awk '/^[*?[]/' | tr '[:upper:]' '[:lower:]' || true
 }
 while IFS= read -r _pp; do
     [[ -n "$_pp" ]] || continue
@@ -781,7 +908,42 @@ while IFS= read -r _pp; do
         defer_ask "this command appears to modify the protected path $_pp; a human or a reviewed change makes that edit"
         break
     fi
+    # The rest of the path behind a variable or a substitution this check
+    # cannot resolve ($d/policy.json, $(dirname x)/policy.json).
+    _b="$(ere_escape "${_pp##*/}")"
+    _v="[\$\`)}][^[:space:];&|]*/$_b$TOKEN_END"
+    if { [[ "$MUTATES" -eq 1 ]] && grep -qE "$_v" <<<"$NCMD_DQ"; } \
+        || grep -qE "${WRITE_TO}[^[:space:];&|]*$_v" <<<"$NCMD_DQ"; then
+        defer_ask "this command may modify the protected path $_pp through a variable or substitution this check cannot resolve; confirm it"
+        break
+    fi
 done < <(protected_prefixes)
+if [[ "$MUTATES" -eq 1 || "$WRITE_REDIRECT" -eq 1 ]]; then
+    PGLOBS="$(protected_globs)"
+    if [[ -n "$PGLOBS" ]]; then
+        # A change may touch any argument; a redirect only its target.
+        if [[ "$MUTATES" -eq 1 ]]; then
+            _args="$(tr '<>|;&()=,`' '          ' <<<"$NCMD_DQ")"
+        else
+            _args="$({ grep -oE "${WRITE_TO}[^[:space:];&|]+" <<<"$NCMD_DQ" || true; } | sed -E "s/^$WRITE_TO//")"
+        fi
+        _ghit=""
+        while IFS= read -r _g && [[ -z "$_ghit" ]]; do
+            [[ -n "$_g" ]] || continue
+            while read -r -a _w && [[ -z "$_ghit" ]]; do
+                for _t in ${_w[@]+"${_w[@]}"}; do
+                    _t="${_t#./}"
+                    if glob_hit "$_t" "$_g" || glob_hit "${_t##*/}" "$_g" \
+                        || { [[ -n "$CWD_REL" ]] && glob_hit "$CWD_REL/$_t" "$_g"; }; then
+                        _ghit="$_t ($_g)"
+                        break
+                    fi
+                done
+            done <<<"$_args"
+        done <<<"$PGLOBS"
+        [[ -z "$_ghit" ]] || defer_ask "this command appears to modify $_ghit, protected by protected_files.extra; a human or a reviewed change makes that edit"
+    fi
+fi
 
 # Links (#193): protect-files judges a Write/Edit by its real path, so a
 # link that reaches a protected path, or one spelled past the text match

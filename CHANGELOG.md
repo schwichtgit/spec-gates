@@ -165,6 +165,16 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   hook refused that write with no way through. It now asks, under any
   policy; `policy.json`, `hooks.local.d` and the contract artifacts stay
   refused.
+- **validate-bash catches more command variants** (#194). A `>|`
+  redirect, `sed --in-place`, split quotes (`pol""icy.json`), a variable
+  in front of the file name, `--out` to a protected path and a glob
+  `extra` entry with no literal prefix (`**/*.lock.md`) now ask. Force
+  pushes with a `+ref` refspec, `--force-with-lease` or `--mirror`,
+  `git checkout -f`, `git switch -f`/`--discard-changes`, `git rm` of the
+  whole tree and `git stash clear` are refused; a remote branch deletion
+  and a hook manager's skip variable (`HUSKY=0`, `LEFTHOOK=0`, `SKIP=`)
+  ask. The docs now call the Bash checks heuristics, with the git hooks
+  and CI as the backstop.
 - **validate-bash resolves relative protected paths against `cwd`**
   (#191). Claude Code keeps the Bash working directory between calls, so
   after `cd .specify/gates` a later `rm policy.json` changed the policy

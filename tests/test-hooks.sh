@@ -1709,6 +1709,39 @@ for cc in '/.specify/gates|cat policy.json' '/.specify/gates|rm notes.txt' '/doc
     check "relative to cwd ${d:-/} allowed: $c" 0 bash -c "out=\$(printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$VC' '$HOOKS/validate-bash.sh') && [[ -z \"\$out\" ]]" _ "$(vc_payload "$d" "$c")"
 done
 
+echo ""
+echo "=== validate-bash: more protected-path and git variants (#194) ==="
+VM="$WORKDIR/vb194"
+mkdir -p "$VM/.specify/gates" "$VM/.specify/memory" "$VM/src"
+printf '%s' '{ "hooks": {}, "protected_files": { "extra": ["**/*.lock.md"] } }' >"$VM/.specify/gates/policy.json"
+vm_payload() { jq -nc --arg c "$1" --arg d "$VM" '{cwd:$d,tool_input:{command:$c}}'; }
+# shellcheck disable=SC2016  # literal command text under test
+for c in "printf '{}' >| .specify/gates/policy.json" 'sed --in-place s/a/b/ .specify/gates/policy.json' \
+    'rm ".specify/gates/pol""icy.json"' "rm .specify/gates/pol''icy.json" 'f=.specify/gates; rm $f/policy.json' \
+    'd=.specify; rm -rf $d/gates' 'd=.specify; rm -rf ${d}/gates' 'rm "$D/policy.json"' 'echo {} > "$D"/policy.json' \
+    'bash .specify/gates/constitution.sh draft --corpus c --selections s.json --out .specify/memory/constitution.md' \
+    'rm src/x.lock.md' 'echo x > src/deep/y.lock.md' 'HUSKY=0 git commit -m "feat: x"' \
+    'LEFTHOOK=0 git commit -m "feat: x"' 'SKIP=gates git commit -m "feat: x"' \
+    'export HUSKY=0; git push' 'env LEFTHOOK=false git commit -m "feat: x"' 'git push origin :main' \
+    'git push --delete origin feat/x'; do
+    askcheck "asks: $c" "$(vm_payload "$c")" validate-bash.sh CLAUDE_PROJECT_DIR="$VM"
+    askcheck "asks without jq: $c" "$(vm_payload "$c")" validate-bash.sh PATH="$NOJQ" CLAUDE_PROJECT_DIR="$VM"
+done
+for c in 'git push origin +main' 'git push origin +HEAD:main' 'git push --force-with-lease origin main' \
+    'git push --mirror origin' 'git -C src push -uf origin main' 'git checkout -f' 'git checkout -f main' \
+    'git switch --discard-changes main' 'git switch -f main' 'git rm -rf .' 'git stash -u && git stash clear'; do
+    check "refused: $c" 2 bash -c "printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$VM' '$HOOKS/validate-bash.sh'" _ "$(vm_payload "$c")"
+    check "refused without jq: $c" 2 bash -c "printf '%s' \"\$1\" | PATH='$NOJQ' CLAUDE_PROJECT_DIR='$VM' '$HOOKS/validate-bash.sh'" _ "$(vm_payload "$c")"
+done
+# shellcheck disable=SC2016
+for c in 'git push origin main' 'git push -u origin feat/x' 'git push origin HEAD:main' 'git checkout main' \
+    'git checkout -f -- src/a.ts' 'git switch -c feat/y' 'git rm --cached -r .' 'git rm src/a.ts' 'git stash list' \
+    'git stash drop' 'HUSKY=0 npm ci' 'cat .specify/gates/pol""icy.json' 'f=.specify/gates; cat $f/policy.json' \
+    'cat src/x.lock.md' 'rm src/x.md' 'echo "$D/policy.json"' 'sed --in-place s/a/b/ src/a.ts' \
+    'bash .specify/gates/constitution.sh draft --corpus c --selections s.json --out /tmp/c.md'; do
+    check "allowed: $c" 0 bash -c "out=\$(printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$VM' '$HOOKS/validate-bash.sh') && [[ -z \"\$out\" ]]" _ "$(vm_payload "$c")"
+done
+
 # --- Summary ---
 echo ""
 echo "$PASS of $TOTAL tests passed."
