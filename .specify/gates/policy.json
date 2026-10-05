@@ -59,6 +59,9 @@
     }
   },
   "spec": {
-    "severity": "error"
+    "severity": "error",
+    "snapshot_exclude": [
+      "**/.claude/mind.*"
+    ]
   }
 }
