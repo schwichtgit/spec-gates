@@ -1330,6 +1330,19 @@ for c in 'git commit --no-verify -m "feat: x"' 'git commit -n -m "feat: x"' 'git
     askcheck "hook bypass asks: $c" "$(vb_payload "$c")" validate-bash.sh CLAUDE_PROJECT_DIR="$VB"
 done
 vb_allows "a plain commit is allowed" 'git commit -m "feat: x"'
+# #187: these create commits and git runs no commit hook for them.
+for c in 'git cherry-pick abc123' 'git rebase main' 'git rebase -i HEAD~3' 'git am 0001-x.patch' \
+    'git revert --no-edit HEAD' 'git rebase --continue' 'git rebase --skip' 'git cherry-pick --continue' \
+    'git -C sub cherry-pick abc123' 'git fetch && git rebase origin/main'; do
+    askcheck "commit without commit hooks asks: $c" "$(vb_payload "$c")" validate-bash.sh CLAUDE_PROJECT_DIR="$VB"
+done
+check "the hookless-commit ask names the CI boundary" 0 bash -c "out=\$(printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$VB' '$HOOKS/validate-bash.sh') && grep -q 'git cherry-pick creates commits without running pre-commit or commit-msg.*CI boundary' <<<\"\$out\"" _ "$(vb_payload 'git cherry-pick abc123')"
+vb_payload 'git rebase main' >"$WORKDIR/vb187.json"
+check "raw mode: a hookless commit still asks without jq" 0 bash -c "PATH='$NOJQ' CLAUDE_PROJECT_DIR='$VB' '$HOOKS/validate-bash.sh' <'$WORKDIR/vb187.json' | grep -q '\"permissionDecision\":\"ask\"'"
+for c in 'git rebase --abort' 'git cherry-pick --quit' 'git am --abort' 'git revert --abort' \
+    'git rebase --show-current-patch' 'git log --grep=rebase'; do
+    vb_allows "no commit is created, allowed: $c" "$c"
+done
 # #164: the spec gate's recursion guard, set by a caller, skips accept blocks.
 for c in 'GATES_SPEC_EXEC=1 git commit -m "feat: x"' 'env GATES_SPEC_EXEC=1 bash .specify/gates/verify.sh' \
     'export GATES_SPEC_EXEC=1; git commit -m "feat: x"' 'GATES_SPEC_EXEC=1; export GATES_SPEC_EXEC'; do

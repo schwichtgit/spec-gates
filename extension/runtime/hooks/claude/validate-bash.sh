@@ -211,6 +211,11 @@ bulk_staging_on() {
 #                core.hooksPath setting, or a hook manager's skip variable
 #                (HUSKY=0, LEFTHOOK=0, SKIP=...) before a hook-running git
 #                command (#194)
+#   NOHOOK <what>  a command that creates commits without running the
+#                commit hooks (#187): `cherry-pick`, `rebase`, `am` and
+#                `revert`, also with --continue or --skip (both replay
+#                further commits); --abort, --quit, --edit-todo and
+#                --show-current-patch create none
 #   DESTRUCT <what>  a whole-tree discard (#170): `checkout`/`restore`/`rm`
 #                of `.`, `:/` or other pathspec magic, in any spelling and
 #                position (`restore --staged` and `rm --cached` alone only
@@ -224,7 +229,7 @@ bulk_staging_on() {
 # A `cd <dir>` segment moves the directory later relative paths resolve
 # against; a `cd` this cannot resolve makes them unknown too.
 git_scan() {
-    local seg t t2 q a base cdir sub n i dashdash xa whole staged wtree force
+    local seg t t2 q a base cdir sub n i dashdash xa whole staged wtree force seqoff
     local hskip=""
     local scwd="$CWD"
     local asg='^[A-Za-z_][A-Za-z0-9_]*='
@@ -310,6 +315,7 @@ git_scan() {
             printf 'BULKQ %s\n' "(arguments from xargs)"
         fi
         dashdash=0
+        seqoff=0
         whole=""
         staged=0
         wtree=0
@@ -360,6 +366,14 @@ git_scan() {
                             --discard-changes | --force) printf 'DESTRUCT git switch %s\n' "$t" ;;
                             --*) ;;
                             -*f*) printf 'DESTRUCT git switch %s\n' "$t" ;;
+                        esac
+                    fi
+                    continue
+                    ;;
+                cherry-pick | rebase | am | revert)
+                    if [[ "$dashdash" -eq 0 ]]; then
+                        case "$t" in
+                            --abort | --quit | --edit-todo | --show-current-patch*) seqoff=1 ;;
                         esac
                     fi
                     continue
@@ -470,6 +484,11 @@ git_scan() {
                     ;;
             esac
         done
+        case "$sub" in
+            cherry-pick | rebase | am | revert)
+                [[ "$seqoff" -eq 1 ]] || printf 'NOHOOK git %s\n' "$sub"
+                ;;
+        esac
         if [[ -n "$whole" ]] && { [[ "$sub" == checkout ]] || [[ "$staged" -eq 0 || "$wtree" -eq 1 ]]; }; then
             printf 'DESTRUCT git %s %s\n' "$sub" "$whole"
         fi
@@ -518,6 +537,10 @@ fi
 HOOKS="$(awk '/^HOOKS / { sub(/^HOOKS /, ""); print; exit }' <<<"$GIT_SCAN")"
 if [[ -n "$HOOKS" ]]; then
     defer_ask "this command bypasses the git hooks ($HOOKS), so the commit checks would not run; confirm it"
+fi
+NOHOOK="$(awk '/^NOHOOK / { sub(/^NOHOOK /, ""); print; exit }' <<<"$GIT_SCAN")"
+if [[ -n "$NOHOOK" ]]; then
+    defer_ask "$NOHOOK creates commits without running pre-commit or commit-msg (main-branch, secret and message rules), so only the CI boundary checks them; confirm it"
 fi
 # The spec gate's recursion guard: any verify.sh run that inherits it, a
 # commit's hook included, skips the accept blocks (#164). Unsetting it

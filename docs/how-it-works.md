@@ -109,8 +109,10 @@ rather than blocks; a read-only command such as `grep -n rm <path>` and
 the literal message of a `git commit -m` do not count as a change), when a Bash command names a secret file the file hook
 refuses (`cat .env`), when it bypasses the git hooks (`--no-verify`,
 `git commit -n`, a `core.hooksPath` setting, or a hook manager's skip
-variable such as `HUSKY=0`, `LEFTHOOK=0` or `SKIP=`), when it deletes a
-remote branch (`git push origin :main`, `--delete`), and in any state they
+variable such as `HUSKY=0`, `LEFTHOOK=0` or `SKIP=`), when it creates
+commits that git runs no commit hook for (`git cherry-pick`, `git rebase`,
+`git am`, `git revert`, see the git boundary), when it deletes a remote
+branch (`git push origin :main`, `--delete`), and in any state they
 cannot evaluate. A project rule in `hooks.local.d` runs before any of
 these questions, so its refusal wins. They never
 silently allow. Without jq, or for input that is not valid JSON, they read
@@ -165,9 +167,17 @@ the `fixup!`, `squash!` and `amend!` subjects of `git commit --fixup` and
 `--squash`. A prefix counts only when the rest of the subject is the
 subject of an existing commit, as git writes it; `fixup! anything` typed by
 hand is judged like any other subject. Every other message rule still
-applies to them. `git revert`
-runs no commit hooks at all (git's own behavior), so a revert is checked
-only at the CI boundary.
+applies to them.
+
+`git cherry-pick`, `git rebase`, `git am` and `git revert` create commits
+without running `pre-commit` or `commit-msg` (git's own behavior), so
+neither the refusal of commits to `main` nor the secret scan nor the
+message rules see them. The same holds for `--continue` and `--skip`,
+which replay further commits (only a `cherry-pick` stopped on a conflict
+runs the hooks for that one commit). Their result is checked only at the CI
+boundary. The agent's Bash hook asks before each of them, as it does for
+`--no-verify`; `--abort`, `--quit`, `--edit-todo` and
+`--show-current-patch` create no commit and are allowed.
 
 A merge commit never runs `pre-commit`: git runs `pre-merge-commit` and
 `commit-msg` instead. The `pre-merge-commit` hook runs the `pre-commit`

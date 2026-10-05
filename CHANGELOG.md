@@ -182,6 +182,12 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   paths relative to the input `cwd` too, also under another spelling of
   the project root, and asks for any change made from inside a protected
   directory.
+- **Commits made without commit hooks ask first** (#187). Like
+  `git revert`, the only one documented, `git cherry-pick`, `git rebase`
+  and `git am` create commits without running `pre-commit` or
+  `commit-msg`; validate-bash allowed all four. It now asks before each
+  (also `--continue` and `--skip`), naming the CI boundary as the only
+  check, and the docs list all four.
 - **An unknown `--accept` feature is refused before any gate runs**
   (#179). `verify.sh --accept <name>` with a name that is not a feature
   ran the lint and quality gates first and refused only at the spec gate,
