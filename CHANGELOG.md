@@ -139,6 +139,11 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   edit let a refused protected commit through. The switch is now read
   from the staged policy and `HEAD`'s (the working tree only when neither
   carries a policy).
+- **The PR hook checks `gh pr new`, `glab mr new` and a leading `-R`**
+  (#192). `validate-pr.sh` matched only `gh pr create|edit` and
+  `glab mr create|update` spelled exactly, so the `new` alias and a
+  `-R`/`--repo` flag before the subcommand (`gh -R o/r pr create`) let an
+  unchecked title and body through. Both are now recognized.
 - **An unknown `--accept` feature is refused before any gate runs**
   (#179). `verify.sh --accept <name>` with a name that is not a feature
   ran the lint and quality gates first and refused only at the spec gate,

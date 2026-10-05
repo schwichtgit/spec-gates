@@ -54,7 +54,8 @@ spec-gates uses four of them:
   options (`-C`, `--no-pager`, …). An argument it cannot resolve (`"$f"`,
   a backtick substitution, arguments from `xargs`, a path after a `cd` it
   cannot follow) asks. `validate-pr.sh`: checks the title and body of
-  `gh pr create|edit`, `glab mr create|update` and `gh api` calls on a
+  `gh pr create|new|edit`, `glab mr create|new|update` (also with `-R` or
+  `--repo` before the subcommand) and `gh api` calls on a
   `repos/<owner>/<repo>/pulls` endpoint with the commit-message rules. It
   reads each value as the shell would pass it and refuses one it cannot
   read literally: a variable, a command substitution (except the

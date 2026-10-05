@@ -1488,6 +1488,22 @@ done
 vp "Claude Code named in prose is not attribution" "$PR_OK" "gh pr create --title 'feat: x' --body 'Adds a hook for Claude Code users.'"
 
 echo ""
+echo "=== validate-pr: the new alias and a repo flag before the subcommand (#192) ==="
+for p in 'gh pr new' 'gh -R o/r pr create' 'gh --repo o/r pr create' 'gh --repo=o/r pr new' \
+    'gh -Ro/r pr create' 'glab mr new' 'glab -R g/p mr create' 'glab --repo g/p mr new'; do
+    case "$p" in
+        glab*) bad="$p --title 'add stuff' -d 'Adds a parser.'" ok="$p --title 'feat: x' -d 'Adds a parser.'" ;;
+        *) bad="$p -t 'add stuff' -b 'Adds a parser.'" ok="$p -t 'feat: x' -b 'Adds a parser.'" ;;
+    esac
+    vp "PR command refused: $bad" 2 "$bad"
+    vp "PR command allowed: $ok" "$PR_OK" "$ok"
+done
+vp "gh -R o/r pr edit with an AI-ism refused" 2 "gh -R o/r pr edit 5 --body 'Generated with Claude Code'"
+vp "glab -R g/p mr update non-conventional title refused" 2 "glab -R g/p mr update 3 --title 'add stuff'"
+vp "gh -R o/r pr list is not a PR command" 0 "gh -R o/r pr list"
+vp "a PR alias inside sh -c refused" 2 "sh -c 'gh -R o/r pr new -t x -b y'"
+
+echo ""
 echo "=== validate-bash: destructive git, protected-path and staging variants (#170) ==="
 VV="$WORKDIR/vb170"
 mkdir -p "$VV/.specify/gates" "$VV/src/sub"
