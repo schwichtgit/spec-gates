@@ -23,6 +23,7 @@ Optional:
 - `--accept <feature|all>`: also run the named incomplete feature's (or
   every feature's) accept blocks, as information only. Features whose
   `spec.md` says `**Status**: Complete` are enforced on every run anyway.
+  A name that is not a feature is refused (exit 1) before any gate runs.
 
 ## Steps
 
