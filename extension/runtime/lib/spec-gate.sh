@@ -196,6 +196,39 @@ gates_spec_excluded() { # <path>
     return 1
 }
 
+# One "<kind><TAB>value<TAB>relpath" line per file under <dir> (exec bit
+# and content hash, or a symlink's target), or a single "absent" line.
+gates_spec_dir_state() { # <kind> <root> <dir> <scratch> <list>
+    local kind="$1" root="$2" dir="$3" scratch="$4" list="$5" path rel entry i
+    [[ "$dir" == /* ]] || dir="$root/$dir"
+    if [[ ! -d "$dir" ]]; then
+        printf '%s\tabsent\t%s\n' "$kind" "$dir"
+        return 0
+    fi
+    find "$dir" \( -type f -o -type l \) -print0 >"$scratch" 2>/dev/null || return 1
+    : >"$list"
+    local rels=() xs=()
+    while IFS= read -r -d '' path; do
+        rel="${path#"$dir"/}"
+        if [[ -L "$path" ]]; then
+            printf '%s\tlink:%s\t%s\n' "$kind" "$(readlink "$path" 2>/dev/null || true)" "$rel"
+            continue
+        fi
+        printf '%s\n' "$path" >>"$list"
+        rels+=("$rel")
+        if [[ -x "$path" ]]; then xs+=("x"); else xs+=("-"); fi
+    done <"$scratch"
+    [[ ${#rels[@]} -gt 0 ]] || return 0
+    git -C "$root" hash-object --no-filters --stdin-paths \
+        <"$list" >"$scratch" 2>/dev/null || return 1
+    i=0
+    while IFS= read -r entry; do
+        printf '%s\t%s:%s\t%s\n' "$kind" "${xs[i]}" "$entry" "${rels[i]}"
+        i=$((i + 1))
+    done <"$scratch"
+    [[ $i -eq ${#rels[@]} ]]
+}
+
 # Snapshot of everything an accept block must leave alone (R5, #136, #164),
 # written sorted to <state> as "kind<TAB>value<TAB>name" lines:
 #   tree  one per `git status --porcelain=v1 -z --untracked-files=all`
@@ -207,6 +240,15 @@ gates_spec_excluded() { # <path>
 #         creating a branch in any sibling worktree writes it.
 #   hook  one per file under the hooks directory git uses (`--git-path
 #         hooks`, which follows core.hooksPath): exec bit and content hash.
+#   info  the same for the info directory (attributes, exclude,
+#         sparse-checkout): attributes can switch filters and diff drivers.
+#   idx   one per index entry flagged skip-worktree or assume-unchanged
+#         (`git ls-files -v`): the flag and a content hash, since status
+#         no longer reports edits to a flagged file (#197).
+#   wt    one per linked worktree (`<common-dir>/worktrees/*`): its path,
+#         and its lock.
+#         Other worktrees' HEADs are left out: a commit there is not this
+#         block's doing.
 #   ref   HEAD (commit and symbolic target) and every ref except
 #         refs/remotes/*, which a background fetch moves.
 #   ign   one per ignored root (`git ls-files -o -i --directory`): a file,
@@ -217,7 +259,7 @@ gates_spec_excluded() { # <path>
 # Returns nonzero when git cannot produce the snapshot.
 gates_spec_snapshot() { # <root> <state-file>
     local root="$1" state="$2" scratch="$2.tmp" list="$2.list"
-    local entry xy path orig n=0 i hdir rel kv key val head sym
+    local entry xy path orig n=0 i hdir kv key val head sym
     local xys=() paths=() origs=() hashes=() fidx=()
     git -C "$root" status --porcelain=v1 -z --untracked-files=all \
         >"$scratch" 2>/dev/null || return 1
@@ -276,35 +318,51 @@ gates_spec_snapshot() { # <root> <state-file>
             printf 'cfg\t%s %s\t%s\n' "$entry" "$val" "$key"
         done <"$scratch"
 
-        hdir="$(git -C "$root" rev-parse --git-path hooks 2>/dev/null)" || return 1
-        [[ "$hdir" == /* ]] || hdir="$root/$hdir"
-        if [[ -d "$hdir" ]]; then
-            find "$hdir" \( -type f -o -type l \) -print0 >"$scratch" 2>/dev/null || return 1
-            : >"$list"
-            local hrels=() hx=()
-            while IFS= read -r -d '' path; do
-                rel="${path#"$hdir"/}"
-                if [[ -L "$path" ]]; then
-                    printf 'hook\tlink:%s\t%s\n' "$(readlink "$path" 2>/dev/null || true)" "$rel"
-                    continue
-                fi
-                printf '%s\n' "$path" >>"$list"
-                hrels+=("$rel")
-                if [[ -x "$path" ]]; then hx+=("x"); else hx+=("-"); fi
-            done <"$scratch"
-            if [[ ${#hrels[@]} -gt 0 ]]; then
-                git -C "$root" hash-object --no-filters --stdin-paths \
-                    <"$list" >"$scratch" 2>/dev/null || return 1
-                i=0
-                while IFS= read -r entry; do
-                    printf 'hook\t%s:%s\t%s\n' "${hx[i]}" "$entry" "${hrels[i]}"
-                    i=$((i + 1))
-                done <"$scratch"
-                [[ $i -eq ${#hrels[@]} ]] || return 1
+        local gpaths idir cdir wt
+        gpaths="$(git -C "$root" rev-parse --git-path hooks --git-path info \
+            --git-common-dir 2>/dev/null)" || return 1
+        { read -r hdir && read -r idir && read -r cdir; } <<<"$gpaths" || return 1
+        gates_spec_dir_state hook "$root" "$hdir" "$scratch" "$list" || return 1
+        gates_spec_dir_state info "$root" "$idir" "$scratch" "$list" || return 1
+
+        # Index flags: skip-worktree (S) and assume-unchanged (lowercase)
+        # entries hide later edits from git status, so each one is listed
+        # with its content hash.
+        git -C "$root" ls-files -v -z >"$scratch" 2>/dev/null || return 1
+        grep -z -v -e '^H ' "$scratch" >"$list" 2>/dev/null || [[ $? -eq 1 ]] || return 1
+        local ftags=() fpaths=()
+        : >"$scratch"
+        while IFS= read -r -d '' entry; do
+            path="${entry:2}"
+            if [[ -f "$root/$path" && ! -L "$root/$path" ]]; then
+                ftags+=("${entry:0:1}")
+                fpaths+=("$path")
+                printf '%s\n' "$path" >>"$scratch"
+            else
+                printf 'idx\t%s absent\t%s\n' "${entry:0:1}" "$path"
             fi
-        else
-            printf 'hook\tabsent\t%s\n' "$hdir"
+        done <"$list"
+        if [[ ${#fpaths[@]} -gt 0 ]]; then
+            git -C "$root" hash-object --no-filters --stdin-paths \
+                <"$scratch" >"$list" 2>/dev/null || return 1
+            i=0
+            while IFS= read -r entry; do
+                printf 'idx\t%s %s\t%s\n' "${ftags[i]}" "$entry" "${fpaths[i]}"
+                i=$((i + 1))
+            done <"$list"
+            [[ $i -eq ${#fpaths[@]} ]] || return 1
         fi
+
+        # Linked worktrees, read from <common-dir>/worktrees/<name>: where
+        # each one lives (its gitdir file) and whether it is locked.
+        [[ "$cdir" == /* ]] || cdir="$root/$cdir"
+        for wt in "$cdir"/worktrees/*; do
+            [[ -d "$wt" ]] || continue
+            path=""
+            [[ -f "$wt/gitdir" ]] && read -r path <"$wt/gitdir"
+            printf 'wt\t%s\t%s\n' "${path:-none}" "${wt##*/}"
+            [[ -e "$wt/locked" ]] && printf 'wt\tlocked\t%s\n' "${wt##*/}"
+        done
 
         git -C "$root" for-each-ref --format='%(objectname)%09%(refname)' \
             >"$scratch" 2>/dev/null || return 1
@@ -376,14 +434,17 @@ gates_spec_change_detail() { # <changes-file>
     awk -F'\t' '
         { n[$1]++; if (n[$1] <= 10) l[$1] = l[$1] (l[$1] == "" ? "" : " ") $2 }
         END {
-            split("tree ign cfg hook ref", order, " ")
+            nk = split("tree ign idx cfg hook info ref wt", order, " ")
             label["tree"] = "working tree modified"
             label["ign"] = "ignored files modified"
+            label["idx"] = "index flags modified"
             label["cfg"] = "git config modified"
             label["hook"] = "git hooks modified"
+            label["info"] = "git info files modified"
             label["ref"] = "refs modified"
+            label["wt"] = "worktrees modified"
             out = ""
-            for (i = 1; i <= 5; i++) {
+            for (i = 1; i <= nk; i++) {
                 k = order[i]
                 if (!(k in n)) continue
                 s = label[k] ": " l[k]
@@ -418,6 +479,98 @@ gates_spec_group_stop() { # <pgid>
     return 0
 }
 
+# PIDs of live processes whose environment holds GATES_SPEC_BLOCK=<id>, one
+# per line. Every process a block starts inherits the variable, and leaving
+# the process group or session (set -m, setsid, a double fork) does not
+# drop it. Linux: /proc/<pid>/environ, matched as a whole entry. macOS and
+# other BSDs: `ps -E`, which appends the environment to the command; the
+# table is captured to a file first, so the matching awk is not in it.
+# macOS shows no environment for Apple-signed binaries (/bin/sh, /bin/sleep,
+# /usr/bin/git), so there this only finds other binaries; the lease
+# descriptor (gates_spec_lease_holders) covers the rest. Both read the
+# environment a process was started with; a zombie shows none. Returns 2
+# when neither source is available.
+gates_spec_marked() { # <id> <scratch>
+    local needle="GATES_SPEC_BLOCK=$1" scratch="$2" path
+    if [[ -r /proc/self/environ ]]; then
+        (cd /proc && grep -l -a -z -x -F -e "$needle" [0-9]*/environ) \
+            >"$scratch" 2>/dev/null || true
+        while IFS= read -r path; do
+            printf '%s\n' "${path%%/*}"
+        done <"$scratch"
+        return 0
+    fi
+    ps -A -ww -E -o pid= -o command= >"$scratch" 2>/dev/null || return 2
+    [[ -s "$scratch" ]] || return 2
+    awk -v n="$needle" 'index($0 " ", " " n " ") { print $1 }' "$scratch"
+}
+
+# PIDs of processes holding the write end of lease FIFO <fifo>, one per
+# line. Linux: /proc/<pid>/fd links to the FIFO, kept when fdinfo shows a
+# write mode (the gate's own reader holds the read end). Elsewhere: lsof
+# over this user's processes (given the FIFO's path, macOS lsof matches
+# nothing), compared against the physical path. That takes most of a
+# second, but it only runs on the failure path, to name what to stop: the
+# pass/fail decision never depends on it.
+gates_spec_lease_holders() { # <fifo> <scratch>
+    local fifo="$1" scratch="$2" path pid fd key flags real
+    if [[ -d /proc/self/fd ]]; then
+        find /proc/[0-9]*/fd -maxdepth 1 -lname "$fifo" >"$scratch" 2>/dev/null || true
+        while IFS= read -r path; do
+            pid="${path#/proc/}"
+            pid="${pid%%/*}"
+            fd="${path##*/}"
+            flags=""
+            while read -r key flags; do
+                [[ "$key" == "flags:" ]] && break
+                flags=""
+            done <"/proc/$pid/fdinfo/$fd" 2>/dev/null
+            [[ "$flags" =~ ^[0-7]+$ ]] && (((8#$flags & 3) != 0)) && printf '%s\n' "$pid"
+        done <"$scratch"
+        return 0
+    fi
+    command -v lsof >/dev/null 2>&1 || return 0
+    real="$(cd "${fifo%/*}" 2>/dev/null && pwd -P)/${fifo##*/}" || return 0
+    # -b -n -P: no blocking stat of network mounts, no name lookups.
+    lsof -b -n -P -w -a -u "$(id -u)" -d 0-255 -F pan >"$scratch" 2>/dev/null || true
+    awk -v f="$real" '/^p/ { p = substr($0, 2) } /^a/ { a = substr($0, 2) }
+        /^n/ { if (substr($0, 2) == f && a ~ /[wu]/) print p }' "$scratch"
+}
+
+# Stop every process a block left behind (#197): anything still holding
+# the lease descriptor (<eof> is missing until the last holder exits) or
+# carrying block marker <id>. Lease holders on their way out get half a
+# second, as in the group check. The table is read after a short settle,
+# so a fork racing the block's exit is in it and a quick write by a
+# process neither check sees lands before the after-snapshot. Whatever is
+# left is killed and both are checked again. Returns 0 when none was
+# left, 1 when some had to be stopped.
+gates_spec_detached_stop() { # <id> <scratch> <fifo> <eof>
+    local id="$1" scratch="$2" fifo="$3" eof="$4" pids n=0 m
+    while [[ ! -f "$eof" && $n -lt 5 ]]; do
+        sleep 0.1
+        n=$((n + 1))
+    done
+    sleep 0.1
+    pids="$(gates_spec_marked "$id" "$scratch")" || pids=""
+    [[ -f "$eof" && -z "$pids" ]] && return 0
+    n=0
+    while [[ $n -lt 5 ]]; do
+        [[ -f "$eof" ]] || pids="$pids $(gates_spec_lease_holders "$fifo" "$scratch")"
+        # shellcheck disable=SC2086  # a list of numeric PIDs
+        [[ -n "${pids// /}" ]] && kill -KILL $pids 2>/dev/null
+        m=0
+        while [[ ! -f "$eof" && $m -lt 6 ]]; do
+            sleep 0.05
+            m=$((m + 1))
+        done
+        pids="$(gates_spec_marked "$id" "$scratch")" || pids=""
+        [[ -f "$eof" && -z "$pids" ]] && break
+        n=$((n + 1))
+    done
+    return 1
+}
+
 # Execute one accept block (R4/R5): repo-root cwd, pure-shell watchdog (no
 # timeout(1) on macOS base), snapshots before and after. Outside a git work
 # tree the block does not run: a mutation check that cannot happen fails
@@ -425,7 +578,12 @@ gates_spec_group_stop() { # <pgid>
 # process group. A timeout stops that whole group (#136); so does the end
 # of every block, and a block that leaves a process running past a short
 # grace fails (#164): a late write would land after the snapshot. A child
-# that calls setsid leaves the group and is out of reach.
+# that left the group (set -m, setsid, a double fork) is found by the
+# lease descriptor it inherited or the GATES_SPEC_BLOCK marker in its
+# environment, stopped, and fails the block too (#197). A process that
+# closed the descriptor and re-executed without the marker (or, on macOS,
+# runs an Apple-signed binary, whose environment ps cannot read) is not
+# found.
 # The previous block's after-snapshot is reused as this block's before-
 # snapshot (SPEC_SNAP_PREV), since the gate writes nothing in between.
 # Returns 0 pass, 1 fail, 2 timeout, 3 mutation; detail in SPEC_BLOCK_DETAIL.
@@ -456,7 +614,30 @@ gates_spec_run_block() { # <cmdfile> <timeout-s> <root> <outfile>
         gates_spec_mark "$mark"
     fi
     rm -f "$marker" "$leftover"
-    local rc=0
+    local rc=0 procs="$outfile.procs" lease="$outfile.lease" eof="$outfile.lease.eof"
+    # Unique per block and gate run; set only in the block's environment.
+    GATES_SPEC_BLOCK_SEQ=$((${GATES_SPEC_BLOCK_SEQ:-0} + 1))
+    local bid="$$-$GATES_SPEC_BLOCK_SEQ-$RANDOM$RANDOM" reader
+    # The lease (#197): the block inherits the write end of a FIFO on fd 7,
+    # and so does every process it starts, in or out of its group or
+    # session, unless it closes the descriptor. The reader sees EOF, and
+    # writes <eof>, only once the last holder has exited. It starts first
+    # (opening the write end waits for a reader) and outside the block's
+    # group, so a timeout does not take it along.
+    rm -f "$lease" "$eof"
+    if ! mkfifo "$lease" 2>/dev/null; then
+        rm -f "$mark"
+        SPEC_BLOCK_DETAIL="cannot check for leftover processes: mkfifo failed"
+        return 1
+    fi
+    (
+        cat "$lease" >/dev/null 2>&1 &
+        c=$!
+        trap 'kill "$c" 2>/dev/null; exit 0' TERM
+        wait "$c"
+        : >"$eof"
+    ) </dev/null >/dev/null 2>&1 &
+    reader=$!
     # The watchdog gets /dev/null stdio: it (and its sleep) must not hold
     # inherited fds, or a block that captures a nested verify.sh via $()
     # would wait on the pipe until the sleep expires. It is a job of its
@@ -468,10 +649,10 @@ gates_spec_run_block() { # <cmdfile> <timeout-s> <root> <outfile>
         # would then add, commit and tag in the caller's repository (#173).
         # The block gets a clean git environment; it runs in the project
         # directory, so its own git calls still find this repository.
-        (cd "$root" && GATES_SPEC_EXEC=1 exec env -u GIT_DIR -u GIT_INDEX_FILE \
+        (cd "$root" && GATES_SPEC_EXEC=1 GATES_SPEC_BLOCK="$bid" exec env -u GIT_DIR -u GIT_INDEX_FILE \
             -u GIT_WORK_TREE -u GIT_PREFIX -u GIT_COMMON_DIR -u GIT_OBJECT_DIRECTORY \
             -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_NAMESPACE -u GIT_QUARANTINE_PATH \
-            bash "$cmdfile") >"$outfile" 2>&1 </dev/null &
+            bash "$cmdfile") 7>"$lease" >"$outfile" 2>&1 </dev/null &
         pid=$!
         trap 'kill -TERM -- -"$pid" 2>/dev/null' HUP INT TERM
         (
@@ -501,20 +682,33 @@ gates_spec_run_block() { # <cmdfile> <timeout-s> <root> <outfile>
         fi
         exit "$brc"
     ) 2>/dev/null || rc=$?
+    # A process outside the group is stopped on every path, pass or not.
+    local detached=""
+    gates_spec_detached_stop "$bid" "$procs" "$lease" "$eof" ||
+        detached="left a detached process running (stopped)"
+    kill -TERM "$reader" 2>/dev/null
+    wait "$reader" 2>/dev/null
+    rm -f "$lease" "$eof"
     if [[ -f "$marker" ]]; then
         rm -f "$marker" "$leftover" "$mark"
-        SPEC_BLOCK_DETAIL="timeout after ${timeout}s"
+        SPEC_BLOCK_DETAIL="timeout after ${timeout}s${detached:+; $detached}"
         return 2
     fi
     if [[ "$rc" -ne 0 ]]; then
         SPEC_BLOCK_DETAIL="exit $rc"
         [[ -f "$leftover" ]] && SPEC_BLOCK_DETAIL="exit $rc; left a process running (stopped)"
+        SPEC_BLOCK_DETAIL="$SPEC_BLOCK_DETAIL${detached:+; $detached}"
         rm -f "$leftover" "$mark"
         return 1
     fi
     if [[ -f "$leftover" ]]; then
         rm -f "$leftover" "$mark"
-        SPEC_BLOCK_DETAIL="left a process running after it exited (stopped)"
+        SPEC_BLOCK_DETAIL="left a process running after it exited (stopped)${detached:+; $detached}"
+        return 1
+    fi
+    if [[ -n "$detached" ]]; then
+        rm -f "$mark"
+        SPEC_BLOCK_DETAIL="$detached"
         return 1
     fi
     if ! gates_spec_snapshot "$root" "$after"; then

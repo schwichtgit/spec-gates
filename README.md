@@ -116,9 +116,14 @@ Enforcement follows the feature's own completion claim, read from
   the task or criterion, and the cause (exit code, `timeout after <N>s`,
   or a mutation — blocks are read-only by contract and never
   auto-reverted). The read-only check covers the working tree, git config,
-  the git hooks, `HEAD` and refs, and gitignored files; a block that
-  leaves a process running fails too. Outside a git work tree blocks fail
-  closed, since there is nothing to check mutations against.
+  the git hooks, `.git/info/`, skip-worktree and assume-unchanged flags,
+  linked worktrees, `HEAD` and refs, and gitignored files. A block that
+  leaves a process running fails too, including one that left the
+  block's process group or session; a process that both closed the
+  inherited descriptor and dropped the block's environment marker is not
+  seen, nor on macOS an Apple-signed binary that closed the descriptor,
+  since `ps` cannot read its environment (see [how it works](docs/how-it-works.md)). Outside a git work tree
+  blocks fail closed, since there is nothing to check mutations against.
 
 Results land in the attestation record (a `spec` gate entry plus per-run
 counts and per-feature outcomes), a `spec` canary proves the gate still

@@ -479,18 +479,45 @@ tool gates and before `parity`:
    per-block watchdog (`spec.timeout_s`, default 30s) that stops the
    block's whole process group, and snapshots around each block:
    `git status` plus a content hash of every dirty or untracked file, git
-   config in every scope, the hooks directory git uses, `HEAD` and every
-   local ref, and gitignored files (checked by ctime). A block that
-   changes any of them, including a write to a file that was already
-   modified, a `git config core.hooksPath`, a commit or a tag, fails its
-   criterion, and nothing is ever auto-reverted. The process group is
-   stopped after every block too, and a block that leaves a process
-   running fails. `spec.snapshot_exclude` exempts untracked or ignored
-   paths another process writes during the run; `cache/` names the
-   directory and everything under it, like `cache/**`, and a pattern of
-   only `*`, `?` and `/` (which would exempt everything) makes the policy
-   invalid. Outside a git work tree
-   there is nothing to check against, so blocks fail closed.
+   config in every scope, the hooks directory git uses, the files in
+   `.git/info/` (attributes, exclude, sparse-checkout), every index entry
+   flagged skip-worktree or assume-unchanged (the flag and a content hash,
+   since `git status` no longer reports edits to such a file), the linked
+   worktrees, `HEAD` and every local ref, and gitignored files (checked by
+   ctime). A block that changes any of them, including a write to a file
+   that was already modified, a `git config core.hooksPath`, a commit, a
+   tag or a `git worktree add`, fails its criterion, and nothing is ever
+   auto-reverted. Repacking (`git gc`, `git pack-refs`) changes how git
+   stores objects and refs, not what they say, and is not checked; neither
+   are other worktrees' `HEAD`, so a commit or a new worktree made from a
+   sibling worktree during the run fails a block (rerun).
+
+   No process may outlive its block. The process group is stopped after
+   every block, and a block that leaves a process running fails. A child
+   that leaves the group or the session (`set -m`, `setsid`, a double
+   fork) is found two ways: every process the block starts inherits the
+   write end of a FIFO on descriptor 7, which the gate reads to EOF (no
+   EOF half a second after the block exits means a holder is alive), and
+   carries `GATES_SPEC_BLOCK=<id>` in its environment, which the gate
+   looks for in `/proc/<pid>/environ` on Linux and in `ps -E` elsewhere.
+   What is found is killed, and the block fails with
+   `left a detached process running (stopped)`. Not found: a process that
+   closed descriptor 7 and also started a program without the marker
+   (`env -i`, `env -u GATES_SPEC_BLOCK`, or overwrote its environment in
+   memory). On macOS `ps` shows no environment for Apple-signed binaries
+   (`/bin/sh`, `/bin/sleep`, `/usr/bin/git`, `/usr/bin/perl`), so there
+   only the descriptor finds them: a `/bin/sh` child started through
+   Node's `child_process` or Python's `subprocess`, which pass no extra
+   descriptors, is not seen on macOS. The process table is read after a
+   short settle and before the after-snapshot, so a write such a process
+   makes right away is still caught as a mutation; a later one is not.
+   `spec.snapshot_exclude` exempts untracked or ignored paths another
+   process writes during the run; `cache/` names the directory and
+   everything under it, like `cache/**`, and a pattern of only `*`, `?`
+   and `/` (which would exempt everything) makes the policy invalid.
+   Outside a git work tree there is nothing to check against, so blocks
+   fail closed.
+
 4. **Enforce**: a Complete feature fails the `spec` gate on any unchecked
    task or failing block, naming the feature, the task or criterion, and
    the cause. Incomplete features are informational

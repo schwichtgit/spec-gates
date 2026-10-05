@@ -565,6 +565,26 @@ expect_contains "nested verify.sh inside a block passes" "$OUT" "EXIT=0"
 OUT="$(isoblock child '  (sleep 2; echo late >late.txt) &')"
 expect_contains "block leaving a child running blocks the run" "$OUT" "EXIT=2"
 expect_contains "leftover child is named" "$OUT" "left a process running"
+
+# Issue #197: a child that leaves the process group (set -m) or the session
+# (setsid after a fork) is found by the lease descriptor it inherited. The
+# system binaries are named by path: macOS hides their environment from ps,
+# so these pass only through the lease.
+OUT="$(isoblock setm '  /bin/bash -c "set -m; (/bin/sleep 2; git config core.hooksPath /dev/null) & disown"')"
+expect_contains "block leaving a set -m child running blocks the run" "$OUT" "EXIT=2"
+expect_contains "detached child is named" "$OUT" "left a detached process running (stopped)"
+OUT="$(isoblock setsid '  perl -e "use POSIX; fork and exit; POSIX::setsid(); sleep 2; open(F, q(>late.txt))"')"
+expect_contains "block leaving a setsid child running blocks the run" "$OUT" "EXIT=2"
+expect_contains "new-session child is named" "$OUT" "left a detached process running (stopped)"
+# A runtime that closes inherited descriptors (Node's spawn passes only
+# stdio) is found by the GATES_SPEC_BLOCK marker; on macOS a system shell
+# hides it, so this runs where /proc exposes every environment.
+if [[ -r /proc/self/environ ]]; then
+    OUT="$(isoblock nodespawn '  node -e "require(\"child_process\").spawn(\"sh\", [\"-c\", \"sleep 2; echo late >late.txt\"], { detached: true, stdio: \"ignore\" }).unref()"')"
+    expect_contains "child without the lease descriptor is found by its marker" "$OUT" \
+        "left a detached process running (stopped)"
+fi
+
 sleep 3
 TOTAL=$((TOTAL + 1))
 if [[ ! -e "$WORKDIR/iso-child/late.txt" ]]; then
@@ -574,6 +594,45 @@ else
     echo "FAIL: passing block's child kept running and wrote late.txt"
     FAIL=$((FAIL + 1))
 fi
+expect "set -m child is stopped before it switches hooks off" \
+    "$(git -C "$WORKDIR/iso-setm" config core.hooksPath || echo unset)" "unset"
+TOTAL=$((TOTAL + 1))
+if [[ ! -e "$WORKDIR/iso-setsid/late.txt" ]]; then
+    echo "PASS: setsid child is stopped, no late write"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL: setsid child kept running and wrote late.txt"
+    FAIL=$((FAIL + 1))
+fi
+if [[ -r /proc/self/environ ]]; then
+    TOTAL=$((TOTAL + 1))
+    if [[ ! -e "$WORKDIR/iso-nodespawn/late.txt" ]]; then
+        echo "PASS: marked child is stopped, no late write"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL: marked child kept running and wrote late.txt"
+        FAIL=$((FAIL + 1))
+    fi
+fi
+
+OUT="$(isoblock skipflag '  git update-index --skip-worktree .gitignore')"
+expect_contains "block setting skip-worktree blocks the run" "$OUT" "index flags modified: .gitignore"
+
+# A file already flagged skip-worktree: status hides the edit, the hash not.
+D="$WORKDIR/iso-skipwrite"
+isofix "$D"
+git -C "$D" update-index --skip-worktree .gitignore
+# shellcheck disable=SC2016  # literal backticks
+printf -- '- [x] T001 Must leave the repository alone\n\n  ```accept\n  echo x >>.gitignore\n  ```\n' \
+    | mkfeature "$D" 500-iso Complete
+OUT="$(gate_out "$D")"
+expect_contains "write to a skip-worktree file blocks the run" "$OUT" "index flags modified: .gitignore"
+
+OUT="$(isoblock attributes '  echo "* -diff" >.git/info/attributes')"
+expect_contains "block writing .git/info/attributes blocks the run" "$OUT" "git info files modified: attributes"
+
+OUT="$(isoblock wtadd '  git worktree add -q --detach ../iso-wtadd-wt')"
+expect_contains "block adding a worktree blocks the run" "$OUT" "worktrees modified:"
 
 OUT="$(isoblock reaped '  sleep 30 &
   kill $!')"

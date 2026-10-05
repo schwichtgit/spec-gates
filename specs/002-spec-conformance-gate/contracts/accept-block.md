@@ -61,6 +61,15 @@ the association):
    - the hooks directory git uses (`git rev-parse --git-path hooks`, which
      follows `core.hooksPath`): every file's exec bit and content hash
      (`git hooks modified: <names>`);
+   - the info directory (`git rev-parse --git-path info`: attributes,
+     exclude, sparse-checkout), the same way
+     (`git info files modified: <names>`);
+   - index entries flagged skip-worktree or assume-unchanged
+     (`git ls-files -v`): the flag and a content hash, since `git status`
+     does not report edits to a flagged file
+     (`index flags modified: <paths>`);
+   - linked worktrees (`<common-dir>/worktrees/*`): each one's path and
+     lock (`worktrees modified: <names>`);
    - `HEAD` (commit and symbolic target) and every ref except
      `refs/remotes/*`, which a background fetch moves
      (`refs modified: <refs>`);
@@ -80,9 +89,10 @@ the association):
    closed (`cannot check for mutations: not a git work tree`). Blocks
    needing scratch space must use `mktemp -d` outside the repository and
    clean up. Not covered: files outside the repository (other than the
-   global and system git config), and other worktrees' `HEAD`; concurrent
-   git activity in a sibling worktree (a commit there) fails a block, so
-   rerun.
+   global and system git config), other worktrees' `HEAD`, and repacking
+   (`git gc`, `git pack-refs`), which changes storage, not content;
+   concurrent git activity in a sibling worktree (a commit there, or a new
+   worktree) fails a block, so rerun.
 
 8. **Budget and processes**: each block runs under the policy's
    `spec.timeout_s` watchdog (default 30s); exceeding it fails the block.
@@ -91,8 +101,18 @@ the association):
    exits. A process still running half a second after the block exits
    fails the block (`left a process running after it exited (stopped)`),
    pass or not: its later writes would land after the snapshot. A child
-   that calls `setsid` (or double-forks into a new session) leaves the
-   group and is out of reach; that is a documented limit, not a guarantee.
+   that left the group or session (`set -m`, `setsid`, a double fork) is
+   found by the write end of a lease FIFO on descriptor 7, which every
+   process the block starts inherits, or by `GATES_SPEC_BLOCK=<id>` in its
+   environment (`/proc/<pid>/environ` on Linux, `ps -E` elsewhere); it is
+   killed and fails the block
+   (`left a detached process running (stopped)`). Not found: a process
+   that closed descriptor 7 and also runs without the marker (started
+   through `env -i` or `env -u`, or its environment overwritten in
+   memory), and on macOS, where `ps` shows no environment for
+   Apple-signed binaries, an Apple-signed binary that does not hold
+   descriptor 7 (a `/bin/sh` started through Node's `child_process` or
+   Python's `subprocess`). That is a documented limit, not a guarantee.
 9. **No re-entry**: blocks run with `GATES_SPEC_EXEC=1` in the
    environment; a nested `verify.sh` call does not run accept blocks, so
    a block may invoke the gate runner (e.g. inside a sandbox fixture)
@@ -103,13 +123,13 @@ the association):
 
 ## Execution environment
 
-| Aspect      | Guarantee                                                            |
-| ----------- | -------------------------------------------------------------------- |
-| cwd         | Repository root.                                                     |
-| Shell       | `/bin/bash` (bash 3.2 floor — write blocks accordingly).             |
-| Environment | Inherited from the gate run; no extra variables promised in v1.      |
-| Ordering    | Serial, lexicographic by feature, then file order within `tasks.md`. |
-| Output      | Captured; shown only when the block fails.                           |
+| Aspect      | Guarantee                                                                                         |
+| ----------- | ------------------------------------------------------------------------------------------------- |
+| cwd         | Repository root.                                                                                  |
+| Shell       | `/bin/bash` (bash 3.2 floor — write blocks accordingly).                                          |
+| Environment | Inherited from the gate run, plus `GATES_SPEC_EXEC=1`, `GATES_SPEC_BLOCK=<id>` and fd 7 (rule 8). |
+| Ordering    | Serial, lexicographic by feature, then file order within `tasks.md`.                              |
+| Output      | Captured; shown only when the block fails.                                                        |
 
 ## Anti-patterns
 

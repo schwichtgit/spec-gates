@@ -204,6 +204,14 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   refuse an invalid policy instead of reporting principles active against
   it, and a heading or marker inside a fenced code block is not a
   principle.
+- **An accept block can no longer leave a detached process behind**
+  (#197). A child that left the block's process group (`set -m`,
+  `setsid`, a double fork) kept running after a passing block and could
+  switch `core.hooksPath` off seconds later. Blocks now inherit a lease
+  descriptor and a `GATES_SPEC_BLOCK` marker; a process still holding
+  either after the block exits is stopped and fails it. The read-only
+  check also covers skip-worktree and assume-unchanged flags (with a
+  content hash of flagged files), `.git/info/` and linked worktrees.
 - **An unknown `--accept` feature is refused before any gate runs**
   (#179). `verify.sh --accept <name>` with a name that is not a feature
   ran the lint and quality gates first and refused only at the spec gate,
