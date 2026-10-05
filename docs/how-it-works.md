@@ -119,7 +119,8 @@ file.
 ### 2. The git boundary
 
 When work becomes history. `pre-commit` blocks commits to `main`, scans
-staged content for secrets and forbidden files, and runs the same verify
+staged content for secrets and forbidden files (renamed and typechanged
+files included), and runs the same verify
 entrypoint. `commit-msg` enforces Conventional Commits and refuses
 AI-isms, emoji, AI branding and `Co-Authored-By` trailers. The branding
 list is policy (`git.ai_branding.terms`); a legitimate phrase that contains
@@ -241,7 +242,8 @@ refuses it there unless the PR description declares the path. The trailer is an 
 declaration, not a credential: real approval is enforced server-side by
 CODEOWNERS plus branch protection. Setting `git.protected_change_trailer`
 to `false` restores the unconditional refusal. The hooks read the switch
-from `HEAD`'s policy as well as the working one, so the commit that turns
+from the staged policy and `HEAD`'s, not the working tree, so an
+unstaged edit does not lift the refusal, and the commit that turns
 it off is still judged by the trailer rule: it passes with a
 `Protected-Change` trailer for each protected path it stages plus
 `Approved-By`, and the refusal applies from the next commit on. The one
@@ -335,6 +337,23 @@ reports the policy as `[MISSING]`; `project.sh` refuses to project under
 it. A bad `--boundary` value, `--boundary` or `--accept` without a value, or
 an `--accept` name that is not a feature, is a usage error (exit `1`)
 refused before any gate runs.
+
+**Environment overrides are visible.** `GATES_POLICY_FILE` replaces the
+whole policy, so set on one command it would drop every gate the
+repository declares. The git hooks, `verify.sh --boundary git|ci` and
+`pr-check.sh` ignore it and enforce the policy the repository commits;
+`verify.sh` at the agent boundary (or with no `--boundary`) applies it.
+Either way the run says so: a stderr line, an `[override] policy` line in
+the text report, and a `policy_override` object (`file`, `applied`) in the
+`--json` output and the attestation, whose `policy_sha256` hashes the
+policy actually enforced. The canary suite therefore probes its sandboxes
+with their own policies under an inherited override. Other variables
+that change what is enforced are reported where they act: `GATES_SKIP=1`
+(the pre-commit quality gate) prints that verify did not run, and
+`GATES_SPEC_EXEC` records the spec gate as `skipped`. validate-bash asks
+before a command sets `GATES_POLICY_FILE`, `GATES_SKIP`,
+`GATES_ALLOW_MAIN_COMMIT`, `GATES_RUNTIME_DIR`, `GATES_TEST` or
+`GATES_SPEC_EXEC`; unsetting them (`env -u`) is allowed.
 
 ## Evidence, canaries, and verified parity
 
@@ -467,7 +486,9 @@ file into an **overlay** on a versioned upstream document:
    (`policy.effective.json`), a deterministic recursive merge where the
    overlay wins and arrays replace wholesale.
 2. **Enforce.** Every boundary reads the effective policy through the same
-   resolver; `GATES_POLICY_FILE` keeps absolute precedence for tests. The
+   resolver. `GATES_POLICY_FILE` takes precedence where it applies (the
+   agent boundary and the library seams the test suites use); the git
+   and CI boundaries ignore it (see One entrypoint). The
    attestation's `policy_sha256` hashes what was actually enforced.
 3. **Prove (offline, every run).** The synthetic `contract` gate runs
    before the tool gates (policy integrity precedes policy enforcement) and

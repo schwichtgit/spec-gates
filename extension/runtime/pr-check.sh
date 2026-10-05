@@ -85,6 +85,13 @@ if [[ -n "${GATES_RUNTIME_DIR:-}" ]]; then
     }
 fi
 cd "$PROJECT_ROOT" || exit 2
+# The rules come from the base policy, or the checked-out one on an
+# adoption PR, never from the environment (#196): an inherited
+# GATES_POLICY_FILE is ignored, and said so.
+if [[ -n "${GATES_POLICY_FILE:-}" ]]; then
+    echo "pr-check: GATES_POLICY_FILE=$GATES_POLICY_FILE is ignored at the CI boundary; the repository's policy applies" >&2
+    unset GATES_POLICY_FILE
+fi
 POLICY_LIB="$RUNTIME_DIR/lib/policy.sh"
 if [[ ! -f "$POLICY_LIB" ]]; then
     echo "pr-check: $POLICY_LIB not found -- re-project the runtime (/speckit.gates.upgrade)" >&2

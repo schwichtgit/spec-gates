@@ -109,6 +109,36 @@ add` forms at the agent boundary. `project.sh` lists new settings like
 
 ### Fixed
 
+- **A project rule's timeout covers what the rule started** (#189). A
+  rule that exited after starting a background child (`(sleep 25) &`,
+  `nohup … &`) made the hook wait for the child, past the timeout or
+  forever, since the child held the captured stderr pipe. The rule's
+  stderr now goes to a file, its process group is stopped when it exits
+  or times out, and a rule that leaves a process running refuses, as an
+  accept block does. A non-numeric `GATES_LOCAL_TIMEOUT` disabled the
+  timeout; any value that is not a whole number above 0 now refuses.
+- **`GATES_POLICY_FILE` no longer drops gates at the git and CI
+  boundaries** (#196). Set on a commit it replaced the whole policy, so the
+  lint gates vanished without a `skipped` line and the canaries passed
+  unblocked. The git hooks, `verify.sh --boundary git|ci` and
+  `pr-check.sh` now ignore it and say so; at the agent boundary it still
+  applies and is reported in the text, `--json` and the attestation
+  (`policy_override`). validate-bash asks before a command sets
+  `GATES_POLICY_FILE`, `GATES_SKIP`, `GATES_ALLOW_MAIN_COMMIT`,
+  `GATES_RUNTIME_DIR` or `GATES_TEST`, and `GATES_SKIP=1` now prints that
+  the quality gate did not run.
+- **Renamed and typechanged files are scanned for secrets** (#186).
+  `pre-commit` (and `pre-merge-commit`) listed staged files without
+  renames or typechanges, so `git mv settings.txt .env`, a rename with a
+  small edit adding a key, or a symlink replaced by a file holding one
+  was committed unscanned. Renames now count as their new name, and
+  typechanges are scanned.
+- **An unstaged policy edit no longer lifts the trailer-off refusal**
+  (#188). The hooks turned `git.protected_change_trailer` on when the
+  working-tree policy had it on, so re-enabling it without staging that
+  edit let a refused protected commit through. The switch is now read
+  from the staged policy and `HEAD`'s (the working tree only when neither
+  carries a policy).
 - **An unknown `--accept` feature is refused before any gate runs**
   (#179). `verify.sh --accept <name>` with a name that is not a feature
   ran the lint and quality gates first and refused only at the spec gate,

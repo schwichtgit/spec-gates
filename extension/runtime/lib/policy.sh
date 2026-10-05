@@ -151,19 +151,30 @@ gates_protected_trailer_enabled() {
 }
 
 # The switch as the git hooks apply it to a commit (#172): on when the
-# working policy OR the policy committed at HEAD has it on. The commit that
+# staged policy OR the policy committed at HEAD has it on. The commit that
 # turns it off is still judged by the trailer rule it removes, so it passes
 # with full trailers instead of being refused by its own staged toggle;
-# from the next commit on, the refusal applies.
+# from the next commit on, the refusal applies. The working tree is read
+# only when neither the index nor HEAD carries a policy (an untracked
+# runtime): an unstaged edit is not part of the commit and must not turn
+# the rule back on (#188).
 gates_protected_trailer_enabled_commit() {
-    gates_protected_trailer_enabled && return 0
-    local tmp rc=1
+    local tmp rev rc=1 found=0
     tmp="$(mktemp 2>/dev/null || mktemp -t gates-policy)" || return 1
-    if gates_policy_at_rev HEAD "$tmp" \
-        && GATES_POLICY_FILE="$tmp" gates_protected_trailer_enabled; then
-        rc=0
-    fi
+    # The empty rev reads the index (`:path`).
+    for rev in "" HEAD; do
+        gates_policy_at_rev "$rev" "$tmp" || continue
+        found=1
+        if GATES_POLICY_FILE="$tmp" gates_protected_trailer_enabled; then
+            rc=0
+            break
+        fi
+    done
     rm -f "$tmp"
+    if [[ "$found" -eq 0 ]]; then
+        gates_protected_trailer_enabled
+        return
+    fi
     return "$rc"
 }
 

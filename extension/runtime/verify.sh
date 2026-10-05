@@ -84,6 +84,29 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# GATES_POLICY_FILE replaces the whole policy (#196): set for one command
+# it would drop every gate the repository declares. The git and CI
+# boundaries judge the policy the repository commits, so they ignore it;
+# elsewhere it applies. Either way the run says so (stderr, --json and the
+# attestation's policy_override).
+POLICY_OVERRIDE="${GATES_POLICY_FILE:-}"
+POLICY_OVERRIDE_JSON=""
+POLICY_OVERRIDE_APPLIED=""
+if [[ -n "$POLICY_OVERRIDE" ]]; then
+    case "$BOUNDARY" in
+        git | ci)
+            unset GATES_POLICY_FILE
+            POLICY_OVERRIDE_APPLIED=false
+            echo "gates: GATES_POLICY_FILE=$POLICY_OVERRIDE is ignored at the $BOUNDARY boundary; the repository's policy applies" >&2
+            ;;
+        *)
+            POLICY_OVERRIDE_APPLIED=true
+            echo "gates: GATES_POLICY_FILE=$POLICY_OVERRIDE replaces the repository's policy for this run" >&2
+            ;;
+    esac
+    POLICY_OVERRIDE_JSON="{\"file\":$(json_str "$POLICY_OVERRIDE"),\"applied\":$POLICY_OVERRIDE_APPLIED}"
+fi
+
 PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 GATES_DIR="$PROJECT_ROOT/.specify/gates"
 POLICY_FILE="$GATES_DIR/policy.json"
@@ -405,13 +428,14 @@ if [[ "$DRY_RUN" != "1" && "$ATT_ENABLED" != "false" ]]; then
         if [[ ${#ATT_GATES[@]} -gt 0 ]]; then
             att_joined="$(IFS=,; printf '%s' "${ATT_GATES[*]}")"
         fi
-        # The optional spec (002) and contract (003) objects are additive;
-        # v stays 1 and consumers ignore unknown fields (001 rule).
+        # The optional spec (002), contract (003) and policy_override (#196)
+        # objects are additive; v stays 1 and consumers ignore unknown fields (001 rule).
         ATTESTATION="$(jq -cn --arg ts "$ATT_TS" --arg boundary "$BOUNDARY" \
             --arg sha "$POLICY_SHA" --arg rv "$RUNTIME_VERSION" \
             --argjson exit "$EXIT_CODE" --argjson gates "[$att_joined]" \
             --argjson spec "${SPEC_ATT_JSON:-null}" \
-            --argjson contract "${CONTRACT_ATT_JSON:-null}" '
+            --argjson contract "${CONTRACT_ATT_JSON:-null}" \
+            --argjson override "${POLICY_OVERRIDE_JSON:-null}" '
             { v: 1,
               ts: $ts,
               boundary: (if ["agent","git","ci"] | index($boundary) then $boundary else "unspecified" end),
@@ -420,7 +444,8 @@ if [[ "$DRY_RUN" != "1" && "$ATT_ENABLED" != "false" ]]; then
               exit: $exit,
               gates: $gates }
             + (if $spec != null then { spec: $spec } else {} end)
-            + (if $contract != null then { contract: $contract } else {} end)')"
+            + (if $contract != null then { contract: $contract } else {} end)
+            + (if $override != null then { policy_override: $override } else {} end)')"
         MAX_RECORDS="$(gates_policy_section_get attestation max_records)"
         [[ -z "$MAX_RECORDS" ]] && MAX_RECORDS=200
         if ! gates_attest_append "$ATTESTATION" "$GATES_DIR/attestations.jsonl" "$MAX_RECORDS"; then
@@ -442,15 +467,22 @@ if [[ "$JSON" == "1" ]]; then
     if [[ ${#RESULTS[@]} -gt 0 ]]; then
         joined="$(IFS=,; printf '%s' "${RESULTS[*]}")"
     fi
+    override_field=""
+    [[ -n "$POLICY_OVERRIDE_JSON" ]] && override_field=",\"policy_override\":$POLICY_OVERRIDE_JSON"
     if [[ -n "$ATTESTATION" ]]; then
-        printf '{"boundary":"%s","failed":%d,"warnings":%d,"gates":[%s],"attestation":%s}\n' \
-            "$BOUNDARY" "$FAILED" "$WARNINGS" "$joined" "$ATTESTATION"
+        printf '{"boundary":"%s","failed":%d,"warnings":%d%s,"gates":[%s],"attestation":%s}\n' \
+            "$BOUNDARY" "$FAILED" "$WARNINGS" "$override_field" "$joined" "$ATTESTATION"
     else
-        printf '{"boundary":"%s","failed":%d,"warnings":%d,"gates":[%s]}\n' \
-            "$BOUNDARY" "$FAILED" "$WARNINGS" "$joined"
+        printf '{"boundary":"%s","failed":%d,"warnings":%d%s,"gates":[%s]}\n' \
+            "$BOUNDARY" "$FAILED" "$WARNINGS" "$override_field" "$joined"
     fi
 else
     echo "gates: boundary=$BOUNDARY failed=$FAILED warnings=$WARNINGS"
+    if [[ "$POLICY_OVERRIDE_APPLIED" == "true" ]]; then
+        echo "  [override] policy -- GATES_POLICY_FILE=$POLICY_OVERRIDE was enforced instead of the repository's policy"
+    elif [[ -n "$POLICY_OVERRIDE" ]]; then
+        echo "  [override] policy -- GATES_POLICY_FILE=$POLICY_OVERRIDE was ignored at the $BOUNDARY boundary"
+    fi
     if [[ ${#RESULTS[@]} -gt 0 ]]; then
         for r in "${RESULTS[@]}"; do
             name="$(printf '%s' "$r" | jq -r '.name')"

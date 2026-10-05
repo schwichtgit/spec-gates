@@ -33,6 +33,13 @@ PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 if git rev-parse --show-toplevel >/dev/null 2>&1; then
     export CLAUDE_PROJECT_DIR="$PROJECT_ROOT"
 fi
+# GATES_POLICY_FILE replaces the whole policy (#196), so one variable on a
+# commit would drop every rule. The git boundary judges the policy the
+# repository commits: it ignores the variable, and says so.
+if [[ -n "${GATES_POLICY_FILE:-}" ]]; then
+    echo "gates: GATES_POLICY_FILE=$GATES_POLICY_FILE is ignored at the git boundary; the repository's policy applies" >&2
+    unset GATES_POLICY_FILE
+fi
 POLICY_LIB="$PROJECT_ROOT/.specify/gates/lib/policy.sh"
 # shellcheck source=/dev/null disable=SC1091
 [[ -f "$POLICY_LIB" ]] && source "$POLICY_LIB"

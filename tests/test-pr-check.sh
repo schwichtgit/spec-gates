@@ -71,6 +71,12 @@ DECL=$'\n\nProtected-Change: c.md\nApproved-By: Reviewer'
 echo "=== no PR context ==="
 expect "push to main (no title, body, or range) -> skipped, exit 0" "$(run)" 0
 expect "skip is reported" "$(grep -c 'skipped' "$WORKDIR/out.txt")" 2
+# #196: an inherited GATES_POLICY_FILE does not replace the repository's rules.
+printf '%s' '{ "hooks": {}, "git": { "conventional_commits": false } }' >"$WORKDIR/lax.json"
+expect "GATES_POLICY_FILE is ignored: non-conventional title still -> exit 1" \
+    "$(run GATES_POLICY_FILE="$WORKDIR/lax.json" GATES_PR_TITLE="Update stuff")" 1
+expect "the ignored override is named" \
+    "$(grep -c 'GATES_POLICY_FILE=.* is ignored at the CI boundary' "$WORKDIR/out.txt")" 1
 
 echo ""
 echo "=== GitHub pull_request context ==="

@@ -403,6 +403,37 @@ DORMANT_OUT="$(gate_json "$D")"
 expect "dormant repo has no contract object" \
     "$(printf '%s' "$DORMANT_OUT" | jq -r '.attestation | has("contract")')" false
 
+# --- GATES_POLICY_FILE (#196): ignored at git/ci, applied elsewhere, always reported ---
+echo "=== GATES_POLICY_FILE override is reported ==="
+DPO="$WORKDIR/policy-override"
+project "$DPO" "$CUSTOM_FALSE"
+printf '%s' "$CUSTOM_TRUE" >"$WORKDIR/override-policy.json"
+for b in git ci; do
+    rc=0
+    PO_OUT="$(GATES_POLICY_FILE="$WORKDIR/override-policy.json" CLAUDE_PROJECT_DIR="$DPO" \
+        bash "$DPO/.specify/gates/verify.sh" --boundary "$b" --json 2>"$WORKDIR/po.err")" || rc=$?
+    expect "$b boundary ignores GATES_POLICY_FILE (repository's failing policy enforced)" "$rc" 2
+    expect "$b boundary --json reports the ignored override" \
+        "$(printf '%s' "$PO_OUT" | jq -r '.policy_override | "\(.file == "'"$WORKDIR/override-policy.json"'"):\(.applied)"')" "true:false"
+    expect "$b boundary attestation records the ignored override" \
+        "$(printf '%s' "$PO_OUT" | jq -r '.attestation.policy_override.applied')" false
+    expect "$b boundary names the override on stderr" \
+        "$(grep -c 'is ignored at the '"$b"' boundary' "$WORKDIR/po.err")" 1
+done
+rc=0
+PO_OUT="$(GATES_POLICY_FILE="$WORKDIR/override-policy.json" CLAUDE_PROJECT_DIR="$DPO" \
+    bash "$DPO/.specify/gates/verify.sh" --boundary agent --json 2>/dev/null)" || rc=$?
+expect "agent boundary applies GATES_POLICY_FILE" "$rc" 0
+expect "agent boundary attestation records the applied override and hashes it" \
+    "$(printf '%s' "$PO_OUT" | jq -r '"\(.attestation.policy_override.applied):\(.attestation.policy_sha256)"')" \
+    "true:$(shasum -a 256 "$WORKDIR/override-policy.json" 2>/dev/null | cut -d' ' -f1 || sha256sum "$WORKDIR/override-policy.json" | cut -d' ' -f1)"
+PO_TEXT="$(GATES_POLICY_FILE="$WORKDIR/override-policy.json" CLAUDE_PROJECT_DIR="$DPO" \
+    bash "$DPO/.specify/gates/verify.sh" --boundary agent 2>/dev/null || true)"
+expect "text report names the applied override" \
+    "$(grep -c '^  \[override\] policy -- GATES_POLICY_FILE=.* was enforced' <<<"$PO_TEXT")" 1
+expect "no override, no policy_override field" \
+    "$(gate_json "$DPO" | jq -r '"\(has("policy_override")):\(.attestation | has("policy_override"))"')" "false:false"
+
 echo ""
 echo "$PASS passed, $FAIL failed, $SKIP skipped ($TOTAL total)"
 [[ "$FAIL" -gt 0 ]] && exit 1

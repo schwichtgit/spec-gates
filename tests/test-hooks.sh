@@ -401,6 +401,28 @@ check "secret scan: a failing git grep refuses the commit" 0 \
     bash -c "cd '$GF' && echo ok >fg.txt && git add fg.txt && ! PATH='$WORKDIR/failgrep':\"\$PATH\" '$GITHOOKS/pre-commit' >/dev/null 2>'$WORKDIR/sc.err' && grep -q 'cannot read staged content for the secret scan' '$WORKDIR/sc.err'"
 ( cd "$GF" && git reset -q -- . >/dev/null 2>&1; rm -f fg.txt )
 
+# Renames and typechanges are scanned too (issue #186): the staged list
+# used to drop R and T entries, so a rename-only commit even exited early.
+# Each case rolls back to the fixture commit, even one that wrongly landed.
+( cd "$GF" && echo X=1 >settings.txt && seq 1 40 >config.txt && ln -s seed.txt link.txt \
+    && git add settings.txt config.txt link.txt && git commit -q -m 'chore: rename fixtures' ) >/dev/null 2>&1
+RN_BASE="$(git -C "$GF" rev-parse HEAD)"
+check "rename scan: renaming a file to .env is blocked" 0 \
+    bash -c "cd '$GF' && git mv settings.txt .env && ! git commit -q -m 'chore: rename' 2>'$WORKDIR/sc.err' && grep -qF 'BLOCKED: forbidden file: .env' '$WORKDIR/sc.err'"
+git -C "$GF" reset -q --hard "$RN_BASE" >/dev/null 2>&1
+( cd "$GF" && git mv config.txt config2.txt && printf 'aws = "AKIA%s"\n' ABCDEFGHIJKLMNOP >>config2.txt && git add config2.txt )
+check "rename scan: git sees a rename with a small edit" 0 \
+    bash -c "cd '$GF' && [[ \"\$(git diff --cached --name-status)\" == R* ]]"
+check "rename scan: a key added during a rename is blocked" 0 \
+    bash -c "cd '$GF' && ! git commit -q -m 'chore: rename config' 2>'$WORKDIR/sc.err' && grep -qF 'SECRET: AWS key pattern in config2.txt' '$WORKDIR/sc.err'"
+git -C "$GF" reset -q --hard "$RN_BASE" >/dev/null 2>&1
+( cd "$GF" && rm link.txt && printf 'AKIA%s\n' ABCDEFGHIJKLMNOP >link.txt && git add link.txt )
+check "rename scan: git sees a symlink-to-file typechange" 0 \
+    bash -c "cd '$GF' && [[ \"\$(git diff --cached --name-status)\" == T* ]]"
+check "rename scan: a key in a typechanged file is blocked" 0 \
+    bash -c "cd '$GF' && ! git commit -q -m 'chore: typechange' 2>'$WORKDIR/sc.err' && grep -qF 'SECRET: AWS key pattern in link.txt' '$WORKDIR/sc.err'"
+git -C "$GF" reset -q --hard "$RN_BASE" >/dev/null 2>&1
+
 # Forbidden-file allowlist: template/example files are committable even when
 # the base name looks sensitive; real secret files still blocked.
 FF="$WORKDIR/forbidden.sh"
@@ -534,7 +556,15 @@ check "trailer off: the next protected commit is refused despite trailers" 1 \
     bash -c "cd '$PT' && echo c >const.md && git add const.md && git commit -q -F '$PTM' 2>'$WORKDIR/pt-off.err'"
 check "trailer off: refused by pre-commit's outright refusal" 0 \
     grep -q "BLOCKED: policy-protected file staged: const.md" "$WORKDIR/pt-off.err"
-( cd "$PT" && git reset -q -- . >/dev/null 2>&1; rm -f const.md )
+# The switch is read from the index and HEAD (#188): turning it back on in
+# the working tree without staging that edit does not lift the refusal.
+( cd "$PT" && jq '.git.protected_change_trailer = true' .specify/gates/policy.json >"$WORKDIR/pt-on.json" \
+    && cp "$WORKDIR/pt-on.json" .specify/gates/policy.json )
+check "trailer off: an unstaged edit turning it on is ignored" 1 \
+    bash -c "cd '$PT' && echo c >const.md && git add const.md && git commit -q -F '$PTM' 2>'$WORKDIR/pt-off.err'"
+check "trailer off: unstaged toggle refused by pre-commit's outright refusal" 0 \
+    grep -q "BLOCKED: policy-protected file staged: const.md" "$WORKDIR/pt-off.err"
+( cd "$PT" && git reset -q -- . >/dev/null 2>&1; rm -f const.md; git checkout -q -- .specify/gates/policy.json )
 
 # ===========================================================================
 # Part E2b: hook/runtime version skew. .git/hooks is shared by every branch,
@@ -693,6 +723,13 @@ echo a >"$EC/a.txt"
 ( cd "$EC" && git add -A && git commit -q --no-verify -m "chore: seed" ) >/dev/null 2>&1
 check "main: an empty commit on main is refused" 0 \
     bash -c "cd '$EC' && ! git commit -q --allow-empty -m 'chore: empty' 2>'$WORKDIR/ec.err' && grep -q \"Direct commits to 'main' are blocked\" '$WORKDIR/ec.err'"
+# #196: GATES_POLICY_FILE would replace the repository's policy; the git
+# boundary ignores it and says so, in pre-commit and in commit-msg.
+printf '%s' '{ "hooks": {}, "git": { "block_main_commits": false, "conventional_commits": false } }' >"$WORKDIR/lax-policy.json"
+check "main: GATES_POLICY_FILE does not lift the main-branch block" 0 \
+    bash -c "cd '$EC' && ! GATES_POLICY_FILE='$WORKDIR/lax-policy.json' git commit -q --allow-empty -m 'chore: empty' 2>'$WORKDIR/ec.err' && grep -q \"Direct commits to 'main' are blocked\" '$WORKDIR/ec.err' && grep -q 'GATES_POLICY_FILE=.* is ignored at the git boundary' '$WORKDIR/ec.err'"
+check "commit-msg: GATES_POLICY_FILE does not lift the subject format" 0 \
+    bash -c "cd '$EC' && printf 'another subject\n' >'$WORKDIR/ec.msg' && ! GATES_POLICY_FILE='$WORKDIR/lax-policy.json' '$GITHOOKS/commit-msg' '$WORKDIR/ec.msg' 2>'$WORKDIR/ec.err' && grep -q 'is ignored at the git boundary' '$WORKDIR/ec.err'"
 check "main: a delete-only commit on main is refused" 1 \
     bash -c "cd '$EC' && git rm -q a.txt && git commit -q -m 'chore: drop a'"
 ( cd "$EC" && git reset -q --hard ) >/dev/null 2>&1
@@ -996,6 +1033,30 @@ rm -f "$LR/.specify/gates/hooks.local.d/validate-bash/20-dangling.sh"
 rule validate-bash 30-hangs.sh 'sleep 20'
 check "a rule still running after the timeout refuses" 0 bash -c "out=\$(printf '%s' '{\"tool_input\":{\"command\":\"ls\"}}' | GATES_LOCAL_TIMEOUT=1 CLAUDE_PROJECT_DIR='$LR' '$HOOKS/validate-bash.sh' 2>&1); rc=\$?; [[ \$rc -eq 2 ]] && grep -q 'still running after 1s' <<<\"\$out\""
 rm -f "$LR/.specify/gates/hooks.local.d/validate-bash/30-hangs.sh"
+# #189: a background child holding the rule's stderr no longer makes the
+# hook wait for it; it is stopped, and leaving it running refuses. The
+# rules record the child's pid so the test can see it is gone.
+BGPID="$WORKDIR/rule-bg.pid"
+rule validate-bash 30-leaves-child.sh "(sleep 20) & echo \$! >'$BGPID'; exit 0"
+check "a rule that exits leaving a child running refuses at once, child stopped" 0 bash -c "SECONDS=0; out=\$(printf '%s' '{\"tool_input\":{\"command\":\"ls\"}}' | GATES_LOCAL_TIMEOUT=5 CLAUDE_PROJECT_DIR='$LR' '$HOOKS/validate-bash.sh' 2>&1); rc=\$?; [[ \$rc -eq 2 && \$SECONDS -lt 4 ]] && grep -q 'left a process running' <<<\"\$out\" && ! kill -0 \$(cat '$BGPID') 2>/dev/null"
+rm -f "$LR/.specify/gates/hooks.local.d/validate-bash/30-leaves-child.sh" "$BGPID"
+rule validate-bash 30-hangs-with-child.sh "nohup sleep 20 >/dev/null 2>&1 & echo \$! >'$BGPID'; sleep 20"
+check "a timed-out rule is stopped with the child it started" 0 bash -c "SECONDS=0; out=\$(printf '%s' '{\"tool_input\":{\"command\":\"ls\"}}' | GATES_LOCAL_TIMEOUT=1 CLAUDE_PROJECT_DIR='$LR' '$HOOKS/validate-bash.sh' 2>&1); rc=\$?; [[ \$rc -eq 2 && \$SECONDS -lt 6 ]] && grep -q 'still running after 1s' <<<\"\$out\" && ! kill -0 \$(cat '$BGPID') 2>/dev/null"
+rm -f "$LR/.specify/gates/hooks.local.d/validate-bash/30-hangs-with-child.sh" "$BGPID"
+# A child that leaves the process group is out of reach, but it must not
+# hold the hook either: the rule's stderr is a file, not the hook's pipe.
+if command -v perl >/dev/null 2>&1; then
+    rule validate-bash 30-escapes.sh "perl -e 'setpgrp(0, 0); sleep 20' & echo \$! >'$BGPID'; exit 0"
+    check "a child that leaves the rule's group does not hold the hook" 0 bash -c "SECONDS=0; printf '%s' '{\"tool_input\":{\"command\":\"ls\"}}' | GATES_LOCAL_TIMEOUT=5 CLAUDE_PROJECT_DIR='$LR' '$HOOKS/validate-bash.sh' >/dev/null 2>&1; rc=\$?; [[ \$rc -eq 0 && \$SECONDS -lt 4 ]]"
+    [[ -s "$BGPID" ]] && kill "$(cat "$BGPID")" 2>/dev/null
+    rm -f "$LR/.specify/gates/hooks.local.d/validate-bash/30-escapes.sh" "$BGPID"
+fi
+rule validate-bash 30-exits-124.sh 'echo "rule says no" >&2; exit 124'
+check "a rule's own exit 124 is its refusal, not a timeout" 0 bash -c "out=\$(printf '%s' '{\"tool_input\":{\"command\":\"ls\"}}' | CLAUDE_PROJECT_DIR='$LR' '$HOOKS/validate-bash.sh' 2>&1); rc=\$?; [[ \$rc -eq 2 ]] && grep -q 'validate-bash/30-exits-124.sh): rule says no' <<<\"\$out\""
+rm -f "$LR/.specify/gates/hooks.local.d/validate-bash/30-exits-124.sh"
+for t in abc 0 -5 1.5; do
+    check "GATES_LOCAL_TIMEOUT=$t refuses" 0 bash -c "out=\$(printf '%s' '{\"tool_input\":{\"command\":\"ls\"}}' | GATES_LOCAL_TIMEOUT='$t' CLAUDE_PROJECT_DIR='$LR' '$HOOKS/validate-bash.sh' 2>&1); rc=\$?; [[ \$rc -eq 2 ]] && grep -q 'GATES_LOCAL_TIMEOUT=$t is not a whole number' <<<\"\$out\""
+done
 # Through a file: Linux caps a single argv string at 128 KB.
 { printf 'echo '; head -c 200000 /dev/zero | tr '\0' x; } >"$WORKDIR/rule-big.txt"
 jq -n --rawfile c "$WORKDIR/rule-big.txt" '{tool_input:{command:$c}}' >"$WORKDIR/rule-big.json"
@@ -1244,6 +1305,15 @@ for c in 'GATES_SPEC_EXEC=1 git commit -m "feat: x"' 'env GATES_SPEC_EXEC=1 bash
     askcheck "setting the spec recursion guard asks: $c" "$(vb_payload "$c")" validate-bash.sh CLAUDE_PROJECT_DIR="$VB"
 done
 vb_allows "clearing the spec recursion guard is allowed" 'env -u GATES_SPEC_EXEC bash tests/run.sh'
+# #196: overrides that weaken enforcement ask too.
+for c in 'GATES_POLICY_FILE=/tmp/min.json git commit -m "feat: x"' 'env GATES_POLICY_FILE=/tmp/m.json bash .specify/gates/canary.sh' \
+    'export GATES_POLICY_FILE=/tmp/m.json' 'GATES_SKIP=1 git commit -m "feat: x"' \
+    'GATES_ALLOW_MAIN_COMMIT=1 git commit -m "chore: x"' 'GATES_RUNTIME_DIR=/tmp/rt bash .specify/gates/pr-check.sh' \
+    'GATES_TEST=1 bash .specify/gates/project.sh --skip-canary'; do
+    askcheck "setting a weakening override asks: $c" "$(vb_payload "$c")" validate-bash.sh CLAUDE_PROJECT_DIR="$VB"
+done
+vb_allows "clearing the policy override is allowed" 'env -u GATES_POLICY_FILE bash tests/run.sh'
+vb_allows "a longer variable name is not the override" 'GATES_SKIP_REASON=x git status'
 mkdir -p "$VB/.specify/gates/lib" "$VB/.specify/gates/hooks.local.d/validate-bash"
 cp "$REPO_ROOT/extension/runtime/lib/local-hooks.sh" "$VB/.specify/gates/lib/"
 printf '%s\n' 'if grep -q "vendor/"; then echo "vendor/ is generated" >&2; exit 1; fi' \

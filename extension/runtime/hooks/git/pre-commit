@@ -24,7 +24,12 @@ fi
 # intentional: whole-tree checking is what makes "if the git boundary passed,
 # CI passes" a guarantee rather than a hope. Emergency override: GATES_SKIP=1.
 
-STAGED_FILES="$(git diff --cached --name-only --diff-filter=ACM)"
+# Every staged path whose content lands in the commit (issue #186):
+# --no-renames lists a rename under its new name (A) instead of as an R
+# entry the filter dropped, and T keeps a symlink replaced by a regular
+# file, so `git mv x .env` or a rename with a small edit is still scanned.
+STAGED_FILTER=(--no-renames --diff-filter=ACMT)
+STAGED_FILES="$(git diff --cached --name-only "${STAGED_FILTER[@]}")"
 
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 # The git boundary judges the repository being committed. An inherited
@@ -33,6 +38,13 @@ PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 # checkout's policy, since the policy loader prefers it.
 if git rev-parse --show-toplevel >/dev/null 2>&1; then
     export CLAUDE_PROJECT_DIR="$PROJECT_ROOT"
+fi
+# GATES_POLICY_FILE replaces the whole policy (#196), so one variable on a
+# commit would drop every rule. The git boundary judges the policy the
+# repository commits: it ignores the variable, and says so.
+if [[ -n "${GATES_POLICY_FILE:-}" ]]; then
+    echo "gates: GATES_POLICY_FILE=$GATES_POLICY_FILE is ignored at the git boundary; the repository's policy applies" >&2
+    unset GATES_POLICY_FILE
 fi
 POLICY_LIB="$PROJECT_ROOT/.specify/gates/lib/policy.sh"
 # shellcheck source=/dev/null disable=SC1091
@@ -214,7 +226,7 @@ while IFS= read -r -d '' file; do
     else
         VERDICTS+="F"$'\t'"$file"$'\n'
     fi
-done < <(git diff --cached --name-only -z --diff-filter=ACM)
+done < <(git diff --cached --name-only -z "${STAGED_FILTER[@]}")
 
 HITS=""
 if [[ "${#SCAN_FILES[@]}" -gt 0 ]]; then
@@ -260,7 +272,9 @@ if [[ -n "$PROTECTED_STAGED" ]]; then
 fi
 
 # --- Shared quality gate (identical to the agent and CI boundaries) ---
-if [[ "${GATES_SKIP:-0}" != "1" ]]; then
+if [[ "${GATES_SKIP:-0}" == "1" ]]; then
+    echo "gates: GATES_SKIP=1, so the quality gate (verify.sh) did not run" >&2
+else
     VERIFY="$PROJECT_ROOT/.specify/gates/verify.sh"
     if [[ -x "$VERIFY" ]]; then
         echo "Pre-commit: running quality gate (verify.sh --boundary git)..."
