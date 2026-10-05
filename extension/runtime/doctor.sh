@@ -715,7 +715,7 @@ elif git -C "$PROJECT_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
             [[ -x "$HOOK_DIR/$h" ]] || continue
             if gates_git_check "$PROJECT_ROOT" "$h" "$PROBE_GIT"; then
                 if [[ "$GATES_CHECK_KIND" == "probe" ]]; then
-                    echo "${OK}$h probe: the hook git runs reaches the gates $h hook"
+                    echo "${OK}$h probe: the hook git runs reaches the gates $h hook, and its refusal reaches git"
                 else
                     echo "${OK}$h (static): another tool owns the hook and calls the gates $h hook (doctor --probe-git runs the chain)"
                 fi

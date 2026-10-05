@@ -224,17 +224,32 @@ certainly still valid; otherwise it prints it.
 
 **Proving the hooks run.** A hook that exists is not a hook git runs. The
 projected hooks answer `GATES_PROBE=1` with a marker before reading any
-policy, so a probe works with every rule off and can only refuse. Doctor
-and `project.sh` run the stub that way and fail when the marker does not
-come back. A hook another tool owns is read, not run, because running it
+policy, so a probe works with every rule off, and then refuse (exit 1).
+Doctor and `project.sh` run the stub that way and fail unless the marker
+comes back and the hook git runs exits non-zero: git refuses a commit
+exactly when that status is non-zero, so the probe proves a refusal
+reaches git, not only that the hook was reached. It runs the hook file
+rather than a real `git commit`, which would commit whenever the chain is
+broken. A hook another tool owns is read, not run, because running it
 would also run that tool's steps (husky's default `pre-commit` is
 `npm test`, under `sh -e`); the check looks for the gates call-through in
 the tool's file, on a line that can run (not commented out, not after a
 top-level `exit`, `exec <command>` or one-line `if ...; then exit`), and
-`--probe-git` runs the full chain on request. Only the configuration of
-the manager that runs the hook is read, and only where it runs the
-call-through for that hook: in lefthook, a job under the hook's own key
-without `skip:`/`only:`; in the pre-commit framework, an item whose
+`--probe-git` runs the full chain on request. The call-through counts
+only in a form the check can prove refuses the commit: the gates hook as a
+whole command (optionally behind `exec` and `bash`/`sh`, its path led by
+`./`, `$(...)/` or `$VAR/`), with plain arguments, an optional
+`|| exit`, and at most a trailing comment. `|| true`, `&`, a pipe, `;`, a
+leading `true ||`, `echo` or `:`, or a call inside a shell comment does
+not count; neither does an indented line, which sits in a block. In a
+script git runs directly (not husky, which runs its scripts under
+`sh -e`), the call must also end the script on failure: under `set -e`,
+behind `exec`, followed by `|| exit`, or as the last command. Only the
+configuration of the manager that runs the hook is read, and only where
+it runs the call-through for that hook: in lefthook, a job under the
+hook's own key without `skip:`/`only:`, not named (by tag or name) in the
+hook's `exclude_tags:`, whose `run:` is the call in that form; in the
+pre-commit framework, an item whose `entry:` is the gates hook and whose
 `stages:` (or `default_stages:`) include the hook, an item without either
 counting for `pre-commit` only. Other conditional exits in a script, and
 lefthook's `lefthook-local` overrides or remote configs, are not read

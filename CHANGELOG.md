@@ -229,6 +229,13 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   the last line of its script), on a push or pull request trigger,
   without those variables and outside those wrappers; anything else fails
   with what to change. `verify.sh` refuses a repeated `--boundary`.
+- **A hook-manager call-through counts only where it can refuse** (#202).
+  husky `|| true`, `&`, `echo`, `:` or `true ||`, a lefthook `run:` with
+  the call in a shell comment or excluded by `exclude_tags:`, and a
+  pre-commit `entry: echo ...` all passed the static check. It now counts
+  only the gates hook as a whole command whose status reaches git, and
+  `--probe-git` also requires the hook git runs to exit non-zero, so it
+  proves a refusal reaches git, not only that the hook was reached.
 - **An unknown `--accept` feature is refused before any gate runs**
   (#179). `verify.sh --accept <name>` with a name that is not a feature
   ran the lint and quality gates first and refused only at the spec gate,

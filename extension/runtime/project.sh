@@ -574,7 +574,7 @@ if [[ "$GITHOOKS" -eq 1 && -z "$GITNOTE" && -z "$FOREIGN" && -z "$MGRPENDING" ]]
         fi
         if gates_git_check "$ROOT" "$n" "$PROBEGIT"; then
             if [[ "$GATES_CHECK_KIND" == "probe" ]]; then
-                say "git probe: $n reaches the gates hook"
+                say "git probe: $n reaches the gates hook, and its refusal reaches git"
             else
                 say "git check (static): another tool owns $n and calls the gates hook"
             fi

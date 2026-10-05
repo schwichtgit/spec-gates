@@ -486,11 +486,16 @@ since that would run the tool's own steps too (husky's default is
 `npm test`). The call-through counts only where that tool runs it for that
 hook: under the hook's own key in lefthook, not skipped, and running while
 nothing is staged; in a pre-commit framework item whose `stages:` include
-the hook. A commented-out line, or one after a top-level `exit` or
+the hook. It also counts only in a form whose failure refuses the commit:
+the gates hook as a whole command, not behind `|| true`, `&`, a pipe,
+`echo`, `:` or a shell comment, and not excluded by lefthook's
+`exclude_tags:`. A commented-out line, or one after a top-level `exit` or
 `exec <command>`, does not count. A manager config that calls gates while
 git runs no hook for it (its install command never ran) fails.
-`doctor --probe-git` runs the full chain when you want proof; under
-lefthook it runs only the gates job. A hook gates
+`doctor --probe-git` runs the full chain when you want proof: the gates
+hook refuses in probe mode, and the hook git runs must then exit non-zero,
+so the probe proves a refusal reaches git, not only that the hook was
+reached. Under lefthook it runs only the gates job. A hook gates
 installs itself (the stub) is always run with a probe signal, because only
 gates code executes there.
 

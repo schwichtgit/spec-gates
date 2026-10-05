@@ -382,6 +382,15 @@ ok "husky: nothing written into .git/hooks" bash -c "! ls '$D/.git/hooks' | grep
 ok "husky: the hooks were checked statically, not run" test ! -e "$D/ran.txt"
 rc_is "husky: a second run changes nothing" 0 "$D" --skip-canary --wire-manager
 ok "husky: still one call-through line" test "$(grep -cF '.specify/gates/hooks/pre-commit' "$D/.husky/pre-commit")" -eq 1
+# A call-through whose status is masked is not wiring (#202): the entry is
+# still planned, and --wire-manager appends the whole command.
+# shellcheck disable=SC2016  # the husky script is written literally
+printf 'npm test\nbash .specify/gates/hooks/pre-commit "$@" || true\n' >"$D/.husky/pre-commit"
+rc_is "husky: a masked call-through -> exit 1" 1 "$D" --skip-canary
+ok "husky: the masked call-through is planned again" grep -q 'pre-commit: add to .husky/pre-commit' <<<"$OUT"
+rc_is "husky: --wire-manager wires past the masked line" 0 "$D" --skip-canary --wire-manager
+# shellcheck disable=SC2016  # the expected line is literal
+ok "husky: the whole command was appended" test "$(tail -n 1 "$D/.husky/pre-commit")" = 'bash "$(git rev-parse --show-toplevel)/.specify/gates/hooks/pre-commit" "$@"'
 
 # husky 8 layout (#159): core.hooksPath=.husky, so git runs .husky/<hook>
 # itself and skips one without the execute bit. A created script is

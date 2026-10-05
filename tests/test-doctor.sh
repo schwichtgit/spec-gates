@@ -988,6 +988,26 @@ printf '#!/bin/sh\nif [ -n "$SKIP" ]; then\n  exit 0\nfi\nbash .specify/gates/ho
 run_doctor "$GPD" >/dev/null
 has "an exit inside a block does not hide the call-through" "$GPD" "[ok]  commit-msg (static)"
 has "a hook that calls the gates hook is reported as delegating" "$GPD" "[ok]  commit-msg installed, executable, delegates to the gates runtime"
+# A plain script exits with its last command's status (#202): a call-through
+# followed by more commands, without set -e, cannot refuse the commit. The
+# probe proves it from the exit status of the hook git runs, not from the
+# marker alone.
+# shellcheck disable=SC2016  # the hook bodies are written literally
+printf '#!/bin/sh\nbash .specify/gates/hooks/commit-msg "$@"\necho done\n' >"$GPD/.git/hooks/commit-msg"
+run_doctor "$GPD" >/dev/null
+has "a call-through whose status a later command replaces fails (static)" "$GPD" "[MISSING] commit-msg (static): git runs .git/hooks/commit-msg, owned by another tool, and it calls .specify/gates/hooks/commit-msg as"
+CLAUDE_PROJECT_DIR="$GPD" bash "$GPD/.specify/gates/doctor.sh" --probe-git >"$GPD/out.txt" 2>&1 || true
+has "--probe-git: a refusal that does not reach git fails" "$GPD" "[MISSING] commit-msg (probe): git runs .git/hooks/commit-msg and it reaches the gates commit-msg hook, but it exits 0 although the gates hook refused"
+# shellcheck disable=SC2016
+printf '#!/bin/sh\nbash .specify/gates/hooks/commit-msg "$@" || true\n' >"$GPD/.git/hooks/commit-msg"
+CLAUDE_PROJECT_DIR="$GPD" bash "$GPD/.specify/gates/doctor.sh" --probe-git >"$GPD/out.txt" 2>&1 || true
+has "--probe-git: a refusal masked by || true fails" "$GPD" "[MISSING] commit-msg (probe): git runs .git/hooks/commit-msg and it reaches the gates commit-msg hook, but it exits 0"
+# shellcheck disable=SC2016
+printf '#!/bin/sh\nset -e\nbash .specify/gates/hooks/commit-msg "$@"\necho done\n' >"$GPD/.git/hooks/commit-msg"
+run_doctor "$GPD" >/dev/null
+has "a call-through under set -e passes (static)" "$GPD" "[ok]  commit-msg (static)"
+CLAUDE_PROJECT_DIR="$GPD" bash "$GPD/.specify/gates/doctor.sh" --probe-git >"$GPD/out.txt" 2>&1 || true
+has "--probe-git: a refusal that reaches git passes" "$GPD" "[ok]  commit-msg probe: the hook git runs reaches the gates commit-msg hook, and its refusal reaches git"
 # husky layout: generated shims in .husky/_, the call-through in .husky/<hook>.
 mkdir -p "$GPD/.husky/_"
 printf '#!/bin/sh\ntouch ran.txt\nexit 1\n' >"$GPD/.husky/_/commit-msg"
@@ -1023,6 +1043,23 @@ done
 printf 'exec 2>&1\nbash .specify/gates/hooks/commit-msg "$@"\n' >"$GPD/.husky/commit-msg"
 run_doctor "$GPD" >/dev/null
 has "husky: exec with only a redirection does not end the scan" "$GPD" "[ok]  commit-msg (static)"
+# A call-through counts only as a whole command whose status reaches git
+# (#202): masked, backgrounded or never-run forms fail, and say so.
+# shellcheck disable=SC2016  # the husky scripts are written literally
+for body in 'bash .specify/gates/hooks/commit-msg "$@" || true\n' \
+    'bash .specify/gates/hooks/commit-msg "$@" &\n' \
+    'true || bash .specify/gates/hooks/commit-msg "$@"\n' \
+    'echo bash .specify/gates/hooks/commit-msg\n' \
+    ': bash .specify/gates/hooks/commit-msg\n'; do
+    # shellcheck disable=SC2059  # the body carries the newline escapes
+    printf "$body" >"$GPD/.husky/commit-msg"
+    run_doctor "$GPD" >/dev/null
+    has "husky: a call-through that cannot refuse fails (static)" "$GPD" "[MISSING] commit-msg (static): git runs .husky/commit-msg, owned by husky, and .husky/commit-msg calls .specify/gates/hooks/commit-msg only as"
+done
+# shellcheck disable=SC2016
+printf 'bash .specify/gates/hooks/commit-msg "$@" || exit $?\n' >"$GPD/.husky/commit-msg"
+run_doctor "$GPD" >/dev/null
+has "husky: a call-through followed by || exit passes (static)" "$GPD" "[ok]  commit-msg (static)"
 # Only the config of the manager that runs the hook counts (#167): husky
 # owns commit-msg, so a stale .pre-commit-config.yaml calling gates does not.
 printf 'npm test\n' >"$GPD/.husky/commit-msg"
@@ -1062,6 +1099,24 @@ printf "pre-commit:\n  commands:\n    spec-gates:\n      run: \"bash .specify/ga
 run_doctor "$GMW" >/dev/null
 has "lefthook: the entry gates writes passes" "$GMW" "[ok]  pre-commit (static)"
 expect "lefthook: doctor did not run the hooks" "$([[ -e "$GMW/ran.txt" ]] && echo ran || echo not-run)" "not-run"
+# A run: that is not the gates hook as a whole command does not count
+# (#202): the call in a shell comment, or its status masked.
+for run in 'echo hi # bash .specify/gates/hooks/pre-commit {files}' \
+    'bash .specify/gates/hooks/pre-commit || true # {files}'; do
+    # shellcheck disable=SC2059
+    printf "pre-commit:\n  commands:\n    spec-gates:\n      run: \"$run\"\n      files: echo lefthook.yml\n$lh_ok" >"$GMW/lefthook.yml"
+    run_doctor "$GMW" >/dev/null
+    has "lefthook: a run: that cannot refuse fails" "$GMW" "[MISSING] pre-commit (static): git runs .git/hooks/pre-commit, owned by lefthook, and lefthook.yml calls .specify/gates/hooks/pre-commit in job 'spec-gates', but its run: is not the gates hook as a whole command"
+done
+# The hook's exclude_tags: drops a job it names by tag (or by name).
+# shellcheck disable=SC2059
+printf "pre-commit:\n  exclude_tags: [gates]\n  commands:\n    spec-gates:\n      tags: [gates]\n      run: \"bash .specify/gates/hooks/pre-commit # {files}\"\n      files: echo lefthook.yml\n$lh_ok" >"$GMW/lefthook.yml"
+run_doctor "$GMW" >/dev/null
+has "lefthook: a job excluded by tag fails" "$GMW" "or the hook's exclude_tags: names the job or its tags"
+# shellcheck disable=SC2059
+printf "pre-commit:\n  exclude_tags: [lint]\n  commands:\n    spec-gates:\n      tags: [gates]\n      run: \"bash .specify/gates/hooks/pre-commit # {files}\"\n      files: echo lefthook.yml\n$lh_ok" >"$GMW/lefthook.yml"
+run_doctor "$GMW" >/dev/null
+has "lefthook: exclude_tags naming another tag passes" "$GMW" "[ok]  pre-commit (static)"
 # Wired in the config, but `lefthook install` never ran: no gates check
 # runs on commit, so doctor fails and names the command.
 rm -f "$GMW/.git/hooks/pre-commit"
@@ -1078,6 +1133,10 @@ has "pre-commit: an item staged for another hook fails" "$GMW" "[MISSING] commit
 printf 'repos:\n- repo: local\n  hooks:\n  - id: g\n    entry: bash .specify/gates/hooks/commit-msg\n    language: system\n    stages: [commit-msg]\n' >"$GMW/.pre-commit-config.yaml"
 run_doctor "$GMW" >/dev/null
 has "pre-commit: an item staged for the hook passes" "$GMW" "[ok]  commit-msg (static)"
+# The entry must be the gates hook itself (#202), not a command naming it.
+printf 'repos:\n- repo: local\n  hooks:\n  - id: g\n    entry: echo bash .specify/gates/hooks/commit-msg\n    language: system\n    stages: [commit-msg]\n' >"$GMW/.pre-commit-config.yaml"
+run_doctor "$GMW" >/dev/null
+has "pre-commit: an entry that only names the gates hook fails" "$GMW" "[MISSING] commit-msg (static): git runs .git/hooks/commit-msg, owned by pre-commit, and .pre-commit-config.yaml calls .specify/gates/hooks/commit-msg, but the item's entry: is not the gates hook itself"
 fx_cleanup "$GMW"
 
 DOR="$(fx_project)"

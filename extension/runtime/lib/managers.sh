@@ -3,8 +3,8 @@
 #
 # Usage (sourced; bash 3.2):
 #   gates_hooks_dir <root>          # the directory git runs hooks from
-#   gates_git_probe <root> <hook>   # run it: 0 = the hook reaches gates;
-#                                   # else 1, with GATES_PROBE_MSG set
+#   gates_git_probe <root> <hook>   # run it: 0 = a gates refusal reaches
+#                                   # git; else 1, with GATES_PROBE_MSG set
 #   gates_hook_owner <root> <hook>  # gates | absent | other
 #   gates_hook_static <root> <hook> # read it: is the call-through there?
 #   gates_git_check <root> <hook> <probe:0|1>
@@ -16,9 +16,14 @@
 # gates hooks answer with `gates-probe:<hook>:<version>` on stderr before
 # reading any policy, so the marker proves the whole call chain -- a plain
 # stub, husky, lefthook, the pre-commit framework, or a custom script --
-# reaches gates, whichever rules the policy turns on or off. A hook that is
-# missing, not executable (git skips it silently), or never prints the
-# marker fails the probe.
+# reaches gates, whichever rules the policy turns on or off. In probe mode
+# the gates hook also refuses (exit 1), and the hook git runs must then
+# exit non-zero too (#202): git refuses a commit exactly when that status
+# is non-zero, so the probe proves a refusal reaches git, not only that the
+# hook was reached. It runs the hook file rather than `git commit`, which
+# would commit when the chain is broken. A hook that is missing, not
+# executable (git skips it silently), never prints the marker, or exits 0
+# fails the probe.
 
 # shellcheck disable=SC2034   # library file; GATES_PROBE_MSG is read by callers
 GATES_PROBE_MSG=""
@@ -72,10 +77,15 @@ gates_git_probe() { # <root> <hook>
         fi
         args+=(--job "${GATES_WIRED_JOB:-spec-gates}")
     fi
-    out="$(cd "$root" && GATES_PROBE=1 "$f" ${args[@]+"${args[@]}"} 2>&1 </dev/null)" || true
+    local rc=0
+    out="$(cd "$root" && GATES_PROBE=1 "$f" ${args[@]+"${args[@]}"} 2>&1 </dev/null)" || rc=$?
     [[ -n "$msg" ]] && rm -f "$msg"
     if grep -q "gates-probe:$hook:" <<<"$out"; then
-        return 0
+        # The gates hook refused; git refuses the commit only when that
+        # reaches the exit status of the hook git runs (#202).
+        [[ "$rc" -ne 0 ]] && return 0
+        GATES_PROBE_MSG="git runs ${f#"$root"/} and it reaches the gates $hook hook, but it exits 0 although the gates hook refused, so git would not refuse the commit (a || true, &, or a later command masks the status)"
+        return 1
     fi
     if grep -q 'no matching staged files\|no files for inspection' <<<"$out"; then
         GATES_PROBE_MSG="git runs ${f#"$root"/}, but lefthook skips the gates job while nothing is staged, so empty commits and amends pass (give it files: and {files} as in the entry project.sh prints)"
@@ -106,24 +116,86 @@ gates_hook_owner() { # <root> <hook>
     fi
 }
 
+# A call-through counts only in a form whose failure refuses the commit
+# (#202): the gates hook as a whole command, optionally behind `exec` and
+# `bash`/`sh`, its path optionally led by a quote, `./`, a `$(...)` or
+# `$VAR` directory and a relative path; then only plain arguments and
+# redirections, an `|| exit` (bare, `$?` or a non-zero status; gates_call
+# then returns 2: the failure ends the script), and at most a trailing
+# comment. `|| true`, `&`, a pipe, `;` and a leading `true ||`, `echo` or
+# `:` all fail it, as does a call that sits in a shell comment. gates_unq
+# strips YAML/TOML quoting (and
+# the comment after an unquoted value) from a configuration value.
+GATES_CALL_AWK='
+    function gates_unq(v,   q, i, c, out) {
+        sub(/^[ \t]+/, "", v)
+        q = substr(v, 1, 1)
+        if (q != "\"" && q != "\047") { sub(/[ \t]+#.*$/, "", v); sub(/[ \t]+$/, "", v); return v }
+        out = ""
+        for (i = 2; i <= length(v); i++) {
+            c = substr(v, i, 1)
+            if (c == q) return out
+            if (c == "\\" && q == "\"") { i++; c = substr(v, i, 1); if (c != "\"" && c != "\\") c = "\\" c }
+            out = out c
+        }
+        return ";"
+    }
+    function gates_call(s, needle,   p, pre, post) {
+        p = index(s, needle)
+        if (p == 0) return 0
+        pre = substr(s, 1, p - 1); post = substr(s, p + length(needle))
+        sub(/^[ \t]+/, "", pre)
+        if (pre !~ /^(exec[ \t]+)?((\/usr\/bin\/env[ \t]+|\/bin\/)?(bash|sh)[ \t]+)?["\047]?((\$\([^()|&;]*\)|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?)?[^ \t|&;()"\047$`<>]*\/)?$/) return 0
+        if (post ~ /^["\047]?([ \t]+[^|&;#`()]*)?([ \t]+#.*)?$/) return 1
+        if (post ~ /^["\047]?([ \t]+[^|&;#`()]*)?[ \t]*\|\|[ \t]*exit([ \t]+(\$\?|[1-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5]))?[ \t]*([ \t]#.*)?$/) return 2
+        return 0
+    }
+'
+
 # Does the shell script <file> call the projected gates <hook> on a line
-# that can run (#128)? Commented lines do not count, and nothing after a
-# top-level line that ends the script does (#167): an unconditional
-# `exit`, an `exec <command>` (it replaces the shell; `exec >log` only
-# redirects), or a one-line `if ...; then exit`. An indented `exit` sits
-# inside a block and does not end the scan; other conditional exits
-# (`[ -n "$CI" ] && exit 0`, a multi-line if) are not recognized, and
-# --probe-git is the proof for them.
-gates_calls_through() { # <file> <hook>
+# that can run and whose failure refuses the commit (#128, #202)?
+# Commented lines do not count, and nothing after a top-level line that
+# ends the script does (#167): an unconditional `exit`, an `exec <command>`
+# (it replaces the shell; `exec >log` only redirects), or a one-line
+# `if ...; then exit`. An indented `exit` sits inside a block and does not
+# end the scan. The call must be a top-level line (an indented one is
+# conditional) in the form GATES_CALL_AWK accepts, and its status must be
+# the script's: with <errexit> (husky runs its scripts under `sh -e`),
+# under `set -e` or a `-e` shebang, behind `exec`, followed by `|| exit`,
+# or as the last command. Other conditional exits (`[ -n "$CI" ] && exit
+# 0`, a multi-line if) are not recognized, and --probe-git is the proof
+# for them. When the call is there but does not count, GATES_WIRED_WHY
+# says why, as a phrase that follows the file's name.
+gates_calls_through() { # <file> <hook> [errexit]
+    local out
+    GATES_WIRED_WHY=""
     [[ -f "$1" ]] || return 1
-    awk -v needle=".specify/gates/hooks/$2" '
-        /^[[:space:]]*#/ { next }
-        /^exit([[:space:];]|$)/ { exit 1 }
-        index($0, needle) { found = 1; exit 0 }
-        /^exec[[:space:]]+[^[:space:]<>&0-9]/ { exit 1 }
-        /^if[[:space:]].*;[[:space:]]*then[[:space:]]+exit([[:space:];]|$)/ { exit 1 }
-        END { exit found ? 0 : 1 }
-    ' "$1"
+    out="$(awk -v needle=".specify/gates/hooks/$2" -v ee="${3:+1}" "$GATES_CALL_AWK"'
+        NR == 1 && /^#!/ { if ($0 ~ /[ \t]-[a-zA-Z]*e/) ee = 1; next }
+        /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+        cand { cand = 0; why = "tail\t" candline }
+        /^set[ \t]+(-[a-zA-Z]*e|-o[ \t]+errexit)/ { ee = 1 }
+        /^set[ \t]+(\+[a-zA-Z]*e|\+o[ \t]+errexit)/ { ee = 0 }
+        /^exit([[:space:];]|$)/ { exit }
+        index($0, needle) {
+            r = ($0 ~ /^[^ \t]/) ? gates_call($0, needle) : 0
+            if (r) {
+                if (ee || r == 2 || $0 ~ /^exec[ \t]/) { found = 1; exit }
+                cand = 1; candline = $0; next
+            }
+            if (why == "") why = "form\t" $0
+            next
+        }
+        /^exec[[:space:]]+[^[:space:]<>&0-9]/ { exit }
+        /^if[[:space:]].*;[[:space:]]*then[[:space:]]+exit([[:space:];]|$)/ { exit }
+        END { print ((found || cand) ? "ok" : why) }
+    ' "$1")"
+    case "$out" in
+        ok) return 0 ;;
+        form*) GATES_WIRED_WHY="calls .specify/gates/hooks/$2 only as \`${out#*$'\t'}\`, which cannot refuse the commit (call it as a whole command on its own top-level line, not behind || true, &, a pipe, echo, : or a comment)" ;;
+        tail*) GATES_WIRED_WHY="calls .specify/gates/hooks/$2 as \`${out#*$'\t'}\`, but more commands follow and the script does not stop on a failure, so their status replaces its refusal (make it the last command, use exec, or add set -e)" ;;
+    esac
+    return 1
 }
 
 # --- Manager configuration, read per hook (#167) ----------------------------
@@ -154,14 +226,17 @@ gates_lefthook_config() { # <root> [local] -> the relative path of the config
 
 # The verdict on one hook's jobs, from any of the three formats: "ok <job>",
 # "staged <job>" (lefthook skips it while nothing is staged), "skip <job>"
-# (skip:/only: set on the job or the hook), "elsewhere" (the call-through
-# sits under another key), or "none".
+# (skip:/only: set on the job or the hook, or the hook's exclude_tags:
+# names the job or one of its tags), "form <job>" (its run: is not the
+# gates hook as a whole command, #202), "elsewhere" (the call-through sits
+# under another key), or "none".
 #
 # YAML: the block runs from the hook's top-level key (quoted or not) to the
 # next top-level line; a job is a key under commands: or an item under
 # jobs:. Flow-style YAML ({...}) is not read. A skip:/only: anywhere in a
-# job (or at the hook's level) counts as skipping it.
-GATES_LEFTHOOK_AWK_JUDGE='
+# job (or at the hook's level) counts as skipping it, and so does an
+# exclude_tags: list that is not closed on its line.
+GATES_LEFTHOOK_AWK_JUDGE="$GATES_CALL_AWK"'
     function truthy(s, key) {
         if (s !~ ("^" key "[ \t]*:")) return 0
         sub("^" key "[ \t]*:[ \t]*", "", s)
@@ -169,31 +244,58 @@ GATES_LEFTHOOK_AWK_JUDGE='
         gsub(/["\047]/, "", s)
         return s != "false"
     }
+    # A tag list ([a, b], a b, or one item of a block list) as " a b ".
+    # An unclosed [ list is not read: " * " stands for "any tag".
+    function toks(s,   n, a, i, out) {
+        sub(/[ \t]#.*$/, "", s)
+        if (index(s, "[") && !index(s, "]")) return " *"
+        gsub(/[][,"\047]/, " ", s)
+        n = split(s, a, /[ \t]+/); out = ""
+        for (i = 1; i <= n; i++) if (a[i] != "") out = out " " a[i]
+        return out
+    }
     function close_job(   v) {
         if (jcalls) {
             v = "ok"
-            if (jskip) v = "skip"
+            if (!jprov) v = "form"
+            else if (jskip) v = "skip"
             else if (hook == "pre-commit" && (jfilter || !(jall || (jfiles && jtmpl)))) v = "staged"
-            if (rank[v] > best) { best = rank[v]; bestv = v " " (jname == "" ? "-" : jname) }
+            nj++; jv[nj] = v; jn[nj] = (jname == "" ? "-" : jname); jt[nj] = jtags " " jname " "
         }
-        jname = ""; jcalls = 0; jskip = 0; jfiles = 0; jtmpl = 0; jall = 0; jfilter = 0
+        jname = ""; jcalls = 0; jprov = 0; jskip = 0; jfiles = 0; jtmpl = 0; jall = 0; jfilter = 0; jtags = ""; jlast = ""
     }
     function prop(key, val) {
         if (index(val, needle)) jcalls = 1
+        if (key == "run" && gates_call(gates_unq(val), needle)) jprov = 1
         if (index(val, "{files}")) jtmpl = 1
         if (index(val, "{all_files}")) jall = 1
         if (truthy(key ":" val, "skip") || truthy(key ":" val, "only")) jskip = 1
         if (key == "files") jfiles = 1
         if (key == "glob" || key == "file_types" || key == "exclude") jfilter = 1
         if (key == "name" && jname == "") { gsub(/["\047]/, "", val); sub(/[ \t]*(#.*)?$/, "", val); sub(/^[ \t]*/, "", val); jname = val }
+        if (key == "tags" || (key == "" && jlast == "tags")) jtags = jtags toks(val)
+        if (key != "") jlast = key
     }
-    # A hook-level skip:/only: may follow the jobs, so it is applied last.
-    function verdict() {
-        if (best > 0 && hskip) sub(/^[a-z]+ /, "skip ", bestv)
+    # Hook-level skip:/only:/exclude_tags: may follow the jobs, so they
+    # are applied last.
+    function excluded(i,   n, a, k) {
+        if (hex !~ /[^ ]/) return 0
+        if (index(hex " ", " * ") || index(jt[i], " * ")) return 1
+        n = split(hex, a, /[ \t]+/)
+        for (k = 1; k <= n; k++) if (a[k] != "" && index(" " jt[i] " ", " " a[k] " ")) return 1
+        return 0
+    }
+    function verdict(   i, v, best, bestv) {
+        best = 0; bestv = "none"
+        for (i = 1; i <= nj; i++) {
+            v = jv[i]
+            if (v != "form" && (hskip || excluded(i))) v = "skip"
+            if (rank[v] > best) { best = rank[v]; bestv = v " " jn[i] }
+        }
         if (best == 0 && other) bestv = "elsewhere"
         return bestv
     }
-    BEGIN { rank["ok"] = 4; rank["staged"] = 3; rank["skip"] = 2; best = 0; bestv = "none" }
+    BEGIN { rank["ok"] = 4; rank["staged"] = 3; rank["skip"] = 2; rank["form"] = 1 }
 '
 gates_lefthook_yaml_verdict() { # <file> <hook>
     awk -v hook="$2" -v needle=".specify/gates/hooks/$2" "$GATES_LEFTHOOK_AWK_JUDGE"'
@@ -216,14 +318,19 @@ gates_lefthook_yaml_verdict() { # <file> <hook>
         {
             i = ind($0); s = $0; sub(/^ */, "", s)
             if (child < 0) child = i
+            if (mode == "excl" && s ~ /^-/) { sub(/^- */, "", s); hex = hex toks(s); next }
             if (i <= child && !(mode == "jobs" && s ~ /^-/ && (jind < 0 || jind == i))) {
                 close_job(); mode = ""; jind = -1
                 if (truthy(s, "skip") || truthy(s, "only")) hskip = 1
                 if (s ~ /^commands[ \t]*:/) mode = "commands"
                 else if (s ~ /^jobs[ \t]*:/) mode = "jobs"
+                else if (s ~ /^exclude_tags[ \t]*:/) {
+                    sub(/^[^:]*:/, "", s)
+                    if (s ~ /^[ \t]*(#.*)?$/) mode = "excl"; else hex = hex toks(s)
+                }
                 next
             }
-            if (mode == "") next
+            if (mode == "" || mode == "excl") next
             if (jind < 0) jind = i
             if (i == jind) {
                 close_job()
@@ -263,7 +370,11 @@ gates_lefthook_toml_verdict() { # <file> <hook>
             k = $0; v = $0
             sub(/^[ \t]*/, "", k); sub(/[ \t]*=.*$/, "", k); gsub(/["\047]/, "", k)
             sub(/^[^=]*=[ \t]*/, "", v)
-            if (sect == "hook") { if ((k == "skip" || k == "only") && truthy(k ":" v, k)) hskip = 1; next }
+            if (sect == "hook") {
+                if ((k == "skip" || k == "only") && truthy(k ":" v, k)) hskip = 1
+                if (k == "exclude_tags") hex = hex toks(v)
+                next
+            }
             prop(k, v)
         }
         END {
@@ -273,25 +384,41 @@ gates_lefthook_toml_verdict() { # <file> <hook>
     ' "$1"
 }
 
-# JSON (and JSONC with whole-line // comments): read with jq.
+# JSON (and JSONC with whole-line // comments): read with jq, which lists
+# each job that calls the gates hook with its verdict and run:; awk judges
+# the run: form (#202) and picks the best job.
 gates_lefthook_json_verdict() { # <file> <hook>
+    local jobs
     command -v jq >/dev/null 2>&1 || { echo unreadable; return 0; }
-    grep -v '^[[:space:]]*//' "$1" | jq -r --arg h "$2" --arg n ".specify/gates/hooks/$2" '
+    jobs="$(grep -v '^[[:space:]]*//' "$1" | jq -r --arg h "$2" --arg n ".specify/gates/hooks/$2" '
         def truthy: . != null and . != false and . != "false";
         def calls: (tostring | contains($n));
-        (.[$h] // {}) as $b
-        | ([($b.commands // {} | to_entries[] | .value + {name: .key}), ($b.jobs // [])[]]
-           | map(select(calls))
-           | map(if (.skip | truthy) or (.only | truthy) or ($b.skip | truthy) or ($b.only | truthy) then "skip"
-                 elif $h == "pre-commit" and ((.glob != null) or (.file_types != null) or (.exclude != null)
+        def list: if . == null then [] elif type == "array" then map(tostring) else tostring | split(" ") end;
+        . as $root
+        | (.[$h] // {}) as $b
+        | ($b.exclude_tags | list) as $ex
+        | [($b.commands // {} | to_entries[] | .value + {name: .key}), ($b.jobs // [])[]]
+        | map(select(calls)
+              | [(if (.skip | truthy) or (.only | truthy) or ($b.skip | truthy) or ($b.only | truthy)
+                     or (((.tags | list) + [.name // ""]) as $t | ($t - ($t - $ex)) | length > 0) then "skip"
+                  elif $h == "pre-commit" and ((.glob != null) or (.file_types != null) or (.exclude != null)
                       or ((((.run // "") | contains("{all_files}")) or (.files != null and ((.run // "") | contains("{files}")))) | not))
-                 then "staged" else "ok" end + " " + (.name // "-"))) as $v
-        | if ($v | map(select(startswith("ok "))) | length) > 0 then ($v | map(select(startswith("ok ")))[0])
-          elif ($v | map(select(startswith("staged "))) | length) > 0 then ($v | map(select(startswith("staged ")))[0])
-          elif ($v | length) > 0 then $v[0]
-          elif (del(.[$h]) | calls) then "elsewhere"
+                  then "staged" else "ok" end),
+                 (.name // "-"), ((.run // "") | tostring | gsub("[\t\r\n]"; ";"))] | join("\t"))
+        | if length > 0 then .[]
+          elif ($root | del(.[$h]) | calls) then "elsewhere"
           else "none" end
-    ' 2>/dev/null || echo unreadable
+    ' 2>/dev/null)" || { echo unreadable; return 0; }
+    awk -F '\t' -v needle=".specify/gates/hooks/$2" "$GATES_CALL_AWK"'
+        BEGIN { rank["ok"] = 4; rank["staged"] = 3; rank["skip"] = 2; rank["form"] = 1 }
+        NF < 3 { bestv = $0; next }
+        {
+            v = $1
+            if (!gates_call($3, needle)) v = "form"
+            if (rank[v] > best) { best = rank[v]; bestv = v " " $2 }
+        }
+        END { print (bestv == "" ? "unreadable" : bestv) }
+    ' <<<"$jobs"
 }
 
 # Is the gates <hook> wired in lefthook's configuration <file> (relative)?
@@ -308,17 +435,18 @@ gates_lefthook_wired() { # <root> <file> <hook>
     case "$v" in
         ok\ *) return 0 ;;
         staged\ *) GATES_WIRED_WHY="$2 calls .specify/gates/hooks/$3 in job '$GATES_WIRED_JOB', but lefthook skips that job while nothing is staged (glob/files filters, or no {files}/{all_files} in run), so empty commits, amends and concluded merges pass; use the entry project.sh prints" ;;
-        skip\ *) GATES_WIRED_WHY="$2 calls .specify/gates/hooks/$3 in job '$GATES_WIRED_JOB', but skip:/only: is set on the job or the $3 hook" ;;
+        skip\ *) GATES_WIRED_WHY="$2 calls .specify/gates/hooks/$3 in job '$GATES_WIRED_JOB', but skip:/only: is set on the job or the $3 hook, or the hook's exclude_tags: names the job or its tags" ;;
+        form\ *) GATES_WIRED_WHY="$2 calls .specify/gates/hooks/$3 in job '$GATES_WIRED_JOB', but its run: is not the gates hook as a whole command (run: \"bash .specify/gates/hooks/$3 ...\", not behind || true, &, a pipe, echo or a shell comment), so its refusal may never reach git" ;;
         elsewhere) GATES_WIRED_WHY="$2 calls .specify/gates/hooks/$3 only outside its $3: block, so lefthook never runs it for $3" ;;
         unreadable) GATES_WIRED_WHY="$2 could not be read (jq missing or not plain JSON); doctor --probe-git runs the chain" ;;
     esac
-    # The job a staged/skip verdict names stays set: the probe runs it.
+    # The job a staged/skip/form verdict names stays set: the probe runs it.
     [[ "$v" == *" "* ]] || GATES_WIRED_JOB=""
     return 1
 }
 
 # Is the gates <hook> wired in .pre-commit-config.yaml? An item counts when
-# its entry calls the gates hook, its stages (or default_stages) include
+# its entry: is the gates hook as a whole command (#202), its stages (or default_stages) include
 # the hook -- an item with neither counts for pre-commit only -- and,
 # except for commit-msg, always_run: true makes it run with no files
 # staged. Legacy stage names (commit, merge-commit) are understood;
@@ -327,7 +455,7 @@ gates_precommit_wired() { # <root> <hook>
     local f="$1/.pre-commit-config.yaml" v
     GATES_WIRED_WHY="" GATES_WIRED_JOB=""
     [[ -f "$f" ]] || return 1
-    v="$(awk -v hook="$2" -v needle=".specify/gates/hooks/$2" '
+    v="$(awk -v hook="$2" -v needle=".specify/gates/hooks/$2" "$GATES_CALL_AWK"'
         function ind(s) { match(s, /^ */); return RLENGTH }
         function stages(s,   n, a, i, x, out) {
             gsub(/[][,"\047]/, " ", s); sub(/#.*$/, "", s)
@@ -346,12 +474,13 @@ gates_precommit_wired() { # <root> <hook>
                 if (st == "" ) st = " pre-commit "
                 v = "ok"
                 if (index(st, " " hook " ") == 0) v = "stage"
+                else if (!iprov) v = "form"
                 else if (hook != "commit-msg" && !ialways) v = "always"
                 if (rank[v] > best) { best = rank[v]; bestv = v }
             }
-            icalls = 0; istages = ""; ihas = 0; ialways = 0; slist = 0
+            icalls = 0; iprov = 0; istages = ""; ihas = 0; ialways = 0; slist = 0
         }
-        BEGIN { rank["ok"] = 3; rank["always"] = 2; rank["stage"] = 1; best = 0; bestv = "none"; hind = -1 }
+        BEGIN { rank["ok"] = 4; rank["always"] = 3; rank["form"] = 2; rank["stage"] = 1; best = 0; bestv = "none"; hind = -1 }
         /^[ \t]*#/ || /^[ \t]*$/ { next }
         {
             i = ind($0); s = $0; sub(/^ */, "", s)
@@ -368,6 +497,7 @@ gates_precommit_wired() { # <root> <hook>
                 else slist = 0
                 if (hind >= 0) {
                     if (index(s, needle)) icalls = 1
+                    if (s ~ /^entry[ \t]*:/) { v = s; sub(/^[^:]*:/, "", v); if (gates_call(gates_unq(v), needle)) iprov = 1 }
                     if (s ~ /^stages[ \t]*:/) {
                         ihas = 1; v = s; sub(/^[^:]*:/, "", v)
                         if (v ~ /[^ \t]/) istages = stages(v); else { slist = 1; sind = i }
@@ -383,6 +513,7 @@ gates_precommit_wired() { # <root> <hook>
     case "$v" in
         ok) return 0 ;;
         stage) GATES_WIRED_WHY=".pre-commit-config.yaml calls .specify/gates/hooks/$2, but not in an item whose stages: include $2" ;;
+        form) GATES_WIRED_WHY=".pre-commit-config.yaml calls .specify/gates/hooks/$2, but the item's entry: is not the gates hook itself (entry: bash .specify/gates/hooks/$2), so its refusal may never reach git" ;;
         always) GATES_WIRED_WHY=".pre-commit-config.yaml calls .specify/gates/hooks/$2, but the item lacks always_run: true, so pre-commit skips it when no files match (empty commits and amends pass)" ;;
     esac
     return 1
@@ -442,7 +573,11 @@ gates_hook_static() { # <root> <hook>
             ;;
         *)
             gates_calls_through "$dir/$hook" "$hook" && return 0
-            GATES_PROBE_MSG="git runs ${dir#"$root"/}/$hook, owned by another tool, and it does not call $needle on a line that runs"
+            if [[ -n "$GATES_WIRED_WHY" ]]; then
+                GATES_PROBE_MSG="git runs ${dir#"$root"/}/$hook, owned by another tool, and it $GATES_WIRED_WHY"
+            else
+                GATES_PROBE_MSG="git runs ${dir#"$root"/}/$hook, owned by another tool, and it does not call $needle on a line that runs"
+            fi
             ;;
     esac
     return 1
@@ -531,7 +666,13 @@ gates_manager_wired() { # <root> <manager> <hook>
     GATES_WIRED_WHY="" GATES_WIRED_JOB=""
     f="$(gates_manager_file "$1" "$2" "$3")" || return 1
     case "$2" in
-        husky) gates_calls_through "$1/$f" "$3" ;;
+        husky)
+            # husky runs .husky/<hook> under `sh -e` (husky 9's shim, husky
+            # 8's husky.sh), so a failing call ends the script.
+            gates_calls_through "$1/$f" "$3" errexit && return 0
+            [[ -n "$GATES_WIRED_WHY" ]] && GATES_WIRED_WHY="$f $GATES_WIRED_WHY"
+            return 1
+            ;;
         lefthook)
             gates_lefthook_wired "$1" "$f" "$3" && return 0
             why="$GATES_WIRED_WHY" job="$GATES_WIRED_JOB"
