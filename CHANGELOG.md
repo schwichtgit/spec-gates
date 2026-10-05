@@ -212,6 +212,13 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   either after the block exits is stopped and fails it. The read-only
   check also covers skip-worktree and assume-unchanged flags (with a
   content hash of flagged files), `.git/info/` and linked worktrees.
+- **Work in another worktree no longer fails an accept block** (#206). The
+  read-only check compared every ref and every linked worktree, so a
+  commit, a branch switch, or a worktree added or removed in a sibling
+  worktree while a block ran failed it. Refs of branches other worktrees
+  have checked out, and other worktrees' entries, are now left out; `HEAD`,
+  this worktree's branch, tags and branches checked out nowhere still
+  count.
 - **The CI gates step must be proven, not merely found** (#198). Doctor
   and the constitution `ci` surface still accepted steps that cannot fail
   the pipeline: `verify.sh --boundary ci; exit 0`, `&`, `true || ...`,

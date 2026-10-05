@@ -631,8 +631,46 @@ expect_contains "write to a skip-worktree file blocks the run" "$OUT" "index fla
 OUT="$(isoblock attributes '  echo "* -diff" >.git/info/attributes')"
 expect_contains "block writing .git/info/attributes blocks the run" "$OUT" "git info files modified: attributes"
 
-OUT="$(isoblock wtadd '  git worktree add -q --detach ../iso-wtadd-wt')"
-expect_contains "block adding a worktree blocks the run" "$OUT" "worktrees modified:"
+# Issue #206: another worktree's activity is not the block's doing. Each
+# fixture has a sibling worktree on branch "side" and a branch "stray" that
+# no worktree has checked out; <where> picks the worktree the gate runs in.
+# The block body may name the fixture paths as @MAIN@ and @SIB@.
+wtblock() { # <name> <main|linked> <block-body>
+    local d="$WORKDIR/iso-$1" body="$3" t
+    isofix "$d"
+    git -C "$d" worktree add -q "$d-wt" -b side >/dev/null 2>&1
+    git -C "$d" branch stray
+    t="$d"
+    [[ "$2" == linked ]] && t="$d-wt"
+    body="$(MAIN="$d" SIB="$d-wt" awk '{ gsub(/@MAIN@/, ENVIRON["MAIN"]); gsub(/@SIB@/, ENVIRON["SIB"]); print }' <<<"$body")"
+    # shellcheck disable=SC2016  # literal backticks and a %s placeholder
+    printf -- '- [x] T001 Must leave the repository alone\n\n  ```accept\n%s\n  ```\n' "$body" \
+        | mkfeature "$t" 500-iso Complete
+    gate_out "$t"
+}
+WTC='-c user.email=a@test -c user.name=a commit -q --allow-empty --no-verify -m x'
+
+OUT="$(wtblock wtsibcommit main "  git -C @SIB@ $WTC")"
+expect_contains "commit in a sibling worktree passes" "$OUT" "EXIT=0"
+OUT="$(wtblock wtsibswitch main '  git -C @SIB@ switch -q -c other')"
+expect_contains "branch switch in a sibling worktree passes" "$OUT" "EXIT=0"
+OUT="$(wtblock wtsibadd main '  git worktree add -q -b fresh @MAIN@-wt2')"
+expect_contains "sibling worktree added on a new branch passes" "$OUT" "EXIT=0"
+OUT="$(wtblock wtsibremove main "  git -C @SIB@ $WTC && git worktree remove @SIB@")"
+expect_contains "sibling worktree that commits and is removed passes" "$OUT" "EXIT=0"
+OUT="$(wtblock wtmaincommit linked "  git -C @MAIN@ $WTC")"
+expect_contains "commit in the main worktree passes in a linked one" "$OUT" "EXIT=0"
+
+OUT="$(wtblock wtstray main '  git branch -D -q stray')"
+expect_contains "deleting a branch checked out nowhere blocks the run" "$OUT" "refs modified: refs/heads/stray"
+OUT="$(wtblock wtnew main '  git branch brandnew')"
+expect_contains "creating a branch blocks the run" "$OUT" "refs modified: refs/heads/brandnew"
+OUT="$(wtblock wtown linked "  git $WTC")"
+expect_contains "commit on a linked worktree's own branch blocks the run" "$OUT" "refs modified: HEAD refs/heads/side"
+OUT="$(wtblock wtlock linked '  git worktree lock @SIB@')"
+expect_contains "locking its own linked worktree blocks the run" "$OUT" "worktrees modified: iso-wtlock-wt"
+OUT="$(wtblock wtinner main '  git worktree add -q --detach inner')"
+expect_contains "worktree added inside the project blocks the run" "$OUT" "working tree modified: inner/"
 
 OUT="$(isoblock reaped '  sleep 30 &
   kill $!')"

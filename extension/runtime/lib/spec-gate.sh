@@ -229,6 +229,22 @@ gates_spec_dir_state() { # <kind> <root> <dir> <scratch> <list>
     [[ $i -eq ${#rels[@]} ]]
 }
 
+# The branches the worktree whose admin directory is <dir> works on, as
+# "oth<TAB>refs/heads/...<TAB><name>" lines: the one HEAD points to, and the
+# one an interrupted rebase will update (HEAD is detached meanwhile).
+# <keep>, this worktree's own branch, is never listed.
+gates_spec_wt_branches() { # <admin-dir> <name> <keep>
+    local f line
+    for f in "$1/HEAD" "$1/rebase-merge/head-name" "$1/rebase-apply/head-name"; do
+        [[ -f "$f" ]] || continue
+        line=""
+        read -r line <"$f" || true
+        line="${line#ref: }"
+        [[ "$line" == refs/* && "$line" != "$3" ]] && printf 'oth\t%s\t%s\n' "$line" "$2"
+    done
+    return 0
+}
+
 # Snapshot of everything an accept block must leave alone (R5, #136, #164),
 # written sorted to <state> as "kind<TAB>value<TAB>name" lines:
 #   tree  one per `git status --porcelain=v1 -z --untracked-files=all`
@@ -245,10 +261,12 @@ gates_spec_dir_state() { # <kind> <root> <dir> <scratch> <list>
 #   idx   one per index entry flagged skip-worktree or assume-unchanged
 #         (`git ls-files -v`): the flag and a content hash, since status
 #         no longer reports edits to a flagged file (#197).
-#   wt    one per linked worktree (`<common-dir>/worktrees/*`): its path,
-#         and its lock.
-#         Other worktrees' HEADs are left out: a commit there is not this
-#         block's doing.
+#   wt    this worktree, when it is a linked one: its path and its lock.
+#   oth   one per branch another worktree (main or linked) has checked out
+#         or is rebasing. Not compared: the comparison leaves the refs named
+#         in either snapshot out, since a commit, a branch switch or a new
+#         worktree there is not this block's doing (#206). Other worktrees'
+#         HEADs and per-worktree refs are not visible from here at all.
 #   ref   HEAD (commit and symbolic target) and every ref except
 #         refs/remotes/*, which a background fetch moves.
 #   ign   one per ignored root (`git ls-files -o -i --directory`): a file,
@@ -353,11 +371,25 @@ gates_spec_snapshot() { # <root> <state-file>
             [[ $i -eq ${#fpaths[@]} ]] || return 1
         fi
 
-        # Linked worktrees, read from <common-dir>/worktrees/<name>: where
-        # each one lives (its gitdir file) and whether it is locked.
+        # Worktrees, read from <common-dir> (#206). This worktree's entry is
+        # compared: where it lives and whether it is locked. Every other
+        # worktree contributes only the branch it has checked out (or is
+        # rebasing) as an "oth" line, which the comparison uses to leave
+        # that branch's ref out and never compares itself.
+        local gdir self=""
+        gdir="$(git -C "$root" rev-parse --absolute-git-dir 2>/dev/null)" || return 1
         [[ "$cdir" == /* ]] || cdir="$root/$cdir"
+        gdir="$(cd "$gdir" 2>/dev/null && pwd -P)" || return 1
+        cdir="$(cd "$cdir" 2>/dev/null && pwd -P)" || return 1
+        [[ "$gdir" == "$cdir" ]] || self="${gdir##*/}"
+        sym="$(git -C "$root" symbolic-ref -q HEAD 2>/dev/null)" || sym="detached"
+        [[ -n "$self" ]] && gates_spec_wt_branches "$cdir" main "$sym"
         for wt in "$cdir"/worktrees/*; do
             [[ -d "$wt" ]] || continue
+            if [[ "${wt##*/}" != "$self" ]]; then
+                gates_spec_wt_branches "$wt" "${wt##*/}" "$sym"
+                continue
+            fi
             path=""
             [[ -f "$wt/gitdir" ]] && read -r path <"$wt/gitdir"
             printf 'wt\t%s\t%s\n' "${path:-none}" "${wt##*/}"
@@ -368,7 +400,6 @@ gates_spec_snapshot() { # <root> <state-file>
             >"$scratch" 2>/dev/null || return 1
         awk -F'\t' '$2 !~ /^refs\/remotes\// { printf "ref\t%s\t%s\n", $1, $2 }' "$scratch"
         head="$(git -C "$root" rev-parse -q --verify HEAD 2>/dev/null)" || head="unborn"
-        sym="$(git -C "$root" symbolic-ref -q HEAD 2>/dev/null)" || sym="detached"
         printf 'ref\t%s %s\tHEAD\n' "$head" "$sym"
 
         git -C "$root" ls-files -z -o -i --exclude-standard --directory \
@@ -717,10 +748,17 @@ gates_spec_run_block() { # <cmdfile> <timeout-s> <root> <outfile>
         return 1
     fi
     {
-        sort "$before" "$after" | uniq -u | cut -f1,3
+        # Refs of branches another worktree has checked out, before or
+        # after the block, are that worktree's doing (#206).
+        sort "$before" "$after" | uniq -u | cut -f1,3 >"$outfile.diff"
+        awk -F'\t' -v diff="$outfile.diff" '
+            FILENAME != diff { if ($1 == "oth") skip[$2] = 1; next }
+            $1 == "oth" { next }
+            $1 == "ref" && ($2 in skip) { next }
+            { print }' "$before" "$after" "$outfile.diff"
         gates_spec_ignored_writes "$root" "$after" "$mark"
     } | sort -u >"$outfile.changes"
-    rm -f "$mark"
+    rm -f "$mark" "$outfile.diff"
     SPEC_SNAP_PREV="$after"
     if [[ -s "$outfile.changes" ]]; then
         SPEC_BLOCK_DETAIL="$(gates_spec_change_detail "$outfile.changes")"

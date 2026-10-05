@@ -117,7 +117,9 @@ Enforcement follows the feature's own completion claim, read from
   or a mutation — blocks are read-only by contract and never
   auto-reverted). The read-only check covers the working tree, git config,
   the git hooks, `.git/info/`, skip-worktree and assume-unchanged flags,
-  linked worktrees, `HEAD` and refs, and gitignored files. A block that
+  this worktree's entry, `HEAD` and refs, and gitignored files. Refs of
+  branches checked out in other worktrees are left out, so work in a
+  sibling worktree does not fail a block. A block that
   leaves a process running fails too, including one that left the
   block's process group or session; a process that both closed the
   inherited descriptor and dropped the block's environment marker is not

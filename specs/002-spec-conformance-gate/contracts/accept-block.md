@@ -68,11 +68,12 @@ the association):
      (`git ls-files -v`): the flag and a content hash, since `git status`
      does not report edits to a flagged file
      (`index flags modified: <paths>`);
-   - linked worktrees (`<common-dir>/worktrees/*`): each one's path and
-     lock (`worktrees modified: <names>`);
+   - this worktree, when it is a linked one (`<common-dir>/worktrees/<name>`):
+     its path and lock (`worktrees modified: <name>`);
    - `HEAD` (commit and symbolic target) and every ref except
-     `refs/remotes/*`, which a background fetch moves
-     (`refs modified: <refs>`);
+     `refs/remotes/*`, which a background fetch moves, and except the
+     branches another worktree has checked out or is rebasing, in either
+     snapshot (`refs modified: <refs>`);
    - gitignored files: the set of ignored roots
      (`git ls-files -o -i --directory`), and any file or directory under
      them whose ctime is newer than a marker taken just before the block
@@ -89,10 +90,12 @@ the association):
    closed (`cannot check for mutations: not a git work tree`). Blocks
    needing scratch space must use `mktemp -d` outside the repository and
    clean up. Not covered: files outside the repository (other than the
-   global and system git config), other worktrees' `HEAD`, and repacking
-   (`git gc`, `git pack-refs`), which changes storage, not content;
-   concurrent git activity in a sibling worktree (a commit there, or a new
-   worktree) fails a block, so rerun.
+   global and system git config), repacking (`git gc`, `git pack-refs`),
+   which changes storage, not content, and other worktrees: their `HEAD`,
+   per-worktree refs, entries and checked-out branches, so a commit, branch
+   switch or new worktree in a sibling worktree does not fail a block, and
+   a block that adds a worktree outside the project or commits in another
+   worktree is not caught.
 
 8. **Budget and processes**: each block runs under the policy's
    `spec.timeout_s` watchdog (default 30s); exceeding it fails the block.

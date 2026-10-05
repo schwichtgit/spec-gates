@@ -482,15 +482,21 @@ tool gates and before `parity`:
    config in every scope, the hooks directory git uses, the files in
    `.git/info/` (attributes, exclude, sparse-checkout), every index entry
    flagged skip-worktree or assume-unchanged (the flag and a content hash,
-   since `git status` no longer reports edits to such a file), the linked
-   worktrees, `HEAD` and every local ref, and gitignored files (checked by
-   ctime). A block that changes any of them, including a write to a file
-   that was already modified, a `git config core.hooksPath`, a commit, a
-   tag or a `git worktree add`, fails its criterion, and nothing is ever
-   auto-reverted. Repacking (`git gc`, `git pack-refs`) changes how git
-   stores objects and refs, not what they say, and is not checked; neither
-   are other worktrees' `HEAD`, so a commit or a new worktree made from a
-   sibling worktree during the run fails a block (rerun).
+   since `git status` no longer reports edits to such a file), this
+   worktree's path and lock when it is a linked one, `HEAD` and every
+   local ref, and gitignored files (checked by ctime). A block that
+   changes any of them, including a write to a file that was already
+   modified, a `git config core.hooksPath`, a commit, a tag or a new
+   branch, fails its criterion, and nothing is ever auto-reverted.
+   Repacking (`git gc`, `git pack-refs`) changes how git stores objects
+   and refs, not what they say, and is not checked. Other worktrees are
+   left out: their `HEAD`, their per-worktree refs, their entries, and
+   the refs of the branches they have checked out (or are rebasing)
+   before or after the block. A commit, a branch switch, or a worktree
+   added or removed in a sibling worktree during the run does not fail a
+   block. The flip side: a block that adds a worktree outside the
+   project, or commits in another worktree, is not caught either (one
+   inside the project shows up as an untracked directory).
 
    No process may outlive its block. The process group is stopped after
    every block, and a block that leaves a process running fails. A child
