@@ -451,7 +451,9 @@ Two settings in `.specify/gates/policy.json` cover the most common cases:
   cloud service-account files), sensitive directories, lock files, and
   `protected_files.extra`. A file whose name merely contains a word like
   `secret` or `token` (`test_no_secret_leak.py`) gets an "ask" instead,
-  so you confirm the edit.
+  so you confirm the edit. So does the constitution: `/speckit-constitution`
+  and `/speckit.gates.constitution` write it as one of their steps, and
+  you approve that write once.
 
 ## Coexisting with other hook managers
 

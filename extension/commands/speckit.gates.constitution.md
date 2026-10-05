@@ -133,7 +133,11 @@ one `gates:enforce` marker per principle. Do not proceed without approval.
 On approval, run `prettier` over the draft (the same pinned binary the gate
 uses) and write it to `.specify/memory/constitution.md`. This is the only
 write to a user-owned file in the elicitation half, and it happens only after
-the user has seen the whole thing.
+the user has seen the whole thing. The `protect-files` hook asks the user to
+confirm this Write (it asks for every Write or Edit to the constitution): that
+prompt is expected, so write with the Write tool, never through Bash. A commit
+of the constitution needs `Protected-Change` and `Approved-By` trailers when
+`protected_files.extra` lists it, as the default policy does.
 
 ### 7. Hand off to core versioning (FR-012)
 

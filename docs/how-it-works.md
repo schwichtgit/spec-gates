@@ -32,9 +32,12 @@ spec-gates uses four of them:
   files, private keys and certificates, exact credential file names
   (`credentials.json`, `.netrc`, cloud service-account files), sensitive
   directories, lock files, the project's own rules in
-  `.specify/gates/hooks.local.d/`, `.specify/gates/policy.json` and
-  `.specify/memory/constitution.md` (always, whatever the policy says),
-  and every `protected_files.extra` entry. It resolves `.`, `..` and `//`
+  `.specify/gates/hooks.local.d/`, `.specify/gates/policy.json` (always,
+  whatever the policy says), and every `protected_files.extra` entry. A
+  Write or Edit to `.specify/memory/constitution.md` asks instead, under
+  any policy (an `extra` entry naming it included): the constitution
+  commands write it as one of their steps, so you approve that write once.
+  It resolves `.`, `..` and `//`
   in the path first and matches ignoring case, since macOS filesystems are
   case-insensitive by default. An `extra` entry also matches under
   another spelling of the project root (`/tmp` and `/private/tmp`, a
@@ -221,7 +224,8 @@ config calls but whose install command has not run yet is reported by
 command, since a commit runs no gates check until then.
 
 **Protected files** get different treatment at the two local boundaries.
-The agent may never edit them. At the git boundary a human is the
+The agent may never edit them, except the constitution, whose Write/Edit
+asks you first. At the git boundary a human is the
 committer, so an approved amendment has a path through: every staged
 protected path (added, modified, deleted, or renamed) must be declared in
 the message's trailer block, with an approver:
@@ -723,7 +727,8 @@ principle, rewrite its own hook wiring: `.claude/settings.json`, the
 projected hooks in `.claude/hooks/gates/` and the runtime in
 `.specify/gates/` are not protected by default. Add them to
 `protected_files.extra` to have Write/Edit refused and Bash changes asked
-about, as `policy.json`, the constitution and the project's own rules are.
+about, as `policy.json` and the project's own rules are (the constitution
+asks for both).
 The Bash check is itself a heuristic over command text, which is why it
 asks rather than claims to block.
 

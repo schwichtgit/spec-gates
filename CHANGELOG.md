@@ -152,6 +152,12 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   `grep -n rm <protected path>` and a commit message naming a protected
   path no longer ask. The docs now say that the Stop hook lets the stop
   right after a refusal through (`stop_hook_active`).
+- **A Write or Edit to the constitution asks instead of being refused**
+  (#200). `/speckit-constitution` and `/speckit.gates.constitution` write
+  `.specify/memory/constitution.md` as one of their steps, and the file
+  hook refused that write with no way through. It now asks, under any
+  policy; `policy.json`, `hooks.local.d` and the contract artifacts stay
+  refused.
 - **An unknown `--accept` feature is refused before any gate runs**
   (#179). `verify.sh --accept <name>` with a name that is not a feature
   ran the lint and quality gates first and refused only at the spec gate,

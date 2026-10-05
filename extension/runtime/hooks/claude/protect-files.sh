@@ -177,14 +177,24 @@ case "$FILE_PATH" in
         ;;
 esac
 
-# The policy and the constitution are protected whatever protected_files.extra
-# says and whether or not jq is present (#165): an agent that could rewrite
-# them could switch off every other rule, and the policy is exactly what an
-# invalid or unread policy cannot vouch for.
+# The policy is protected whatever protected_files.extra says and whether
+# or not jq is present (#165): an agent that could rewrite it could switch
+# off every other rule, and it is exactly what an invalid or unread policy
+# cannot vouch for.
 case "$FILE_PATH" in
-    .specify/gates/policy.json | */.specify/gates/policy.json \
-        | .specify/memory/constitution.md | */.specify/memory/constitution.md)
-        BLOCKED="Gates policy or constitution (a human edits these; the commit needs a Protected-Change trailer)"
+    .specify/gates/policy.json | */.specify/gates/policy.json)
+        BLOCKED="Gates policy (a human edits it; the commit needs a Protected-Change trailer)"
+        ;;
+esac
+
+# The constitution asks instead (#200): /speckit-constitution and
+# /speckit.gates.constitution write it as their own step, so a refusal
+# would push the agent to Bash. Every Write/Edit to it, under any policy
+# (an extra entry naming it included), needs one human approval.
+CONSTASK=""
+case "$FILE_PATH" in
+    .specify/memory/constitution.md | */.specify/memory/constitution.md)
+        CONSTASK="this edits the project constitution; confirm the change (committing it needs a Protected-Change trailer when protected_files.extra lists it)"
         ;;
 esac
 
@@ -204,7 +214,7 @@ fi
 # both the project-relative path and the basename so exact entries and globs
 # (e.g. ".specify/memory/constitution.md", "docs/**") both work.
 ASK=""
-if [[ -z "$BLOCKED" ]]; then
+if [[ -z "$BLOCKED" && -z "$CONSTASK" ]]; then
     PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
     POLICY_LIB="$PROJECT_ROOT/.specify/gates/lib/policy.sh"
     POLICY_FILE="$PROJECT_ROOT/.specify/gates/policy.json"
@@ -293,6 +303,7 @@ if compgen -G "$LROOT/.specify/gates/hooks.local.d/protect-files/*.sh" >/dev/nul
     fi
 fi
 
+[[ -n "$CONSTASK" ]] && ask "$CONSTASK"
 [[ -n "$ASK" ]] && ask "$ASK"
 [[ -n "$NAMEASK" ]] && ask "$NAMEASK"
 

@@ -1394,7 +1394,7 @@ printf '%s' '{ "hooks": {}, "protected_files": { "extra": [".specify/memory/cons
     >"$PN/.specify/gates/policy.json"
 pn_payload() { jq -nc --arg f "$1" '{tool_input:{file_path:$f}}'; }
 for f in .specify/gates/./policy.json .specify//gates/policy.json .specify/gates/lib/../policy.json \
-    "$PN/.specify/x/../gates/policy.json" .specify/memory/./constitution.md .specify/gates/POLICY.json \
+    "$PN/.specify/x/../gates/policy.json" .specify/gates/POLICY.json \
     .SPECIFY/gates/policy.json "$PN/.Specify/Gates/policy.json" "$(tr '[:lower:]' '[:upper:]' <<<"$PN")/.specify/gates/policy.json" \
     Package-Lock.json .ENV config/.Env.Local "$PN/.SSH/config" ./.ssh/config \
     .specify/gates/HOOKS.LOCAL.D/validate-bash/10.sh .specify/gates/./hooks.local.d/x.sh; do
@@ -1422,10 +1422,12 @@ BP_POLICIES=('{ "hooks": {} }' '{ "hooks": {}, "protected_files": { "extra": [] 
     '{ "hooks": {}, "protected_files": { "extra": "notalist" } }')
 for pol in "${BP_POLICIES[@]}"; do
     printf '%s' "$pol" >"$BP/.specify/gates/policy.json"
-    for f in .specify/gates/policy.json .specify/memory/constitution.md "$BP/.specify/gates/policy.json"; do
+    for f in .specify/gates/policy.json "$BP/.specify/gates/policy.json"; do
         check "Write/Edit refused [$pol]: $f" 2 bash -c "printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$BP' '$HOOKS/protect-files.sh'" _ "$(pn_payload "$f")"
         check "Write/Edit refused without jq [$pol]: $f" 2 bash -c "printf '%s' \"\$1\" | PATH='$NOJQ' CLAUDE_PROJECT_DIR='$BP' '$HOOKS/protect-files.sh'" _ "$(pn_payload "$f")"
     done
+    askcheck "Write/Edit to the constitution asks [$pol]" "$(pn_payload .specify/memory/constitution.md)" protect-files.sh CLAUDE_PROJECT_DIR="$BP"
+    askcheck "Write/Edit to the constitution asks without jq [$pol]" "$(pn_payload .specify/memory/constitution.md)" protect-files.sh PATH="$NOJQ" CLAUDE_PROJECT_DIR="$BP"
     # shellcheck disable=SC2016  # literal command text under test
     for c in 'rm .specify/gates/policy.json' 'sed -i s/a/b/ .specify/memory/constitution.md' \
         'echo {} > .specify/gates/policy.json'; do
@@ -1467,6 +1469,30 @@ if [[ -d /private/tmp && "$(cd /tmp && pwd -P)" == /private/tmp ]]; then
     pr_spell "extra matched: /private/tmp root, /tmp path" "/private$TP" "$TP/docs/internal.md"
     rm -rf "$TP"
 fi
+
+# The constitution asks, never blocks (#200): the constitution commands
+# write it as their own step. An extra entry naming it (the policy
+# template's default) asks too; policy.json, hooks.local.d and the
+# contract artifacts stay refused under the same policy.
+echo ""
+echo "=== protect-files: the constitution asks (#200) ==="
+CA="$WORKDIR/pf200"
+project_runtime "$CA" "true"
+mkdir -p "$CA/.specify/memory"
+printf '%s' '{ "hooks": {}, "protected_files": { "extra": [".specify/memory/constitution.md", ".specify/gates/policy.json", ".specify/**"] } }' \
+    >"$CA/.specify/gates/policy.json"
+for f in .specify/memory/constitution.md "$CA/.specify/memory/constitution.md" .specify/memory/./Constitution.md; do
+    askcheck "constitution asks under extra: $f" "$(pn_payload "$f")" protect-files.sh CLAUDE_PROJECT_DIR="$CA"
+    askcheck "constitution asks under extra without jq: $f" "$(pn_payload "$f")" protect-files.sh PATH="$NOJQ" CLAUDE_PROJECT_DIR="$CA"
+done
+for f in .specify/gates/policy.json .specify/gates/hooks.local.d/protect-files/10.sh .specify/gates/baseline.json \
+    .specify/memory/other.md; do
+    check "still refused next to the constitution: $f" 2 bash -c "printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$CA' '$HOOKS/protect-files.sh'" _ "$(pn_payload "$f")"
+done
+mkdir -p "$CA/.specify/gates/hooks.local.d/protect-files"
+printf '#!/bin/bash\necho "constitution frozen" >&2\nexit 1\n' >"$CA/.specify/gates/hooks.local.d/protect-files/10.sh"
+check "a project rule still refuses the constitution" 2 bash -c "printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$CA' '$HOOKS/protect-files.sh'" _ "$(pn_payload .specify/memory/constitution.md)"
+rm -rf "$CA/.specify/gates/hooks.local.d"
 
 # ===========================================================================
 # Part M: command variants the agent hooks used to miss (#170)
