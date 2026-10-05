@@ -240,6 +240,21 @@ expect "--accept executed both blocks" \
 OUT="$(gate_out "$D" --accept nonexistent)"
 expect_contains "--accept unknown feature exits 1" "$OUT" "EXIT=1"
 expect_contains "--accept unknown feature names available" "$OUT" "unknown feature: nonexistent"
+# An unknown name is an argument error, refused before any gate runs
+# (#179): under --dry-run too, and before the quality gate.
+OUT="$(gate_out "$D" --dry-run --accept nonexistent)"
+expect_contains "--dry-run --accept unknown feature exits 1" "$OUT" "EXIT=1"
+expect "--json --accept unknown feature answers refused" \
+    "$(gate_json "$D" --accept nonexistent | jq -r '.result')" refused
+D2="$WORKDIR/acceptgate"
+project "$D2" '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error", "custom_command": "touch '"$D2"'/gate-ran" } } }'
+mkfeature "$D2" 100-wip "Draft" <<'EOF'
+- [ ] T001 something
+EOF
+OUT="$(gate_out "$D2" --accept nonexistent)"
+expect_contains "--accept unknown feature with a quality gate exits 1" "$OUT" "EXIT=1"
+expect "--accept unknown feature: the quality gate did not run" \
+    "$([[ -e "$D2/gate-ran" ]] && echo ran || echo not-run)" not-run
 
 # --- no specs/ directory: trivial pass (FR-011) ---
 echo ""

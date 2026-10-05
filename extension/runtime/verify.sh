@@ -121,6 +121,15 @@ if ! gates_validate_policy "$(gates_policy_file)"; then
     refuse "invalid policy, no gate ran; fix the errors above (run /speckit.gates.doctor)"
 fi
 
+# An unknown --accept name is an argument error: refuse it here, before
+# any gate runs (also under --dry-run), not after the lint gates (#179).
+if [[ -n "$ACCEPT_ARG" && "$ACCEPT_ARG" != "all" ]]; then
+    if ! grep -qx -- "$ACCEPT_ARG" <<<"$(gates_spec_features "$PROJECT_ROOT")"; then
+        AVAILABLE="$(gates_spec_features "$PROJECT_ROOT" | tr '\n' ' ')"
+        refuse "--accept: unknown feature: $ACCEPT_ARG (available: ${AVAILABLE:-none})"
+    fi
+fi
+
 FAILED=0
 WARNINGS=0
 declare -a RESULTS=()
@@ -301,12 +310,6 @@ elif [[ "$SPEC_ENABLED" != "false" ]]; then
     if [[ "$DRY_RUN" == "1" ]]; then
         record "spec" "planned" "spec conformance (accept blocks)"
     else
-        if [[ -n "$ACCEPT_ARG" && "$ACCEPT_ARG" != "all" ]]; then
-            if ! grep -qx -- "$ACCEPT_ARG" <<<"$(gates_spec_features "$PROJECT_ROOT")"; then
-                AVAILABLE="$(gates_spec_features "$PROJECT_ROOT" | tr '\n' ' ')"
-                refuse "--accept: unknown feature: $ACCEPT_ARG (available: ${AVAILABLE:-none})"
-            fi
-        fi
         SPEC_SEV="$(gates_policy_section_get spec severity)"
         [[ -z "$SPEC_SEV" ]] && SPEC_SEV="error"
         spec_start="$(date +%s)"

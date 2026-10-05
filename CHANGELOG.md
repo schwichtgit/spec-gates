@@ -109,6 +109,11 @@ add` forms at the agent boundary. `project.sh` lists new settings like
 
 ### Fixed
 
+- **An unknown `--accept` feature is refused before any gate runs**
+  (#179). `verify.sh --accept <name>` with a name that is not a feature
+  ran the lint and quality gates first and refused only at the spec gate,
+  and under `--dry-run` it was not refused at all. It is now an argument
+  error, refused up front (exit 1, and the refusal object under `--json`).
 - **Gate sandboxes no longer touch the caller's repository** (#173). Git
   runs hooks with `GIT_DIR` and `GIT_INDEX_FILE` set (absolute in a linked
   worktree); the canary sandboxes and accept blocks that build their own

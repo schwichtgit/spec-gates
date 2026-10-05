@@ -332,8 +332,9 @@ locked in by a broken configuration. The other agent hooks match:
 `protect-files` asks before every edit (it cannot tell what the policy
 protects), `post-edit` and `format-changed` format nothing, and doctor
 reports the policy as `[MISSING]`; `project.sh` refuses to project under
-it. A bad `--boundary` value, or `--boundary` or `--accept` without a
-value, is a usage error (exit `1`).
+it. A bad `--boundary` value, `--boundary` or `--accept` without a value, or
+an `--accept` name that is not a feature, is a usage error (exit `1`)
+refused before any gate runs.
 
 ## Evidence, canaries, and verified parity
 
