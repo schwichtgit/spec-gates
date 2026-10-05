@@ -434,7 +434,7 @@ report_side() {
             else
                 say "  $n: $GATES_MANAGER_WHY"
             fi
-            gates_manager_entry "$MANAGER" "$n" | sed 's/^/project:     /'
+            gates_manager_entry "$MANAGER" "$n" "$mf" | sed 's/^/project:     /'
         done
     fi
     if [[ -n "$MGRMANUAL" ]]; then
@@ -444,7 +444,7 @@ report_side() {
                 GATES_MANAGER_WHY="$mf could not be written; add this by hand:"
             fi
             say "  $n: $GATES_MANAGER_WHY"
-            gates_manager_entry "$MANAGER" "$n" | sed 's/^/project:     /'
+            gates_manager_entry "$MANAGER" "$n" "$mf" | sed 's/^/project:     /'
         done
     fi
     for n in $MGRDONE; do

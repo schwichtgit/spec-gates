@@ -641,9 +641,10 @@ fi
 
 # Git boundary wiring (issues #20/#23): an INSTALLED hook that git will
 # not run is silent enforcement loss — the worst class. Non-executable or
-# non-delegating installed hooks are enforcement GAPS (exit 1); hooks that
-# were never installed get a [rec] nudge only (agent+CI-only repos are a
-# legitimate setup). Zip installs drop execute bits (Python extraction),
+# non-delegating installed hooks are enforcement GAPS (exit 1), and so is a
+# hook manager whose config calls gates while git runs no hook for it
+# (#167: its install command never ran); hooks that were never wired get a
+# [rec] nudge only (agent+CI-only repos are a legitimate setup). Zip installs drop execute bits (Python extraction),
 # which is exactly how downstream repos end up in the gap state.
 if [[ "$CI_MODE" -eq 1 ]]; then
     echo ""
@@ -674,8 +675,10 @@ elif git -C "$PROJECT_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
         if [[ ! -f "$hf" ]] && [[ "$DOC_MGR" == "husky" || "$DOC_MGR" == "lefthook" || "$DOC_MGR" == "pre-commit" ]] \
             && gates_manager_wired "$PROJECT_ROOT" "$DOC_MGR" "$h"; then
             # Wired in the manager's config, but its install command has
-            # not generated the hook yet (#148).
-            echo "${REC}$h not installed — $(gates_manager_file "$PROJECT_ROOT" "$DOC_MGR" "$h") calls the gates hook, but git runs no $h hook until you run \`$(gates_manager_install_hint "$DOC_MGR" "$h")\`"
+            # not generated the hook yet (#148): a commit runs no gates
+            # check, so this fails (#167).
+            echo "${BAD}$h not installed — $(gates_manager_file "$PROJECT_ROOT" "$DOC_MGR" "$h") calls the gates hook, but git runs no $h hook until you run \`$(gates_manager_install_hint "$DOC_MGR" "$h")\`"
+            MISSING=$((MISSING + 1))
         elif [[ ! -f "$hf" ]]; then
             echo "${REC}$h not installed — the git boundary is not enforced here (run /speckit.gates.init to wire it)"
         elif [[ ! -x "$hf" ]]; then
@@ -696,7 +699,9 @@ elif git -C "$PROJECT_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
             # The call-through to .specify/gates/hooks/<name> on a line that
             # runs, not any mention of "gates" (#128).
             echo "${OK}$h installed, executable, delegates to the gates runtime"
-        else
+        elif ! { declare -f gates_hook_static >/dev/null 2>&1 && gates_hook_static "$PROJECT_ROOT" "$h"; }; then
+            # A manager hook wired correctly is reported once, by the
+            # static check below (#167).
             echo "${REC}$h is executable but does not call .specify/gates/hooks/$h itself — another tool owns it; gates checks run on commit only if that tool calls the gates hook"
         fi
     done
