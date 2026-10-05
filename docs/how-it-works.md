@@ -41,17 +41,26 @@ spec-gates uses four of them:
   symlinked checkout), compared by real path.
 - `PreToolUse(Bash)` → `validate-bash.sh`: refuses destructive commands
   (`rm` of root, home or a path outside the temp directories, force push,
-  hard reset, `chmod 777`, piping a download into a shell, …). With
+  hard reset, `chmod 777`, piping a download into a shell, discarding the
+  whole working tree with `git checkout` or `git restore` of `.`, `:/` or
+  other pathspec magic in any option order, `git clean` with `-f` or
+  `--force` anywhere, …). With
   `git.block_bulk_staging` it also refuses bulk staging: `git add` or
   `git stage` with `-A` (also in a cluster such as `-vA`), `--all`,
   `--no-ignore-removal`, `--pathspec-from-file`, `.`, `:/` and other
   pathspec magic, globs (quoted or not), `"$PWD"`, `~` and directory
-  arguments, including behind `env`, `command`, `sudo`, variable
-  assignments and git's global options (`-C`, `--no-pager`, …). An
-  argument it cannot resolve (`"$f"`) asks. `validate-pr.sh`: checks the
-  title and body of
-  `gh pr create|edit` and `glab mr create|update` with the commit-message
-  rules.
+  arguments (relative to an earlier `cd` in the same command), including
+  behind `env`, `command`, `sudo`, variable assignments and git's global
+  options (`-C`, `--no-pager`, …). An argument it cannot resolve (`"$f"`,
+  a backtick substitution, arguments from `xargs`, a path after a `cd` it
+  cannot follow) asks. `validate-pr.sh`: checks the title and body of
+  `gh pr create|edit`, `glab mr create|update` and `gh api` calls on a
+  `repos/<owner>/<repo>/pulls` endpoint with the commit-message rules. It
+  reads each value as the shell would pass it and refuses one it cannot
+  read literally: a variable, a command substitution (except the
+  `"$(cat <<'EOF' … EOF)"` heredoc), a glob, a flag given twice, a
+  clustered short flag such as `-tfeat`, `gh api --input`, or a PR
+  command inside `sh -c` or `eval`.
 - `PostToolUse(Write|Edit)` → `post-edit.sh`: formats the touched file per
   policy.
 - `Stop` → `format-changed.sh` + `verify-quality.sh`: the session may not
@@ -69,8 +78,11 @@ the PreToolUse `permissionDecision: ask` answer, which prompts in every
 permission mode. The hooks ask when a file name merely contains a word
 such as `secret` or `token` (a test like `test_no_secret_leak.py` is not a
 credential), when a Bash command appears to modify a protected path
-(`rm`, `mv`, `sed -i`, a redirect, `tee`, `find -delete`, `git rm` naming
-one, its parent directory, or a path relative to a `cd` into one; telling
+(`rm`, `mv`, `sed -i`, a redirect, `tee`, `find -delete`, `git rm`, also
+as `/bin/rm`, `\rm`, `xargs rm`, inside `sh -c` or `eval`, or an
+interpreter one-liner such as `python3 -c`, naming one, its parent
+directory, a brace or backslash spelling of it, or a path relative to a
+`cd` into one; telling
 a modification from a read by the command text is a heuristic, so it asks
 rather than blocks), when a Bash command names a secret file the file hook
 refuses (`cat .env`), when it bypasses the git hooks (`--no-verify`,
@@ -118,7 +130,10 @@ terms).
 Subjects git writes itself are exempt from the Conventional Commits rule
 only: a merge commit (recognized by `MERGE_HEAD`, not by its subject) and
 the `fixup!`, `squash!` and `amend!` subjects of `git commit --fixup` and
-`--squash`. Every other message rule still applies to them. `git revert`
+`--squash`. A prefix counts only when the rest of the subject is the
+subject of an existing commit, as git writes it; `fixup! anything` typed by
+hand is judged like any other subject. Every other message rule still
+applies to them. `git revert`
 runs no commit hooks at all (git's own behavior), so a revert is checked
 only at the CI boundary.
 

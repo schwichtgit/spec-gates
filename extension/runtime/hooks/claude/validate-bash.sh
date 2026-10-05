@@ -209,20 +209,50 @@ bulk_staging_on() {
 #                an escaped space, a variable or a command substitution)
 #   HOOKS <what> a git hook bypass: --no-verify, `commit -n`, or a
 #                core.hooksPath setting
+#   DESTRUCT <what>  a whole-tree discard (#170): `checkout`/`restore` of
+#                `.`, `:/` or other pathspec magic, in any spelling and
+#                position (`restore --staged` alone only unstages), and
+#                `clean` with -f or --force anywhere
+# Arguments come from xargs (`xargs git add < list`) are unknown (BULKQ).
+# A `cd <dir>` segment moves the directory later relative paths resolve
+# against; a `cd` this cannot resolve makes them unknown too.
 git_scan() {
-    local seg t t2 q a base cdir sub n i dashdash
+    local seg t t2 q a base cdir sub n i dashdash xa whole staged wtree
+    local scwd="$CWD"
     local asg='^[A-Za-z_][A-Za-z0-9_]*='
     local -a w
     while IFS= read -r seg; do
         w=()
         read -r -a w <<<"$seg" || true
         n="${#w[@]}"
+        [[ "$n" -gt 0 ]] || continue
+        if [[ "${w[0]}" == cd || "${w[0]}" == pushd ]]; then
+            t="${w[1]:-}"
+            t="${t#[\"\']}"
+            t="${t%[\"\']}"
+            # shellcheck disable=SC2016  # literal command text
+            case "$t" in
+                '' | '~'* | *'$'* | *'`'* | -*) scwd="" ;;
+                /*) scwd="$t" ;;
+                *) [[ -n "$scwd" ]] && scwd="$scwd/$t" ;;
+            esac
+            continue
+        fi
         i=0
+        xa=0
         while [[ "$i" -lt "$n" ]]; do
             t="${w[i]}"
             if [[ ! "$t" =~ $asg ]]; then
                 case "$t" in
                     sudo | env | command | exec | nohup | time | nice) ;;
+                    xargs)
+                        # xargs runs the command with arguments read
+                        # elsewhere: skip its options up to the command.
+                        xa=1
+                        while [[ "$((i + 1))" -lt "$n" && "${w[i + 1]}" != git && "${w[i + 1]}" != */git ]]; do
+                            i=$((i + 1))
+                        done
+                        ;;
                     -*) [[ "$i" -gt 0 ]] || break ;;
                     *) break ;;
                 esac
@@ -252,13 +282,19 @@ git_scan() {
         done
         sub="${w[i]:-}"
         i=$((i + 1))
-        base="$CWD"
+        base="$scwd"
         if [[ -n "$cdir" ]]; then
             cdir="${cdir#[\"\']}"
             cdir="${cdir%[\"\']}"
-            if [[ "$cdir" == /* ]]; then base="$cdir"; else base="$CWD/$cdir"; fi
+            if [[ "$cdir" == /* ]]; then base="$cdir"; elif [[ -n "$scwd" ]]; then base="$scwd/$cdir"; fi
+        fi
+        if [[ "$xa" -eq 1 && ( "$sub" == add || "$sub" == stage ) ]]; then
+            printf 'BULKQ %s\n' "(arguments from xargs)"
         fi
         dashdash=0
+        whole=""
+        staged=0
+        wtree=0
         while [[ "$i" -lt "$n" ]]; do
             a="${w[i]}"
             i=$((i + 1))
@@ -275,6 +311,41 @@ git_scan() {
                     continue
                 fi
             fi
+            t="${a//\"/}"
+            t="${t//\'/}"
+            case "$sub" in
+                clean)
+                    if [[ "$dashdash" -eq 0 ]]; then
+                        case "$t" in
+                            --force) printf 'DESTRUCT git clean %s\n' "$t" ;;
+                            --*) ;;
+                            -*f*) printf 'DESTRUCT git clean %s\n' "$t" ;;
+                        esac
+                    fi
+                    continue
+                    ;;
+                checkout | restore)
+                    if [[ "$dashdash" -eq 0 ]]; then
+                        case "$t" in
+                            --staged) staged=1; continue ;;
+                            --worktree) wtree=1; continue ;;
+                            --*) continue ;;
+                            -*)
+                                [[ "$t" == *S* ]] && staged=1
+                                [[ "$t" == *W* ]] && wtree=1
+                                continue
+                                ;;
+                        esac
+                    fi
+                    # The whole tree: `.`, `./`, `*`, `:/`, `:(top)` or
+                    # other magic (the segment split may cut it at the
+                    # parenthesis).
+                    case "$t" in
+                        . | ./ | '*' | ./'*' | :*) whole="$a" ;;
+                    esac
+                    continue
+                    ;;
+            esac
             [[ "$sub" == add || "$sub" == stage ]] || continue
             if [[ "$dashdash" -eq 0 ]]; then
                 case "$a" in
@@ -327,16 +398,34 @@ git_scan() {
                 *'$'* | *'`'* | *\\*) printf 'BULKQ %s\n' "$a" ;;
                 . | ./ | :* | */ | *[*?[]*) printf 'BULK %s\n' "$a" ;;
                 *)
-                    if [[ "$t" == /* && -d "$t" ]] || [[ "$t" != /* && -d "$base/$t" ]]; then
+                    if [[ -z "$base" && "$t" != /* ]]; then
+                        printf 'BULKQ %s\n' "$a"
+                    elif [[ "$t" == /* && -d "$t" ]] || [[ "$t" != /* && -d "$base/$t" ]]; then
                         printf 'BULK %s\n' "$a"
                     fi
                     ;;
             esac
         done
-    done < <(printf '%s\n' "$COMMAND" | awk '{ gsub(/&&|\|\||;|\||&|\(|\)|`/, "\n"); print }')
+        if [[ -n "$whole" ]] && { [[ "$sub" == checkout ]] || [[ "$staged" -eq 0 || "$wtree" -eq 1 ]]; }; then
+            printf 'DESTRUCT git %s %s\n' "$sub" "$whole"
+        fi
+    done < <(printf '%s\n' "$COMMAND" | awk '
+        # A `...` substitution is an argument this cannot resolve: it
+        # stands in as $SUBST, and its own text is scanned as a command.
+        { s = $0; inner = ""
+          while (match(s, /`[^`]*`/)) {
+              inner = inner "\n" substr(s, RSTART + 1, RLENGTH - 2)
+              s = substr(s, 1, RSTART - 1) "$SUBST" substr(s, RSTART + RLENGTH)
+          }
+          s = s inner
+          gsub(/&&|\|\||;|\||&|\(|\)|`/, "\n", s); print s }')
     return 0
 }
 GIT_SCAN="$(git_scan)"
+DESTRUCT="$(awk '/^DESTRUCT / { sub(/^DESTRUCT /, ""); print; exit }' <<<"$GIT_SCAN")"
+if [[ -n "$DESTRUCT" ]]; then
+    BLOCKED="$DESTRUCT (discards uncommitted work)"
+fi
 if [[ -z "$BLOCKED" ]] && grep -q '^BULK' <<<"$GIT_SCAN"; then
     rc=0
     bulk_staging_on || rc=$?
@@ -429,12 +518,17 @@ protected_prefixes() {
         fi
     } | sed -e 's/[*?[].*$//' -e 's:/*$::' | awk 'length($0) > 0' || true
 }
+# A verb counts after a separator, a path (/bin/rm) or the opening quote of
+# a shell string (sh -c 'rm ...', eval "rm ..."), not of any quoted text
+# (grep "rm "); a backslash (\rm) is normalized away below (#170). An
+# interpreter one-liner (python3 -c, node -e, ...) may write any file, so
+# it counts as a change when it names a protected path.
 # shellcheck disable=SC2016  # the backtick is a literal command separator
-MUTATE_VERB='(^|[;&|(`[:space:]])(rm|rmdir|unlink|shred|mv|cp|ln|install|truncate|tee|chmod|chown|dd|rsync)[[:space:]]'
-# shellcheck disable=SC2016
-MUTATE_EDIT='(^|[;&|(`[:space:]])(sed|perl)[[:space:]]+([^;&|]*[[:space:]])?-[a-zA-Z]*i|(^|[;&|(`[:space:]])git[[:space:]]+(rm|mv|checkout|restore|reset|clean|stash)([[:space:]]|$)'
-# shellcheck disable=SC2016
-MUTATE_FIND='(^|[;&|(`[:space:]])find[[:space:]]([^;&|]*[[:space:]])?-(delete|exec|execdir|ok|okdir)([[:space:]]|$)'
+VERB_START='(^|[;&|(`[:space:]/]|(-c|eval)[[:space:]]+["'"'"'])'
+MUTATE_VERB="$VERB_START"'(rm|rmdir|unlink|shred|mv|cp|ln|install|truncate|tee|chmod|chown|dd|rsync)([[:space:]]|$)'
+MUTATE_EDIT="$VERB_START"'(sed|perl)[[:space:]]+([^;&|]*[[:space:]])?-[a-zA-Z]*i|'"$VERB_START"'git[[:space:]]+(rm|mv|checkout|restore|reset|clean|stash)([[:space:]]|$)'
+MUTATE_FIND="$VERB_START"'find[[:space:]]([^;&|]*[[:space:]])?-(delete|exec|execdir|ok|okdir)([[:space:]]|$)'
+MUTATE_INTERP="$VERB_START"'(python[0-9.]*|perl|ruby|node|deno|bun)[[:space:]]+([^;&|]*[[:space:]])?-[a-zA-Z]*[ce]([[:space:]]|$)'
 # The command with path spellings normalized, lowercased. The project root
 # is stripped as given and as its real path (/tmp vs /private/tmp, a
 # symlinked checkout; #165).
@@ -448,14 +542,26 @@ NCMD="$(printf '%s\n' "$COMMAND" | awk -v root="$LROOT" -v rroot="${LREAL:-$LROO
     }
     { s = strip($0, root "/"); s = strip(s, rroot "/"); s = strip(s, "\"$PWD\"/"); s = strip(s, "\"${PWD}\"/")
       s = strip(s, "$PWD/"); s = strip(s, "${PWD}/"); print s }' \
-    | sed -E -e 's#//+#/#g' -e 's#/(\./)+#/#g' -e "s#(^|[[:space:]\"'=<>;&|(\`])(\./)+#\1#g" \
+    | sed -E -e 's#\\([^[:space:]\\])#\1#g' \
+        -e 's#//+#/#g' -e 's#/(\./)+#/#g' -e "s#(^|[[:space:]\"'=<>;&|(\`])(\./)+#\1#g" \
+    | awk '
+        # Brace expansion, as the shell does it: policy.{json,x} names
+        # policy.json (#170). One group per pass, a bounded number of passes.
+        { for (k = 0; k < 20 && match($0, /[^[:space:]{}"'"'"'`]*\{[^{}[:space:]]*,[^{}[:space:]]*\}[^[:space:]{}"'"'"'`]*/); k++) {
+              w = substr($0, RSTART, RLENGTH); o = index(w, "{"); c = index(w, "}")
+              pre = substr(w, 1, o - 1); post = substr(w, c + 1)
+              m = split(substr(w, o + 1, c - o - 1), alt, ","); out = ""
+              for (j = 1; j <= m; j++) out = out (j > 1 ? " " : "") pre alt[j] post
+              $0 = substr($0, 1, RSTART - 1) out substr($0, RSTART + RLENGTH)
+          }
+          print }' \
     | tr '[:upper:]' '[:lower:]')"
 # A write redirect other than to /dev/null, /dev/std* or a file descriptor.
 WRITE_REDIRECT=1
 grep -q '>' <<<"$(sed -E -e 's#[0-9]*>>?[[:space:]]*/dev/(null|stdout|stderr|tty)##g' \
     -e 's#[0-9]*>&[0-9-]+##g' -e 's#&>>?[[:space:]]*/dev/null##g' <<<"$NCMD")" || WRITE_REDIRECT=0
 MUTATES=0
-if grep -qE "$MUTATE_VERB|$MUTATE_EDIT|$MUTATE_FIND" <<<"$NCMD"; then
+if grep -qE "$MUTATE_VERB|$MUTATE_EDIT|$MUTATE_FIND|$MUTATE_INTERP" <<<"$NCMD"; then
     MUTATES=1
 fi
 if [[ "$EXTRA_UNREAD" -eq 1 ]] && [[ "$MUTATES" -eq 1 || "$WRITE_REDIRECT" -eq 1 ]]; then
@@ -484,7 +590,7 @@ while IFS= read -r _pp; do
         # && rm build/x` stays allowed.
         if [[ "$_dir" != "$_pp" && "$MUTATES" -eq 1 ]] \
             && PAT="$TOKEN_START$_e(/[^[:space:];&|]*[*?[][^[:space:];&|]*)?/?$TOKEN_END" \
-                MUT="$MUTATE_VERB|$MUTATE_EDIT|$MUTATE_FIND" awk '
+                MUT="$MUTATE_VERB|$MUTATE_EDIT|$MUTATE_FIND|$MUTATE_INTERP" awk '
                     { n = split($0, part, /&&|\|\||;|&/)
                       for (k = 1; k <= n; k++) if (part[k] ~ ENVIRON["PAT"] && part[k] ~ ENVIRON["MUT"]) hit = 1 }
                     END { exit !hit }' <<<"$NCMD"; then
