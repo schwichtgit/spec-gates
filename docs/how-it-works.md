@@ -119,7 +119,8 @@ file.
 ### 2. The git boundary
 
 When work becomes history. `pre-commit` blocks commits to `main`, scans
-staged content for secrets and forbidden files, and runs the same verify
+staged content for secrets and forbidden files (renamed and typechanged
+files included), and runs the same verify
 entrypoint. `commit-msg` enforces Conventional Commits and refuses
 AI-isms, emoji, AI branding and `Co-Authored-By` trailers. The branding
 list is policy (`git.ai_branding.terms`); a legitimate phrase that contains

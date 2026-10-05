@@ -401,6 +401,28 @@ check "secret scan: a failing git grep refuses the commit" 0 \
     bash -c "cd '$GF' && echo ok >fg.txt && git add fg.txt && ! PATH='$WORKDIR/failgrep':\"\$PATH\" '$GITHOOKS/pre-commit' >/dev/null 2>'$WORKDIR/sc.err' && grep -q 'cannot read staged content for the secret scan' '$WORKDIR/sc.err'"
 ( cd "$GF" && git reset -q -- . >/dev/null 2>&1; rm -f fg.txt )
 
+# Renames and typechanges are scanned too (issue #186): the staged list
+# used to drop R and T entries, so a rename-only commit even exited early.
+# Each case rolls back to the fixture commit, even one that wrongly landed.
+( cd "$GF" && echo X=1 >settings.txt && seq 1 40 >config.txt && ln -s seed.txt link.txt \
+    && git add settings.txt config.txt link.txt && git commit -q -m 'chore: rename fixtures' ) >/dev/null 2>&1
+RN_BASE="$(git -C "$GF" rev-parse HEAD)"
+check "rename scan: renaming a file to .env is blocked" 0 \
+    bash -c "cd '$GF' && git mv settings.txt .env && ! git commit -q -m 'chore: rename' 2>'$WORKDIR/sc.err' && grep -qF 'BLOCKED: forbidden file: .env' '$WORKDIR/sc.err'"
+git -C "$GF" reset -q --hard "$RN_BASE" >/dev/null 2>&1
+( cd "$GF" && git mv config.txt config2.txt && printf 'aws = "AKIA%s"\n' ABCDEFGHIJKLMNOP >>config2.txt && git add config2.txt )
+check "rename scan: git sees a rename with a small edit" 0 \
+    bash -c "cd '$GF' && [[ \"\$(git diff --cached --name-status)\" == R* ]]"
+check "rename scan: a key added during a rename is blocked" 0 \
+    bash -c "cd '$GF' && ! git commit -q -m 'chore: rename config' 2>'$WORKDIR/sc.err' && grep -qF 'SECRET: AWS key pattern in config2.txt' '$WORKDIR/sc.err'"
+git -C "$GF" reset -q --hard "$RN_BASE" >/dev/null 2>&1
+( cd "$GF" && rm link.txt && printf 'AKIA%s\n' ABCDEFGHIJKLMNOP >link.txt && git add link.txt )
+check "rename scan: git sees a symlink-to-file typechange" 0 \
+    bash -c "cd '$GF' && [[ \"\$(git diff --cached --name-status)\" == T* ]]"
+check "rename scan: a key in a typechanged file is blocked" 0 \
+    bash -c "cd '$GF' && ! git commit -q -m 'chore: typechange' 2>'$WORKDIR/sc.err' && grep -qF 'SECRET: AWS key pattern in link.txt' '$WORKDIR/sc.err'"
+git -C "$GF" reset -q --hard "$RN_BASE" >/dev/null 2>&1
+
 # Forbidden-file allowlist: template/example files are committable even when
 # the base name looks sensitive; real secret files still blocked.
 FF="$WORKDIR/forbidden.sh"

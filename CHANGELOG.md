@@ -127,6 +127,12 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   `GATES_POLICY_FILE`, `GATES_SKIP`, `GATES_ALLOW_MAIN_COMMIT`,
   `GATES_RUNTIME_DIR` or `GATES_TEST`, and `GATES_SKIP=1` now prints that
   the quality gate did not run.
+- **Renamed and typechanged files are scanned for secrets** (#186).
+  `pre-commit` (and `pre-merge-commit`) listed staged files without
+  renames or typechanges, so `git mv settings.txt .env`, a rename with a
+  small edit adding a key, or a symlink replaced by a file holding one
+  was committed unscanned. Renames now count as their new name, and
+  typechanges are scanned.
 - **An unknown `--accept` feature is refused before any gate runs**
   (#179). `verify.sh --accept <name>` with a name that is not a feature
   ran the lint and quality gates first and refused only at the spec gate,
