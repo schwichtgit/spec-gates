@@ -237,8 +237,8 @@ session that closes that gap:
    changes targeting the overlay so a live 003 contract picks them up. A
    `policy` ref is a dotted path (`hooks.markdownlint.severity`, or the
    short `markdownlint.severity`); a `ci` principle counts only when a
-   pipeline runs `verify.sh --boundary ci` in a step that is not commented
-   out or disabled, and runs the step its ref names. You apply them one at a time, with approval; declining leaves the repo
+   pipeline runs `verify.sh --boundary ci` in a step doctor can prove runs
+   and fails the pipeline, and runs the step its ref names. You apply them one at a time, with approval; declining leaves the repo
    byte-identical.
 4. **Prove, permanently.** `doctor` and `constitution.sh check` report every
    principle's status on every run. An annotated-but-unwired principle, or a
@@ -402,10 +402,13 @@ missing a template step (a `ci:<step>` line in `.upgrade-holds` records a
 deliberate omission; one for a step the pipeline runs is stale and fails).
 Only live steps count: commented-out steps, steps under `if: false`, a
 step whose failure is ignored (`|| true`, `continue-on-error: true`), and
-a job that never runs on a push or pull request do not, and a pipeline
-that calls `verify.sh` without a live `--boundary ci` step fails (the
-full list and the limits of a text check are in
-[how-it-works](docs/how-it-works.md)).
+a job that never runs on a push or pull request do not. The gates step
+must be proven: `bash .specify/gates/verify.sh --boundary ci` as the whole
+command (or the last line of its script), on a push or pull request
+trigger, without `GATES_SPEC_EXEC` or `GATES_POLICY_FILE`, outside Jenkins
+`catchError`/`try`; a pipeline that calls `verify.sh` without such a step
+fails and is told what to change (the full rules and the limits of a text
+check are in [how-it-works](docs/how-it-works.md)).
 `/speckit.gates.upgrade` walks through the same steps in Claude Code.
 
 ## Project rules that survive upgrades

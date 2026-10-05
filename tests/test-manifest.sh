@@ -164,7 +164,7 @@ eq "no pipeline -> gates_ci_files returns 1" 1 "$rc"
 printf 'on: push\njobs:\n  lint:\n    steps:\n      - run: npm test\n' >"$C/.github/workflows/other.yml"
 rc=0; gates_ci_files "$C" >/dev/null || rc=$?
 eq "a pipeline without the gates step does not count" 1 "$rc"
-printf 'steps:\n  - run: bash .specify/gates/verify.sh  --boundary ci\n' >"$C/.github/workflows/gates.yml"
+printf 'on: push\njobs:\n  g:\n    steps:\n      - run: bash .specify/gates/verify.sh  --boundary ci\n' >"$C/.github/workflows/gates.yml"
 eq "gates pipeline found" ".github/workflows/gates.yml" "$(gates_ci_files "$C")"
 eq "missing steps listed" "canary pr" "$(gates_ci_missing "$C" | tr '\n' ' ' | sed 's/ $//')"
 printf '  - run: bash .specify/gates/canary.sh\n' >>"$C/.github/workflows/other.yml"

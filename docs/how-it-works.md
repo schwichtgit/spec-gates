@@ -721,29 +721,64 @@ installed copy), and CI pipelines missing a template step (the gates,
 canary and PR-check steps, recognized by command on GitHub, GitLab and
 Jenkins; `ci:<step>` in the holds file records a deliberate omission).
 Only a live step counts: one that runs on a push or pull request and can
-fail the pipeline. Doctor removes, as text, what never runs or can never
-fail: comments (`#` in YAML, `//` and `/* */` in a Jenkinsfile); steps or
-jobs under `if: false`; a command only printed by `echo` or `printf`; a
-command followed by `|| true`, `|| :`, `|| exit 0` or `|| echo`; a command
-with `--dry-run`; anything after an unconditional `exit 0` in the same run
-block; GitHub `continue-on-error: true` on the step or job, and a workflow
-whose only triggers are `workflow_dispatch` and `schedule`; GitLab
-`allow_failure: true`, `when: manual` or `when: never` on the job or as
-its unconditional first rule, and a hidden `.name:` job nothing extends;
-a Jenkins stage under `when { expression { false } }` and an `sh` step with
-`returnStatus: true`. The gates step is `verify.sh` with `--boundary ci`
-among its arguments; another boundary does not count. A pipeline that
-calls `verify.sh` but has no live gates step fails (the boundary looks
-wired and enforces nothing); a repository with no such pipeline at all
-gets a recommendation. A `ci:<step>` hold for a step the pipeline runs is
-stale and fails; one naming no template step gets a recommendation to
-remove it.
+fail the pipeline. Doctor first removes, as text, what never runs or can
+never fail: comments (`#` in YAML, `//` and `/* */` in a Jenkinsfile);
+steps or jobs under `if: false`; a command only printed by `echo` or
+`printf`; a command followed by `|| true`, `|| :`, `|| exit 0` or
+`|| echo`; a command with `--dry-run`; anything after an unconditional
+`exit 0` in the same run block; GitHub `continue-on-error: true` on the
+step or job, and a workflow whose only triggers are `workflow_dispatch`
+and `schedule`; GitLab `allow_failure: true`, `when: manual` or
+`when: never` on the job, rules that never let a job run (every rule up to
+the first unconditional one says `when: never` or `manual`; under
+`workflow:` this stops the whole file), an `only:`/`except:` that keeps a
+job out of branch and merge request pipelines (`only: [tags]`,
+`except: [branches]`), and a hidden `.name:` job nothing extends; a
+Jenkins stage under `when { expression { false } }` and an `sh` step with
+`returnStatus: true`.
 
-The check reads files, so it has limits: a heredoc, `set +e`, a pipe into
-another command without `pipefail`, a wrapper script that runs the step, an
-`if:` or `continue-on-error:` computed by an expression, conditional GitLab
-rules, a job reached only through `extends:` or an alias, and a Jenkins
-`when` other than a literal false are read as live. The proof that the gates
+The gates step is then proven, not searched for: denying inert forms one
+by one always leaves another. It counts only when all of these hold:
+
+- the command, after one layer of quotes, is exactly
+  `bash .specify/gates/verify.sh --boundary ci` (`bash`, `./` and the
+  directory are optional; `--json` may come before or after
+  `--boundary ci`), with nothing else on the line: no `;`, `&&`, `||`, `&`,
+  `|`, `:`, `if`, `exit`, `true`, env prefix, second `--boundary` or
+  `--dry-run`;
+- it is the whole value of a GitHub `run:`, a GitLab `script:` or
+  `before_script:` item (an `after_script:` failure does not fail the
+  job), or the string of a Jenkins `sh` step (`sh '...'`,
+  `sh(script: '...')`); or the last line of such a `|` block or `'''`
+  string. Nothing before it in the same shell (earlier lines of the block,
+  earlier GitLab script items) holds a heredoc, a `trap`, an `exit 0` or a
+  `\` continuation into it;
+- a GitHub workflow has `push` or `pull_request` among its `on:` events;
+- the pipeline file never names `GATES_SPEC_EXEC` (skips the spec gate)
+  or `GATES_POLICY_FILE` (replaces the policy), in any `env:`,
+  `variables:` or `withEnv`;
+- a Jenkins `sh` step is not inside `catchError`, `warnError` or `try`.
+
+A pipeline that calls `verify.sh` but has no proven gates step fails, and
+the line names what to change; a repository with no such pipeline at all
+gets a recommendation. `verify.sh` itself refuses a repeated `--boundary`.
+A `ci:<step>` hold for a step the pipeline runs is stale and fails; one
+naming no template step gets a recommendation to remove it.
+
+The check reads files, so it has limits. Read as live: a GitHub
+`if:`, `continue-on-error:` or event filter (`branches:`, `paths:`)
+computed by an expression or narrowing the trigger; conditional GitLab
+rules (an `if:` that never matches, an earlier conditional `when: never`),
+a job reached only through `extends:` or an alias, and an `exit 0` in
+`before_script:` ahead of a `script:` step; a GitHub `shell:`
+override; CI/CD variables set outside the file (GitLab project settings,
+Jenkins job configuration) and Jenkins triggers, which live in the job,
+not the Jenkinsfile; a Jenkins `when` other than a literal false; a
+Jenkins step in a closure that is never called. Rejected although it may
+be fine: the gates command followed by other commands in the same block
+(move it to its own step, or make it the last line), and a path written
+with a variable. The canary and PR-check steps are still recognized by
+command after the removals above, not proven. The proof that the gates
 ran is the CI run's own log: `verify.sh` prints a
 `gates: boundary=ci failed=N warnings=N` summary line.
 

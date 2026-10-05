@@ -304,6 +304,7 @@ usage_err() {
 usage_err "--boundary foo" 'invalid value: foo (allowed: agent, git, ci)' --boundary foo
 usage_err "--boundary without a value" '--boundary needs a value' --boundary
 usage_err "--boundary followed by a flag" '--boundary needs a value' --boundary --json
+usage_err "a repeated --boundary" '--boundary given more than once' --boundary ci --boundary agent
 usage_err "--accept without a value" '--accept needs a feature name or all' --boundary ci --accept
 usage_err "--accept with an empty value" '--accept needs a feature name or all' --boundary ci --accept ""
 ATT_BEFORE="$(cat "$DE/.specify/gates/attestations.jsonl" 2>/dev/null | wc -l | tr -d ' ')"

@@ -67,6 +67,9 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --boundary)
             [[ $# -ge 2 && "$2" != -* ]] || usage "--boundary needs a value (agent, git or ci)"
+            # A second --boundary would replace the first: in CI,
+            # `--boundary ci --boundary agent` runs the agent set (#198).
+            [[ "$BOUNDARY" == unspecified ]] || usage "--boundary given more than once"
             case "$2" in
                 agent | git | ci) BOUNDARY="$2" ;;
                 *) usage "--boundary: invalid value: $2 (allowed: agent, git, ci)" ;;

@@ -212,6 +212,16 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   either after the block exits is stopped and fails it. The read-only
   check also covers skip-worktree and assume-unchanged flags (with a
   content hash of flagged files), `.git/info/` and linked worktrees.
+- **The CI gates step must be proven, not merely found** (#198). Doctor
+  and the constitution `ci` surface still accepted steps that cannot fail
+  the pipeline: `verify.sh --boundary ci; exit 0`, `&`, `true || ...`,
+  `if ...; then`, a second `--boundary`, `GATES_SPEC_EXEC` in the step
+  env, a `workflow_call`-only trigger, GitLab `only: [tags]`,
+  `except: [branches]` or workflow `rules: - when: never`, and Jenkins
+  `catchError` or `try`. A step now counts only as the bare command (or
+  the last line of its script), on a push or pull request trigger,
+  without those variables and outside those wrappers; anything else fails
+  with what to change. `verify.sh` refuses a repeated `--boundary`.
 - **An unknown `--accept` feature is refused before any gate runs**
   (#179). `verify.sh --accept <name>` with a name that is not a feature
   ran the lint and quality gates first and refused only at the spec gate,

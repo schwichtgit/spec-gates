@@ -646,12 +646,13 @@ _gates_const_eval_git_hook() { # <ref> <root>
     grep -q 'gates\|verify.sh' "$hf" 2>/dev/null && echo active || echo missing
 }
 
-# ci: a pipeline runs the gates (a live `verify.sh --boundary ci` step) and
-# the ref: a template step id (gates, canary, pr) must be a live step, any
-# other ref must appear in the live text. Live means comments, disabled
-# steps and steps that cannot fail removed (lib/manifest.sh gates_ci_live,
-# the reading doctor's drift check uses), so a `# TODO: wire gates` line or
-# an `|| true` step enforces nothing (#139, #171). No
+# ci: a pipeline runs the gates (a proven `verify.sh --boundary ci` step,
+# lib/manifest.sh gates_ci_unproven, #198) and the ref: a template step id
+# (gates, canary, pr) must be a live step, any other ref must appear in the
+# live text. Live means comments, disabled steps and steps that cannot fail
+# removed (gates_ci_live, the reading doctor's drift check uses), so a
+# `# TODO: wire gates` line or an `|| true` step enforces nothing (#139,
+# #171). No
 # pipeline file at all is pending-boundary (the CI boundary is simply not
 # projected yet).
 _gates_const_eval_ci() { # <ref> <root>

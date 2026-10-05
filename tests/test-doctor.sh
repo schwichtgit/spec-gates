@@ -578,7 +578,7 @@ TOTAL=$((TOTAL + 1))
 DE="$WORKDIR/const-ok"
 project "$DE" "$ALL" yes
 mkdir -p "$DE/.specify/memory" "$DE/.github/workflows"
-printf 'jobs:\n  gates:\n    steps:\n      - run: bash .specify/gates/verify.sh --boundary ci\n      - run: bash .specify/gates/canary.sh\n      - run: bash .specify/gates/pr-check.sh\n' >"$DE/.github/workflows/ci.yml"
+printf 'on: push\njobs:\n  gates:\n    steps:\n      - run: bash .specify/gates/verify.sh --boundary ci\n      - run: bash .specify/gates/canary.sh\n      - run: bash .specify/gates/pr-check.sh\n' >"$DE/.github/workflows/ci.yml"
 cat >"$DE/.specify/memory/constitution.md" <<'EOF'
 # C
 
@@ -671,7 +671,7 @@ expect "doctor --ci exits 1 on a held deletion" "$rc" "1"
 mv "$U/pf.sh.bak" "$U/.claude/hooks/gates/protect-files.sh"
 rm -f "$U/.specify/gates/.upgrade-holds"
 mkdir -p "$U/.github/workflows"
-printf 'steps:\n  - run: bash .specify/gates/verify.sh --boundary ci\n  - run: bash .specify/gates/canary.sh\n' >"$U/.github/workflows/gates.yml"
+printf 'on: push\njobs:\n  g:\n    steps:\n      - run: bash .specify/gates/verify.sh --boundary ci\n      - run: bash .specify/gates/canary.sh\n' >"$U/.github/workflows/gates.yml"
 run_doctor "$U" >/dev/null
 has "a missing CI step fails" "$U" "[MISSING] CI pipeline lacks the 'pr' step from the template"
 printf 'ci:pr\n' >"$U/.specify/gates/.upgrade-holds"
@@ -688,6 +688,7 @@ lacks "neither is reported as an omission" "$U" "omitted on purpose"
 rm -f "$U/.specify/gates/.upgrade-holds"
 # Commented-out and disabled steps are not wiring (#139).
 cat >"$U/.github/workflows/gates.yml" <<'EOF'
+on: push
 jobs:
   gates:
     steps:
@@ -728,12 +729,28 @@ rm -f "$U/Jenkinsfile"
 mkdir -p "$U/.github/workflows"
 printf 'on: push\njobs:\n  gates:\n    if: false\n    steps:\n      - run: bash .specify/gates/verify.sh --boundary ci\n' >"$U/.github/workflows/gates.yml"
 run_doctor "$U" >/dev/null
-has "a job under if: false is a missing gates step" "$U" "[MISSING] CI pipeline .github/workflows/gates.yml calls verify.sh but runs no live"
+CIBAD="[MISSING] CI pipeline .github/workflows/gates.yml calls verify.sh but no 'verify.sh --boundary ci' step is proven to run and fail it"
+has "a job under if: false is a missing gates step" "$U" "$CIBAD: no step that runs and can fail calls it"
 lacks "and not a nudge" "$U" "no CI pipeline runs verify.sh --boundary ci"
 printf 'on: push\njobs:\n  gates:\n    steps:\n      - run: bash .specify/gates/verify.sh --boundary git\n' >"$U/.github/workflows/gates.yml"
 run_doctor "$U" >/dev/null
-has "verify.sh with another --boundary is a missing gates step" "$U" "[MISSING] CI pipeline .github/workflows/gates.yml calls verify.sh but runs no live"
+has "verify.sh with another --boundary is a missing gates step" "$U" "$CIBAD: the verify.sh command is not in a form"
+# Each unproven form names what to change (#198).
+printf 'on: workflow_call\njobs:\n  gates:\n    steps:\n      - run: bash .specify/gates/verify.sh --boundary ci\n' >"$U/.github/workflows/gates.yml"
+run_doctor "$U" >/dev/null
+has "a workflow_call-only trigger names the trigger" "$U" "$CIBAD: the workflow does not run on push or pull_request"
+printf 'on: push\njobs:\n  gates:\n    steps:\n      - run: bash .specify/gates/verify.sh --boundary ci\n        env:\n          GATES_SPEC_EXEC: "1"\n' >"$U/.github/workflows/gates.yml"
+run_doctor "$U" >/dev/null
+has "a weakening env names the variable" "$U" "$CIBAD: it sets GATES_SPEC_EXEC or GATES_POLICY_FILE"
 rm -f "$U/.github/workflows/gates.yml"
+printf 'gates:\n  script:\n    - echo start\n  after_script:\n    - bash .specify/gates/verify.sh --boundary ci\n' >"$U/.gitlab-ci.yml"
+run_doctor "$U" >/dev/null
+has "an after_script step names the key" "$U" "calls verify.sh but no 'verify.sh --boundary ci' step is proven to run and fail it: an after_script: command cannot fail the job"
+rm -f "$U/.gitlab-ci.yml"
+printf "stage('G') {\n  steps {\n    catchError(buildResult: 'SUCCESS', stageResult: 'SUCCESS') {\n      sh 'bash .specify/gates/verify.sh --boundary ci'\n    }\n  }\n}\n" >"$U/Jenkinsfile"
+run_doctor "$U" >/dev/null
+has "a catchError-wrapped step names the wrappers" "$U" "outside catchError, warnError and try"
+rm -f "$U/Jenkinsfile"
 # The shipped templates stay live on every platform.
 cp "$REPO_ROOT/extension/ci/github/gates.yml" "$U/.github/workflows/gates.yml"
 run_doctor "$U" >/dev/null
@@ -758,7 +775,7 @@ ci_form() { # <name> <live|inert> <path under $CIF>; pipeline text on stdin
     cat >"$CIF/$3"
     local got
     got="$(bash -c 'source "$1/extension/runtime/lib/manifest.sh"
-        if grep -qE "$(gates_ci_step_re gates)" <<<"$(gates_ci_live "$2")"; then echo live; else echo inert; fi' \
+        if [[ -z "$(gates_ci_unproven "$2")" ]]; then echo live; else echo inert; fi' \
         _ "$REPO_ROOT" "$CIF/$3")"
     expect "ci step: $1" "$got" "$2"
     rm -f "$CIF/$3"
@@ -772,11 +789,11 @@ V='bash .specify/gates/verify.sh --boundary ci'
 ci_form "a plain step is live" live "$GHW" < <(printf '%s\n      - run: %s\n' "$GHJ" "$V")
 ci_form "echo prints the command" inert "$GHW" < <(printf '%s\n      - run: echo %s\n' "$GHJ" "$V")
 ci_form "a quoted echo prints it" inert "$GHW" < <(printf '%s\n      - run: "echo %s"\n' "$GHJ" "$V")
-ci_form "a command after an echo runs" live "$GHW" < <(printf '%s\n      - run: echo start && %s\n' "$GHJ" "$V")
+ci_form "a command after an echo is not proven" inert "$GHW" < <(printf '%s\n      - run: echo start && %s\n' "$GHJ" "$V")
 ci_form "|| true swallows the failure" inert "$GHW" < <(printf '%s\n      - run: %s || true\n' "$GHJ" "$V")
 ci_form "|| : swallows the failure" inert "$GHW" < <(printf '%s\n      - run: %s || :\n' "$GHJ" "$V")
 ci_form "&& ... || true swallows it too" inert "$GHW" < <(printf '%s\n      - run: %s && echo ok || true\n' "$GHJ" "$V")
-ci_form "|| { ...; exit 1; } still fails" live "$GHW" < <(printf '%s\n      - run: %s || { echo failed; exit 1; }\n' "$GHJ" "$V")
+ci_form "|| { ...; exit 1; } is not proven" inert "$GHW" < <(printf '%s\n      - run: %s || { echo failed; exit 1; }\n' "$GHJ" "$V")
 ci_form "continue-on-error on the step" inert "$GHW" < <(printf '%s\n      - run: %s\n        continue-on-error: true\n' "$GHJ" "$V")
 # shellcheck disable=SC2016  # literal pipeline text
 ci_form "continue-on-error on the job" inert "$GHW" < <(printf 'on: push\njobs:\n  g:\n    continue-on-error: ${{ true }}\n    steps:\n      - run: %s\n' "$V")
@@ -787,16 +804,16 @@ ci_form "a boundary that only starts with ci" inert "$GHW" < <(printf '%s\n     
 ci_form "exit 0 earlier in the run block" inert "$GHW" < <(printf '%s\n      - run: |\n          exit 0\n          %s\n' "$GHJ" "$V")
 ci_form "exit 0; on the same line" inert "$GHW" < <(printf '%s\n      - run: exit 0; %s\n' "$GHJ" "$V")
 # shellcheck disable=SC2016  # literal pipeline text
-ci_form "a conditional exit 0" live "$GHW" < <(printf '%s\n      - run: test -n "$SKIP" && exit 0; %s\n' "$GHJ" "$V")
+ci_form "a conditional exit 0" inert "$GHW" < <(printf '%s\n      - run: test -n "$SKIP" && exit 0; %s\n' "$GHJ" "$V")
 # shellcheck disable=SC2016  # literal pipeline text
-ci_form "exit 0 inside an if" live "$GHW" < <(printf '%s\n      - run: |\n          if [ -n "$SKIP" ]; then\n          exit 0\n          fi\n          %s\n' "$GHJ" "$V")
-ci_form "exit 0 after a heredoc start is left alone" live "$GHW" < <(printf '%s\n      - run: |\n          cat <<EOF\n          exit 0\n          EOF\n          %s\n' "$GHJ" "$V")
+ci_form "exit 0 inside an if" inert "$GHW" < <(printf '%s\n      - run: |\n          if [ -n "$SKIP" ]; then\n          exit 0\n          fi\n          %s\n' "$GHJ" "$V")
+ci_form "a heredoc before it" inert "$GHW" < <(printf '%s\n      - run: |\n          cat <<EOF\n          exit 0\n          EOF\n          %s\n' "$GHJ" "$V")
 ci_form "exit 0 in another step" live "$GHW" < <(printf '%s\n      - run: exit 0\n      - run: %s\n' "$GHJ" "$V")
 ci_form "a workflow_dispatch-only workflow" inert "$GHW" < <(printf 'on: workflow_dispatch\njobs:\n  g:\n    steps:\n      - run: %s\n' "$V")
 ci_form "dispatch and schedule only" inert "$GHW" < <(printf 'on: [workflow_dispatch, schedule]\njobs:\n  g:\n    steps:\n      - run: %s\n' "$V")
 ci_form "a block on: with dispatch and schedule only" inert "$GHW" < <(printf "on:\n  workflow_dispatch:\n  schedule:\n    - cron: '0 0 * * *'\njobs:\n  g:\n    steps:\n      - run: %s\n" "$V")
 ci_form "dispatch plus push" live "$GHW" < <(printf 'on:\n  workflow_dispatch:\n  push:\n    branches: [main]\njobs:\n  g:\n    steps:\n      - run: %s\n' "$V")
-ci_form "no on: key at all" live "$GHW" < <(printf 'jobs:\n  g:\n    steps:\n      - run: %s\n' "$V")
+ci_form "no on: key at all" inert "$GHW" < <(printf 'jobs:\n  g:\n    steps:\n      - run: %s\n' "$V")
 ci_form "a GitLab job" live .gitlab-ci.yml < <(printf 'gates:\n  script:\n    - %s\n' "$V")
 ci_form "a GitLab hidden job" inert .gitlab-ci.yml < <(printf '.gates:\n  script:\n    - %s\n' "$V")
 ci_form "a hidden job another extends" live .gitlab-ci.yml < <(printf '.gates:\n  script:\n    - %s\njob:\n  extends: .gates\n' "$V")
@@ -808,7 +825,7 @@ ci_form "a manual GitLab job" inert .gitlab-ci.yml < <(printf 'gates:\n  when: m
 ci_form "allow_failure: true" inert .gitlab-ci.yml < <(printf 'gates:\n  allow_failure: true\n  script:\n    - %s\n' "$V")
 ci_form "exit 0 earlier in the script" inert .gitlab-ci.yml < <(printf 'gates:\n  script:\n    - exit 0\n    - %s\n' "$V")
 ci_form "exit 0 ends its own job only" live .gitlab-ci.yml < <(printf 'gates:\n  script:\n  - exit 0\n  - %s\nother:\n  script:\n  - %s\n' "$V" "$V")
-ci_form "a one-line conditional exit" live .gitlab-ci.yml < <(printf 'gates:\n  script:\n    - if [ -f x ]; then exit 0; fi\n    - %s\n' "$V")
+ci_form "a conditional exit in an earlier item" inert .gitlab-ci.yml < <(printf 'gates:\n  script:\n    - if [ -f x ]; then exit 0; fi\n    - %s\n' "$V")
 ci_form "a Jenkins stage" live Jenkinsfile < <(printf "stage('G') { steps { sh '%s' } }\n" "$V")
 ci_form "when { expression { false } }" inert Jenkinsfile < <(printf "stage('G') {\n  when { expression { false } }\n  steps {\n    sh '%s'\n  }\n}\n" "$V")
 ci_form "when { expression { return false } }" inert Jenkinsfile < <(printf "stage('G') {\n  when {\n    expression { return false }\n  }\n  steps {\n    sh '%s'\n  }\n}\n" "$V")
@@ -816,6 +833,49 @@ ci_form "a Jenkins when on a branch" live Jenkinsfile < <(printf "stage('G') {\n
 ci_form "Jenkins || true" inert Jenkinsfile < <(printf "stage('G') { steps { sh '%s || true' } }\n" "$V")
 ci_form "Jenkins echo" inert Jenkinsfile < <(printf "stage('G') { steps { sh 'echo %s' } }\n" "$V")
 ci_form "Jenkins returnStatus: true" inert Jenkinsfile < <(printf "stage('G') { steps { sh script: '%s', returnStatus: true } }\n" "$V")
+# Only a provable form counts (#198): the forms below can all pass with the
+# gates failing, or cannot be shown not to.
+ci_form "; exit 0 after it" inert "$GHW" < <(printf '%s\n      - run: %s; exit 0\n' "$GHJ" "$V")
+ci_form "; true after it" inert "$GHW" < <(printf '%s\n      - run: %s; true\n' "$GHJ" "$V")
+ci_form "true || before it" inert "$GHW" < <(printf '%s\n      - run: true || %s\n' "$GHJ" "$V")
+ci_form "a quoted : no-op" inert "$GHW" < <(printf '%s\n      - run: ": %s"\n' "$GHJ" "$V")
+ci_form "run in the background" inert "$GHW" < <(printf '%s\n      - run: %s &\n' "$GHJ" "$V")
+ci_form "an if condition" inert "$GHW" < <(printf '%s\n      - run: if %s; then echo ok; fi\n' "$GHJ" "$V")
+ci_form "a second --boundary" inert "$GHW" < <(printf '%s\n      - run: %s --boundary agent\n' "$GHJ" "$V")
+ci_form "an env prefix" inert "$GHW" < <(printf '%s\n      - run: GATES_X=1 %s\n' "$GHJ" "$V")
+ci_form "GATES_SPEC_EXEC in the step env" inert "$GHW" < <(printf '%s\n      - run: %s\n        env:\n          GATES_SPEC_EXEC: "1"\n' "$GHJ" "$V")
+ci_form "GATES_POLICY_FILE in the workflow env" inert "$GHW" < <(printf 'env:\n  GATES_POLICY_FILE: x.json\n%s\n      - run: %s\n' "$GHJ" "$V")
+ci_form "a workflow_call-only trigger" inert "$GHW" < <(printf 'on: workflow_call\njobs:\n  g:\n    steps:\n      - run: %s\n' "$V")
+ci_form "a pull_request trigger" live "$GHW" < <(printf 'on:\n  pull_request:\njobs:\n  g:\n    steps:\n      - run: %s\n' "$V")
+ci_form "the command in quotes" live "$GHW" < <(printf '%s\n      - run: "%s"\n' "$GHJ" "$V")
+ci_form "--json after --boundary ci" live "$GHW" < <(printf '%s\n      - run: .specify/gates/verify.sh --boundary ci --json\n' "$GHJ")
+ci_form "the last line of a run block" live "$GHW" < <(printf '%s\n      - run: |\n          set -e\n          npm ci\n          %s\n' "$GHJ" "$V")
+ci_form "a line followed by another" inert "$GHW" < <(printf '%s\n      - run: |\n          %s\n          echo done\n' "$GHJ" "$V")
+ci_form "a trap before it" inert "$GHW" < <(printf "%s\n      - run: |\n          trap 'exit 0' EXIT\n          %s\n" "$GHJ" "$V")
+ci_form "a continuation into it" inert "$GHW" < <(printf '%s\n      - run: |\n          echo \\\n          %s\n' "$GHJ" "$V")
+ci_form "GitLab ; exit 0 after it" inert .gitlab-ci.yml < <(printf 'gates:\n  script:\n    - %s; exit 0\n' "$V")
+ci_form "GitLab only: [tags]" inert .gitlab-ci.yml < <(printf 'gates:\n  only: [tags]\n  script:\n    - %s\n' "$V")
+ci_form "GitLab only: a branch name" live .gitlab-ci.yml < <(printf 'gates:\n  only:\n    - main\n  script:\n    - %s\n' "$V")
+ci_form "GitLab only: refs: [merge_requests]" live .gitlab-ci.yml < <(printf 'gates:\n  only:\n    refs:\n      - merge_requests\n  script:\n    - %s\n' "$V")
+ci_form "GitLab except: [branches, merge_requests]" inert .gitlab-ci.yml < <(printf 'gates:\n  except: [branches, merge_requests]\n  script:\n    - %s\n' "$V")
+ci_form "GitLab except: [branches]" inert .gitlab-ci.yml < <(printf 'gates:\n  except:\n    - branches\n  script:\n    - %s\n' "$V")
+ci_form "GitLab except: [merge_requests]" live .gitlab-ci.yml < <(printf 'gates:\n  except: [merge_requests]\n  script:\n    - %s\n' "$V")
+ci_form "GitLab workflow rules: - when: never" inert .gitlab-ci.yml < <(printf 'workflow:\n  rules:\n    - when: never\ngates:\n  script:\n    - %s\n' "$V")
+ci_form "GitLab workflow rules that can match" live .gitlab-ci.yml < <(printf "workflow:\n  rules:\n    - if: '\$CI_COMMIT_BRANCH'\ngates:\n  script:\n    - %s\n" "$V")
+ci_form "GitLab rules all conditional never" inert .gitlab-ci.yml < <(printf "gates:\n  rules:\n    - if: '\$A'\n      when: never\n    - if: '\$B'\n      when: manual\n  script:\n    - %s\n" "$V")
+ci_form "GitLab after_script" inert .gitlab-ci.yml < <(printf 'gates:\n  script:\n    - echo hi\n  after_script:\n    - %s\n' "$V")
+ci_form "GitLab before_script" live .gitlab-ci.yml < <(printf 'gates:\n  before_script:\n    - %s\n  script:\n    - echo hi\n' "$V")
+ci_form "GitLab variables: GATES_SPEC_EXEC" inert .gitlab-ci.yml < <(printf 'gates:\n  variables:\n    GATES_SPEC_EXEC: "1"\n  script:\n    - %s\n' "$V")
+ci_form "GitLab last line of a - | block" live .gitlab-ci.yml < <(printf 'gates:\n  script:\n    - |\n      npm ci\n      %s\n' "$V")
+ci_form "GitLab a - | block line followed by another" inert .gitlab-ci.yml < <(printf 'gates:\n  script:\n    - |\n      %s\n      echo done\n' "$V")
+ci_form "Jenkins catchError" inert Jenkinsfile < <(printf "stage('G') {\n  steps {\n    catchError(buildResult: 'SUCCESS', stageResult: 'SUCCESS') {\n      sh '%s'\n    }\n  }\n}\n" "$V")
+ci_form "Jenkins try/catch" inert Jenkinsfile < <(printf "stage('G') {\n  steps {\n    script {\n      try {\n        sh '%s'\n      } catch (e) {}\n    }\n  }\n}\n" "$V")
+ci_form "Jenkins after a try block" live Jenkinsfile < <(printf "stage('G') {\n  steps {\n    script {\n      try { sh 'make' } catch (e) {}\n    }\n    sh '%s'\n  }\n}\n" "$V")
+ci_form "Jenkins ; exit 0 after it" inert Jenkinsfile < <(printf "stage('G') { steps { sh '%s; exit 0' } }\n" "$V")
+ci_form "Jenkins sh(script: ...)" live Jenkinsfile < <(printf "stage('G') { steps { sh(script: '%s') } }\n" "$V")
+ci_form "Jenkins last line of a ''' script" live Jenkinsfile < <(printf "stage('G') {\n  steps {\n    sh '''\n      npm ci\n      %s\n    '''\n  }\n}\n" "$V")
+ci_form "Jenkins a ''' line followed by another" inert Jenkinsfile < <(printf "stage('G') {\n  steps {\n    sh '''\n      %s\n      echo done\n    '''\n  }\n}\n" "$V")
+ci_form "Jenkins withEnv GATES_POLICY_FILE" inert Jenkinsfile < <(printf "stage('G') {\n  steps {\n    withEnv(['GATES_POLICY_FILE=x.json']) {\n      sh '%s'\n    }\n  }\n}\n" "$V")
 fx_cleanup "$U"
 U="$(fx_project)"
 (cd "$U" && GATES_TEST=1 bash .specify/extensions/gates/runtime/project.sh --skip-canary --no-agent-hooks >/dev/null 2>&1)

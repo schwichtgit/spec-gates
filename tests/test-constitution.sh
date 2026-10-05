@@ -271,7 +271,7 @@ printf '#!/bin/sh\nexec bash .specify/gates/verify.sh\n' >"$PROJ/.git/hooks/pre-
 chmod +x "$PROJ/.git/hooks/pre-commit"
 
 # ci: a gates workflow (a live verify step) naming the check.
-printf 'jobs:\n  mygate:\n    steps:\n      - run: bash .specify/gates/verify.sh --boundary ci\n' >"$PROJ/.github/workflows/ci.yml"
+printf 'on: push\njobs:\n  mygate:\n    steps:\n      - run: bash .specify/gates/verify.sh --boundary ci\n' >"$PROJ/.github/workflows/ci.yml"
 
 # accept: a tasks.md with an accept block verifying SC-9.
 cat >"$PROJ/specs/feat-x/tasks.md" <<'EOF'
@@ -340,7 +340,7 @@ expect_state "align: prose reported prose-only" "$al" "VIII. Prose" "prose-only"
 # Now break each surface and confirm it flips to missing.
 chmod -x "$PROJ/.claude/hooks/gates/validate-bash.sh" # agent-hook not executable
 rm "$PROJ/.git/hooks/pre-commit"                      # git-hook removed
-printf 'jobs:\n  other:\n    steps:\n      - run: bash .specify/gates/verify.sh --boundary ci\n' >"$PROJ/.github/workflows/ci.yml" # ci name gone
+printf 'on: push\njobs:\n  other:\n    steps:\n      - run: bash .specify/gates/verify.sh --boundary ci\n' >"$PROJ/.github/workflows/ci.yml" # ci name gone
 rm "$PROJ/.checkov.yml"                               # scanner config gone
 al2="$(CLAUDE_PROJECT_DIR="$PROJ" bash "$CONST" align --constitution "$PROJ/.specify/memory/constitution.md")"
 expect_state "align: non-executable agent-hook missing" "$al2" "III. Agent Hook" "missing"
@@ -423,6 +423,7 @@ cw="$(ciw_align)"
 expect_state "ci: a comment mentioning gates is not wiring" "$cw" "I. Gates" "missing"
 expect_state "ci: a named job without a gates pipeline is not wiring" "$cw" "III. Custom" "missing"
 cat >"$CIW/.github/workflows/ci.yml" <<'EOF'
+on: push
 jobs:
   lint-job:
     steps:
@@ -445,21 +446,36 @@ expect_state "ci: a commented-out verify step is not wiring" "$(ciw_align)" "I. 
 # A template id is its step's command, not the word: a gates pipeline
 # whose text happens to contain "pr" does not run pr-check.sh.
 sed -i.bak 's/canary/pr/' "$CIW/.specify/memory/constitution.md" && rm -f "$CIW/.specify/memory/constitution.md.bak"
-printf 'jobs:\n  pr:\n    steps:\n      - run: bash .specify/gates/verify.sh --boundary ci\n' \
+printf 'on: push\njobs:\n  pr:\n    steps:\n      - run: bash .specify/gates/verify.sh --boundary ci\n' \
     >"$CIW/.github/workflows/ci.yml"
 expect_state "ci: a template id needs its step, not the word" "$(ciw_align)" "II. Canary" "missing"
 # A step that runs but cannot fail, or a job that never runs, wires nothing
 # (#171): the ci surface reads the same live text doctor does.
-printf 'jobs:\n  gates:\n    steps:\n      - run: bash .specify/gates/verify.sh --boundary ci\n        continue-on-error: true\n' \
+printf 'on: push\njobs:\n  gates:\n    steps:\n      - run: bash .specify/gates/verify.sh --boundary ci\n        continue-on-error: true\n' \
     >"$CIW/.github/workflows/ci.yml"
 expect_state "ci: a continue-on-error gates step is missing" "$(ciw_align)" "I. Gates" "missing"
 printf 'on: workflow_dispatch\njobs:\n  lint-job:\n    steps:\n      - run: bash .specify/gates/verify.sh --boundary ci\n' \
     >"$CIW/.github/workflows/ci.yml"
 expect_state "ci: a dispatch-only workflow wires no gates step" "$(ciw_align)" "I. Gates" "missing"
 expect_state "ci: nor any other ref in it" "$(ciw_align)" "III. Custom" "missing"
-printf 'jobs:\n  lint-job:\n    steps:\n      - run: bash .specify/gates/verify.sh --boundary ci || true\n' \
+printf 'on: push\njobs:\n  lint-job:\n    steps:\n      - run: bash .specify/gates/verify.sh --boundary ci || true\n' \
     >"$CIW/.github/workflows/ci.yml"
 expect_state "ci: verify.sh || true is missing" "$(ciw_align)" "I. Gates" "missing"
+# The surface shares doctor's proof (#198): a step that cannot be shown to
+# fail the pipeline wires nothing, a provable one does.
+printf 'on: push\njobs:\n  lint-job:\n    steps:\n      - run: bash .specify/gates/verify.sh --boundary ci; exit 0\n' \
+    >"$CIW/.github/workflows/ci.yml"
+expect_state "ci: verify.sh; exit 0 is missing" "$(ciw_align)" "I. Gates" "missing"
+expect_state "ci: and wires no other ref" "$(ciw_align)" "III. Custom" "missing"
+printf 'on: push\njobs:\n  lint-job:\n    steps:\n      - run: bash .specify/gates/verify.sh --boundary ci\n        env:\n          GATES_SPEC_EXEC: "1"\n' \
+    >"$CIW/.github/workflows/ci.yml"
+expect_state "ci: a GATES_SPEC_EXEC step is missing" "$(ciw_align)" "I. Gates" "missing"
+printf 'gates:\n  only: [tags]\n  script:\n    - bash .specify/gates/verify.sh --boundary ci\n' >"$CIW/.gitlab-ci.yml"
+rm -f "$CIW/.github/workflows/ci.yml"
+expect_state "ci: a tags-only GitLab job is missing" "$(ciw_align)" "I. Gates" "missing"
+printf 'gates:\n  only: [merge_requests]\n  script:\n    - bash .specify/gates/verify.sh --boundary ci\n' >"$CIW/.gitlab-ci.yml"
+expect_state "ci: a merge-request GitLab job is active" "$(ciw_align)" "I. Gates" "active"
+rm -f "$CIW/.gitlab-ci.yml"
 
 # policy refs are full dotted paths (#139); <hook>.<key> still means
 # hooks.<hook>.<key>, and a proposal names the path the evaluator reads.
@@ -669,7 +685,7 @@ expect "align leaves the repo byte-identical (SC-003, pure compute)" "$tree_befo
 
 CHK="$WORKDIR/chk"
 mkdir -p "$CHK/.specify/gates" "$CHK/.specify/memory" "$CHK/.github/workflows"
-printf 'jobs:\n  gates:\n    steps:\n      - run: bash .specify/gates/verify.sh --boundary ci\n' >"$CHK/.github/workflows/ci.yml"
+printf 'on: push\njobs:\n  gates:\n    steps:\n      - run: bash .specify/gates/verify.sh --boundary ci\n' >"$CHK/.github/workflows/ci.yml"
 printf '{ "hooks": { "prettier": { "severity": "error" } } }\n' >"$CHK/.specify/gates/policy.json"
 
 # All enforced/prose/unannotated -> exit 0.
