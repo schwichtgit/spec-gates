@@ -144,6 +144,14 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   `glab mr create|update` spelled exactly, so the `new` alias and a
   `-R`/`--repo` flag before the subcommand (`gh -R o/r pr create`) let an
   unchecked title and body through. Both are now recognized.
+- **Agent hooks: a missing prettier is a skip, and fewer false asks**
+  (#195). With `post-edit.severity: error` and prettier not installed,
+  every `.md` edit failed as a tool failure (bare `npx` fails without
+  prettier) while `verify.sh` reported `[skipped]`; the formatter now
+  resolves prettier as `verify.sh` does and skips with a note.
+  `grep -n rm <protected path>` and a commit message naming a protected
+  path no longer ask. The docs now say that the Stop hook lets the stop
+  right after a refusal through (`stop_hook_active`).
 - **An unknown `--accept` feature is refused before any gate runs**
   (#179). `verify.sh --accept <name>` with a name that is not a feature
   ran the lint and quality gates first and refused only at the spec gate,

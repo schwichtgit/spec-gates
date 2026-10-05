@@ -14,7 +14,7 @@
 Spec Kit is a guidance layer: templates, prompts, and checklists _ask_ the
 agent to comply. spec-gates is the enforcement layer underneath it: hooks
 and pipelines that _force_ compliance — the bash call is rejected, the
-protected file is refused, the session cannot end with failing checks.
+protected file is refused, a stop with failing checks is sent back to the agent.
 
 Extracted from
 [claude-project-foundation](https://github.com/schwichtgit/claude-project-foundation)
@@ -324,8 +324,8 @@ Commit the adoption on a branch. Its first commit stages
 From that point the normal Spec Kit loop is unchanged —
 `/speckit.specify → clarify → plan → tasks → implement` — but during
 `implement` every edit is auto-formatted, protected files and dangerous
-bash are refused with actionable messages, and the session cannot stop
-with red checks. After `implement`, the extension's `after_implement`
+bash are refused with actionable messages, and a stop with red checks is
+sent back to the agent with the failure list. After `implement`, the extension's `after_implement`
 hook offers a gate run before you move to commit/PR.
 
 ## Upgrade

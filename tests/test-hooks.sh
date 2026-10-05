@@ -966,6 +966,37 @@ printf '{ "hooks": {} }' >"$SV/.specify/gates/policy.json"
 rc=0
 err="$(echo "{\"tool_input\":{\"file_path\":\"$SV/main.go\"}}" | PATH="$WORKDIR/failfmt:$PATH" CLAUDE_PROJECT_DIR="$SV" "$HOOKS/post-edit.sh" 2>&1 >/dev/null)" || rc=$?
 check "post-edit: no severity set -> warns, exit 0" 0 bash -c "[[ $rc -eq 0 ]] && grep -q WARNING <<<\"\$1\"" _ "$err"
+# A formatter that is not installed is skipped, as verify.sh skips it, not
+# a tool failure (#195): prettier is resolved from node_modules/.bin or
+# PATH, never through npx (the shim fails as npx does without prettier).
+NP="$WORKDIR/noprettier"
+mkdir -p "$NP" "$WORKDIR/failnpx"
+printf '#!/bin/sh\nexit 1\n' >"$WORKDIR/failnpx/npx"
+chmod +x "$WORKDIR/failnpx/npx"
+NPPATH="$WORKDIR/path-noprettier"; toolpath "$NPPATH"
+git -C "$NP" init -q -b main
+git -C "$NP" config user.email t@example.com
+git -C "$NP" config user.name tester
+project_runtime "$NP" "true"
+rm -f "$NP/node_modules"
+printf '{ "hooks": { "post-edit": { "severity": "error" }, "format-changed": { "severity": "error" } } }' \
+    >"$NP/.specify/gates/policy.json"
+printf '{}\n' >"$NP/package.json"
+printf '# Doc\n' >"$NP/doc.md"
+( cd "$NP" && git add doc.md package.json && git commit -q -m "seed" ) >/dev/null 2>&1
+printf '# Doc\n\nMore.\n' >"$NP/doc.md"
+for hook in post-edit format-changed; do
+    if [[ "$hook" == post-edit ]]; then
+        payload="{\"tool_input\":{\"file_path\":\"$NP/doc.md\"}}"
+    else
+        payload='{"stop_hook_active":false}'
+    fi
+    rc=0
+    err="$(echo "$payload" | PATH="$WORKDIR/failnpx:$NPPATH" CLAUDE_PROJECT_DIR="$NP" "$HOOKS/$hook.sh" 2>&1 >/dev/null)" || rc=$?
+    check "$hook severity=error, prettier not installed: exit 0 (#195)" 0 test "$rc" -eq 0
+    check "$hook severity=error, prettier not installed: no tool failure" 1 grep -q "tool failure" <<<"$err"
+done
+check "post-edit: says prettier is not installed (#195)" 0 grep -q "prettier not installed" <<<"$(echo "{\"tool_input\":{\"file_path\":\"$NP/doc.md\"}}" | PATH="$WORKDIR/failnpx:$NPPATH" CLAUDE_PROJECT_DIR="$NP" "$HOOKS/post-edit.sh" 2>&1 >/dev/null)"
 # Without jq both hooks say so and do nothing.
 for hook in post-edit format-changed; do
     check "$hook: no jq -> exit 0, says jq is missing" 0 bash -c "echo '{}' | PATH='$NOJQ' '$HOOKS/$hook.sh' 2>&1 >/dev/null | grep -q 'jq not found'"
@@ -1529,6 +1560,42 @@ for c in '/bin/rm .specify/gates/policy.json' '\rm .specify/gates/policy.json' '
     'eval "rm .specify/gates/policy.json"' 'echo .specify/gates/policy.json | xargs rm' \
     "python3 -c \"open('.specify/gates/policy.json','w').write('{}')\"" 'git add `ls`' 'xargs git add < list.txt' \
     'cd "$D"; git add -- sub'; do
+    askcheck "asks: $c" "$(vv_payload "$c")" validate-bash.sh CLAUDE_PROJECT_DIR="$VV"
+done
+
+echo ""
+echo "=== validate-bash: a read or a commit message naming a protected path does not ask (#195) ==="
+# shellcheck disable=SC2016  # literal command text under test
+for c in 'grep -n rm .specify/gates/policy.json' 'grep -c rm .specify/gates/policy.json | head -1' \
+    'cd .specify/gates && grep -n rm policy.json' 'git commit -m "fix: rm a key from .specify/gates/policy.json"' \
+    "git commit -am 'docs: install note for .specify/memory/constitution.md'" \
+    'git commit --message="fix: x -> .specify/gates/policy.json"' "git commit -m \"\$(cat <<'EOF'
+fix: guard the policy
+
+rm no longer touches .specify/gates/policy.json.
+EOF
+)\""; do
+    vv_allows "allowed: $c" "$c"
+done
+# shellcheck disable=SC2016
+for c in 'echo rm .specify/gates/policy.json | sh' 'rm $(grep -l x .specify/gates/policy.json)' \
+    'git commit -m "$(rm .specify/gates/policy.json)"' 'git commit -m "`rm .specify/gates/policy.json`"' \
+    'grep x .specify/gates/policy.json > .specify/gates/policy.json' 'grep x y; rm .specify/gates/policy.json' \
+    "git commit -m 'x' && rm .specify/gates/policy.json" 'echo "$(rm .specify/gates/policy.json)"' \
+    "echo \"git commit -m 'x\" ; rm .specify/gates/policy.json ; echo \"'\"" '>grep rm .specify/gates/policy.json' \
+    'git commit -m \"x; rm .specify/gates/policy.json; echo \"' 'grep -l x .specify/gates/policy.json | xargs rm' \
+    "git commit -m \"\$(cat <<EOF
+\$(rm .specify/gates/policy.json)
+EOF
+)\"" "grep \$'x\\' y' ; rm .specify/gates/policy.json ; echo 'z'" "echo x #'
+rm .specify/gates/policy.json
+echo '" "cat <<EOF
+it's
+EOF
+rm .specify/gates/policy.json
+echo '
+'" "echo \"\${x:-\"'\"}\" ; rm .specify/gates/policy.json ; echo \"'\"" \
+    "echo \"\$(echo \"'\")\" ; rm .specify/gates/policy.json ; echo \"'\""; do
     askcheck "asks: $c" "$(vv_payload "$c")" validate-bash.sh CLAUDE_PROJECT_DIR="$VV"
 done
 

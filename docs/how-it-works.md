@@ -64,11 +64,15 @@ spec-gates uses four of them:
   command inside `sh -c` or `eval`.
 - `PostToolUse(Write|Edit)` → `post-edit.sh`: formats the touched file per
   policy.
-- `Stop` → `format-changed.sh` + `verify-quality.sh`: the session may not
-  end while `verify.sh` is red. The agent gets the failure list and keeps
+- `Stop` → `format-changed.sh` + `verify-quality.sh`: a stop while
+  `verify.sh` is red is refused. The agent gets the failure list and keeps
   working. This turns "the tasks say run the tests" from a suggestion into
   an invariant, the property that matters for long, semi-attended
-  `/speckit.implement` runs.
+  `/speckit.implement` runs. The refusal holds once per stop: when the
+  agent stops again right after it, Claude Code marks the retry with
+  `stop_hook_active` and both hooks let it through, so a gate the agent
+  cannot turn green never locks the session. A red tree still cannot be
+  committed (`pre-commit`) or merged (CI).
 
 Every refusal says why and what to do instead, so the agent is redirected
 rather than stopped cold.
@@ -85,7 +89,8 @@ interpreter one-liner such as `python3 -c`, naming one, its parent
 directory, a brace or backslash spelling of it, or a path relative to a
 `cd` into one; telling
 a modification from a read by the command text is a heuristic, so it asks
-rather than blocks), when a Bash command names a secret file the file hook
+rather than blocks; a read-only command such as `grep -n rm <path>` and
+the literal message of a `git commit -m` do not count as a change), when a Bash command names a secret file the file hook
 refuses (`cat .env`), when it bypasses the git hooks (`--no-verify`,
 `git commit -n`, a `core.hooksPath` setting), and in any state they
 cannot evaluate. A project rule in `hooks.local.d` runs before any of
@@ -105,8 +110,9 @@ why. That is deliberate: a missing tool must never lock the agent in a
 session it cannot finish. The gate still holds where it can: `pre-commit`
 refuses every commit while `verify.sh` cannot run, `pr-check.sh` and
 `verify.sh` in CI exit with an error, and the Write/Edit and Bash hooks
-keep working in raw mode. Only a red gate, never a missing tool, keeps the
-session open.
+keep working in raw mode. Only a red gate, never a missing tool, refuses
+a stop, and only the first one: the agent's next stop is let through
+(see `Stop` above).
 
 **Project rules.** A project adds its own refusals as scripts in
 `.specify/gates/hooks.local.d/<hook>/` for `protect-files`,

@@ -12,6 +12,8 @@ set -uo pipefail
 #     (and silently skips when the path is on an exclude).
 #   - Reads its own severity field. severity=error -> tool failure exits 2;
 #     severity=warning (default) -> failure logs a WARNING line and exits 0.
+#     A formatter that is not installed is no tool failure: the file is
+#     skipped with a note, as verify.sh skips the gate.
 #   - Without a loadable, valid policy there are no exclude lists, and
 #     formatting without them could rewrite vendored or generated
 #     files, so the hook prints a one-line notice and formats nothing.
@@ -68,6 +70,11 @@ RC=0
 format_file "$FILE_PATH" >/dev/null || RC=$?
 
 if [[ "$RC" -eq 0 ]]; then
+    # A missing formatter is skipped, as verify.sh reports it, whatever
+    # the severity (#195).
+    if [[ -n "${GATES_FORMAT_SKIPPED:-}" ]]; then
+        echo "gates: post-edit: $GATES_FORMAT_SKIPPED; not formatting $FILE_PATH" >&2
+    fi
     exit 0
 fi
 

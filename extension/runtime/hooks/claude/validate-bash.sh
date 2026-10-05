@@ -549,7 +549,7 @@ MUTATE_INTERP="$VERB_START"'(python[0-9.]*|perl|ruby|node|deno|bun)[[:space:]]+(
 # symlinked checkout; #165).
 LREAL="$(cd "$LROOT" 2>/dev/null && pwd -P)" || LREAL=""
 # shellcheck disable=SC2016  # $PWD is literal command text here
-NCMD="$(printf '%s\n' "$COMMAND" | awk -v root="$LROOT" -v rroot="${LREAL:-$LROOT}" '
+normalize() { printf '%s\n' "$1" | awk -v root="$LROOT" -v rroot="${LREAL:-$LROOT}" '
     function strip(s, p,    i, out) {
         out = ""
         while ((i = index(s, p)) > 0) { out = out substr(s, 1, i - 1); s = substr(s, i + length(p)) }
@@ -570,13 +570,130 @@ NCMD="$(printf '%s\n' "$COMMAND" | awk -v root="$LROOT" -v rroot="${LREAL:-$LROO
               $0 = substr($0, 1, RSTART - 1) out substr($0, RSTART + RLENGTH)
           }
           print }' \
-    | tr '[:upper:]' '[:lower:]')"
+    | tr '[:upper:]' '[:lower:]'; }
+NCMD="$(normalize "$COMMAND")"
+# Text that changes no file (#195): the literal message of a `git commit
+# -m` (also a quoted "$(cat <<'EOF' ...)" heredoc) is blanked in BCMD, and
+# PCMD also drops the segments of read-only commands (grep, cat, ls, ...),
+# so `grep -n rm <protected path>` and a commit message that names one do
+# not ask. A path named in either still counts (NCMD) when another segment
+# changes files; a redirect is read from BCMD, so `grep x > <protected
+# path>` still asks. A command whose quoting the tokenizer cannot follow
+# exactly, or that also runs a shell, eval or xargs, is left as it is.
+inert_awk() {
+    cat <<'AWK'
+    # mode=b: the command with literal commit messages blanked; mode=p:
+    # also without its read-only segments. Anything whose quoting this
+    # cannot follow exactly (an unbalanced quote, $'...', ${...}, a
+    # command substitution other than the quoted heredoc, a heredoc, a
+    # comment) and a command that feeds a shell, eval or xargs print the
+    # command unchanged.
+    function base(w) { sub(/.*\//, "", w); return w }
+    function endword(   o) {
+        if (!inw) return
+        o = rw
+        if (redir) redir = 0
+        else if (cmd == "") {
+            if (wt !~ /^[A-Za-z_][A-Za-z0-9_]*=/) { cmd = base(wt); if (cmd == ".") guard = 1 }
+        } else if (cmd == "git" && sub_ == "") {
+            if (pend) pend = 0
+            else if (wt ~ /^(-C|-c|--git-dir|--work-tree|--namespace)$/) pend = 1
+            else if (wt !~ /^-/) sub_ = wt
+        } else if (sub_ == "commit" && wlit) {
+            if (prev ~ /^-[a-zA-Z]*m$/ || prev == "--message") o = "''"
+            else if (wt ~ /^--message=/) o = "--message=''"
+        }
+        if (base(wt) ~ /^(sh|bash|zsh|dash|ksh|fish|eval|xargs|source|parallel)$/) guard = 1
+        seg = seg o; prev = wt
+        inw = 0; rw = ""; wt = ""; wlit = 1
+    }
+    function endseg() {
+        endword()
+        bout = bout seg
+        if (cmd !~ /^(grep|egrep|fgrep|cat|head|tail|wc|ls|stat|diff|cmp|echo|printf|type|which|cd|pushd|popd|true)$/)
+            pout = pout seg
+        seg = ""; cmd = ""; sub_ = ""; pend = 0; prev = ""; redir = 0
+    }
+    function emit(c) { seg = seg c }
+    # A "$(cat <<'X' ... X)" heredoc at position p of s: its end, or 0.
+    # An unquoted delimiter counts only when the body expands nothing.
+    function heredoc(p,    r, d, q, e, body, k) {
+        r = substr(s, p)
+        if (!match(r, /^\$\([ \t]*cat[ \t]*<<-?[ \t]*/)) return 0
+        r = substr(r, RLENGTH + 1); e = RLENGTH
+        q = 0
+        if (match(r, /^'[A-Za-z0-9_]+'/) || match(r, /^"[A-Za-z0-9_]+"/)) { d = substr(r, 2, RLENGTH - 2); q = 1 }
+        else if (match(r, /^\\[A-Za-z0-9_]+/)) { d = substr(r, 2, RLENGTH - 1); q = 1 }
+        else if (match(r, /^[A-Za-z0-9_]+/)) d = substr(r, 1, RLENGTH)
+        else return 0
+        e += RLENGTH; r = substr(r, RLENGTH + 1)
+        if (!match(r, /^[ \t]*\n/)) return 0
+        e += RLENGTH; r = substr(r, RLENGTH + 1)
+        body = "\n" r
+        k = index(body, "\n" d "\n")
+        if (k == 0) return 0
+        if (!q && substr(body, 1, k) ~ /[$`\\]/) return 0
+        r = substr(body, k + length(d) + 2)
+        if (!match(r, /^[ \t\n]*\)/)) return 0
+        return p + e + k + length(d) + RLENGTH - 1
+    }
+    { s = s (NR > 1 ? "\n" : "") $0 }
+    END {
+        n = length(s); i = 1; wlit = 1
+        while (i <= n) {
+            c = substr(s, i, 1)
+            if (c == "'") {
+                j = index(substr(s, i + 1), "'")
+                if (j == 0) { bail = 1; break }
+                rw = rw substr(s, i, j + 1); wt = wt substr(s, i + 1, j - 1); inw = 1
+                i += j + 1; continue
+            }
+            if (c == "\"") {
+                inw = 1; rw = rw c; i++
+                while (i <= n && substr(s, i, 1) != "\"") {
+                    c = substr(s, i, 1)
+                    if (c == "$" && substr(s, i + 1, 1) == "(") {
+                        e = heredoc(i)
+                        if (!e) { bail = 1; break }
+                        rw = rw substr(s, i, e - i + 1); wt = wt "x"; i = e + 1; continue
+                    }
+                    if (c == "`" || (c == "$" && substr(s, i + 1, 1) == "{")) { bail = 1; break }
+                    if (c == "$" || c == "\\") wlit = 0
+                    if (c == "\\") { rw = rw substr(s, i, 2); wt = wt substr(s, i + 1, 1); i += 2; continue }
+                    rw = rw c; wt = wt c; i++
+                }
+                if (bail || i > n) { bail = 1; break }
+                rw = rw "\""; i++; continue
+            }
+            if (c == "\\") { rw = rw substr(s, i, 2); wt = wt substr(s, i + 1, 1); wlit = 0; inw = 1; i += 2; continue }
+            if (c == " " || c == "\t") { endword(); emit(c); i++; continue }
+            if (c == "`" || (c == "#" && !inw) || (c == "$" && substr(s, i + 1, 1) ~ /[('{]/) \
+                || (c == "<" && substr(s, i + 1, 1) ~ /[(<]/) || (c == ">" && substr(s, i + 1, 1) == "(")) {
+                bail = 1; break
+            }
+            if (c == "\n" || c == ";" || c == "&" || c == "|" || c == "(" || c == ")") {
+                endseg(); bout = bout c; pout = pout c; i++; continue
+            }
+            if (c == "<" || c == ">") { endword(); emit(c); redir = 1; i++; continue }
+            if (c == "$") wlit = 0
+            rw = rw c; wt = wt c; inw = 1; i++
+        }
+        if (!bail) endseg()
+        if (bail || guard) print s
+        else if (mode == "p") print pout
+        else print bout
+    }
+AWK
+}
+INERT_AWK="$(inert_awk)"
+BCMD="$(normalize "$(printf '%s\n' "$COMMAND" | awk -v mode=b "$INERT_AWK")")"
+PCMD="$(normalize "$(printf '%s\n' "$COMMAND" | awk -v mode=p "$INERT_AWK")")"
 # A write redirect other than to /dev/null, /dev/std* or a file descriptor.
 WRITE_REDIRECT=1
 grep -q '>' <<<"$(sed -E -e 's#[0-9]*>>?[[:space:]]*/dev/(null|stdout|stderr|tty)##g' \
-    -e 's#[0-9]*>&[0-9-]+##g' -e 's#&>>?[[:space:]]*/dev/null##g' <<<"$NCMD")" || WRITE_REDIRECT=0
+    -e 's#[0-9]*>&[0-9-]+##g' -e 's#&>>?[[:space:]]*/dev/null##g' <<<"$BCMD")" || WRITE_REDIRECT=0
 MUTATES=0
-if grep -qE "$MUTATE_VERB|$MUTATE_EDIT|$MUTATE_FIND|$MUTATE_INTERP" <<<"$NCMD"; then
+if grep -qE "$MUTATE_VERB|$MUTATE_EDIT|$MUTATE_FIND|$MUTATE_INTERP" <<<"$PCMD"; then
     MUTATES=1
 fi
 if [[ "$EXTRA_UNREAD" -eq 1 ]] && [[ "$MUTATES" -eq 1 || "$WRITE_REDIRECT" -eq 1 ]]; then
@@ -608,7 +725,7 @@ while IFS= read -r _pp; do
                 MUT="$MUTATE_VERB|$MUTATE_EDIT|$MUTATE_FIND|$MUTATE_INTERP" awk '
                     { n = split($0, part, /&&|\|\||;|&/)
                       for (k = 1; k <= n; k++) if (part[k] ~ ENVIRON["PAT"] && part[k] ~ ENVIRON["MUT"]) hit = 1 }
-                    END { exit !hit }' <<<"$NCMD"; then
+                    END { exit !hit }' <<<"$PCMD"; then
             _named=1
         fi
         [[ "$_dir" == */* ]] || break
@@ -616,7 +733,7 @@ while IFS= read -r _pp; do
     done
     if { [[ "$_named" -eq 1 && "$MUTATES" -eq 1 ]]; } \
         || { [[ "$_entered" -eq 1 ]] && [[ "$MUTATES" -eq 1 || "$WRITE_REDIRECT" -eq 1 ]]; } \
-        || grep -qE ">>?[[:space:]]*[\"']?[^[:space:];&|]*$_pre" <<<"$NCMD"; then
+        || grep -qE ">>?[[:space:]]*[\"']?[^[:space:];&|]*$_pre" <<<"$BCMD"; then
         defer_ask "this command appears to modify the protected path $_pp; a human or a reviewed change makes that edit"
         break
     fi
