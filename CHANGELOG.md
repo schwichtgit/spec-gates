@@ -236,6 +236,14 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   only the gates hook as a whole command whose status reaches git, and
   `--probe-git` also requires the hook git runs to exit non-zero, so it
   proves a refusal reaches git, not only that the hook was reached.
+- **`pre-commit install` after projection no longer blocks every commit**
+  (#201). The pre-commit framework moves the gates stub to
+  `.git/hooks/<hook>.legacy` and runs it first; the stub looked for
+  `.specify/gates/hooks/<hook>.legacy` and refused, while doctor and
+  `--probe-git` stayed green. The stub now runs the gates `<hook>` under
+  that name, `project.sh` refreshes an older moved stub, and doctor
+  reports the layout: an older moved stub fails, and a double run (the
+  config calls gates too) is named.
 - **An unknown `--accept` feature is refused before any gate runs**
   (#179). `verify.sh --accept <name>` with a name that is not a feature
   ran the lint and quality gates first and refused only at the spec gate,

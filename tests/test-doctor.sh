@@ -1139,6 +1139,37 @@ run_doctor "$GMW" >/dev/null
 has "pre-commit: an entry that only names the gates hook fails" "$GMW" "[MISSING] commit-msg (static): git runs .git/hooks/commit-msg, owned by pre-commit, and .pre-commit-config.yaml calls .specify/gates/hooks/commit-msg, but the item's entry: is not the gates hook itself"
 fx_cleanup "$GMW"
 
+echo ""
+echo "=== the pre-commit framework's migration mode (#201) ==="
+# `pre-commit install` after projection moves each stub to <hook>.legacy
+# and runs it first on every call, failing the hook when it fails.
+PCL="$(fx_project)"
+(cd "$PCL" && GATES_TEST=1 bash .specify/extensions/gates/runtime/project.sh --skip-canary >/dev/null 2>&1)
+(cd "$PCL" && git add -A && git commit -q --no-verify -m "chore: adopt gates") >/dev/null 2>&1
+for h in pre-commit pre-merge-commit commit-msg; do
+    mv "$PCL/.git/hooks/$h" "$PCL/.git/hooks/$h.legacy"
+    fx_precommit_hook "$PCL/.git/hooks" "$h"
+done
+rc="$(run_doctor "$PCL")"
+expect "migration mode: doctor passes while .legacy runs gates" "$rc" "0"
+has "migration mode: the moved stub is named" "$PCL" "[ok]  commit-msg is the pre-commit framework's hook and runs the gates stub it moved to commit-msg.legacy"
+has "migration mode: the static check passes" "$PCL" "[ok]  pre-commit (static): another tool owns the hook and calls the gates pre-commit hook"
+CLAUDE_PROJECT_DIR="$PCL" bash "$PCL/.specify/gates/doctor.sh" --probe-git >"$PCL/out.txt" 2>&1 || true
+has "migration mode: --probe-git reaches gates through pre-commit.legacy" "$PCL" "[ok]  pre-commit probe: the hook git runs reaches the gates pre-commit hook"
+has "migration mode: --probe-git reaches gates through commit-msg.legacy" "$PCL" "[ok]  commit-msg probe: the hook git runs reaches the gates commit-msg hook"
+# A stub from before the fix refuses every commit under the moved name.
+# shellcheck disable=SC2016  # the stub's line, matched literally
+grep -v '^name="${name%\.legacy}"' "$PCL/.specify/extensions/gates/runtime/hooks/git/stub.sh" >"$PCL/.git/hooks/commit-msg.legacy"
+rc="$(run_doctor "$PCL")"
+expect "migration mode: an older moved stub fails doctor" "$rc" "1"
+has "migration mode: the older stub is named with the fix" "$PCL" "[MISSING] commit-msg (static): git runs .git/hooks/commit-msg, owned by pre-commit, which first runs .git/hooks/commit-msg.legacy: an older gates stub that refuses every commit under that name (fix: re-run project.sh to refresh it)"
+# Both the moved stub and a config item: gates runs twice.
+cp "$PCL/.specify/extensions/gates/runtime/hooks/git/stub.sh" "$PCL/.git/hooks/commit-msg.legacy"
+printf 'repos:\n- repo: local\n  hooks:\n  - id: g\n    entry: bash .specify/gates/hooks/commit-msg\n    language: system\n    stages: [commit-msg]\n' >"$PCL/.pre-commit-config.yaml"
+run_doctor "$PCL" >/dev/null
+has "migration mode: a double run is named" "$PCL" "[rec] commit-msg runs gates twice"
+fx_cleanup "$PCL"
+
 DOR="$(fx_project)"
 OUT_IO="$(cd "$DOR" && CLAUDE_PROJECT_DIR="$DOR" bash .specify/extensions/gates/runtime/doctor.sh --installed-only 2>&1)" && rc=0 || rc=$?
 expect "--installed-only on a dormant install exits 0" "$rc" "0"

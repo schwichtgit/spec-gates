@@ -10,6 +10,9 @@
 # installs drop modes) still runs.
 
 name="$(basename "$0")"
+# `pre-commit install` moves a hook it finds to <name>.legacy and runs it
+# from there on every call (#201); the gates hook is still <name>.
+name="${name%.legacy}"
 root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
     echo "gates: $name: cannot resolve the work tree -- hook not run" >&2
     exit 1

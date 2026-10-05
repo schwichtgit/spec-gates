@@ -497,7 +497,11 @@ hook refuses in probe mode, and the hook git runs must then exit non-zero,
 so the probe proves a refusal reaches git, not only that the hook was
 reached. Under lefthook it runs only the gates job. A hook gates
 installs itself (the stub) is always run with a probe signal, because only
-gates code executes there.
+gates code executes there. `pre-commit install` after projection moves the
+stub to `.git/hooks/<hook>.legacy` and runs it from there, so gates keeps
+running; `pre-commit install -f` deletes it (see
+[How it works](docs/how-it-works.md#the-three-boundary-model) for the
+install order).
 
 ## Commit and PR message rules
 

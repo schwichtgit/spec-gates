@@ -219,7 +219,7 @@ certainly still valid; otherwise it prints it.
 | --------------------------------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | husky (`core.hooksPath` under `.husky/`)                  | a line in `.husky/<hook>`                         | The script is created if missing, executable (husky 8, `core.hooksPath=.husky`, has git run it directly); your existing lines stay first. Under husky 8 an existing script without the execute bit fails the git check. A script with a top-level `exit` is left alone and the line printed, to go before the `exit`.     |
 | lefthook                                                  | a `<hook>:` block in `lefthook.yml`               | Appended only when that hook has no block yet; otherwise printed for you to merge. A `lefthook.toml`, `.json` or `.jsonc` (also under `.config/`) is never edited: the entry is printed in its format. Run `lefthook install` if git does not run lefthook for that hook yet; until then the hook is reported as pending. |
-| pre-commit framework                                      | a `repo: local` item in `.pre-commit-config.yaml` | Appended only when `repos:` is the last top-level key and a block list (not `repos: []`); otherwise printed. Needs pre-commit 3.2+; run `pre-commit install --hook-type <hook>` for `commit-msg` and `pre-merge-commit`.                                                                                                  |
+| pre-commit framework                                      | a `repo: local` item in `.pre-commit-config.yaml` | Appended only when `repos:` is the last top-level key and a block list (not `repos: []`); otherwise printed. Needs pre-commit 3.2+; run `pre-commit install --hook-type <hook>` for `commit-msg` and `pre-merge-commit`. Installed after projection, it runs the gates stub as `<hook>.legacy` (below).                   |
 | anything else (another `core.hooksPath`, a custom script) | nothing is written                                | `project.sh` prints the call-through line to add, before any `exit`.                                                                                                                                                                                                                                                      |
 
 **Proving the hooks run.** A hook that exists is not a hook git runs. The
@@ -270,6 +270,30 @@ run`), so no other job runs and nothing is rewritten. A hook a manager's
 config calls but whose install command has not run yet is reported by
 `project.sh` as pending that command; doctor fails on it, naming the
 command, since a commit runs no gates check until then.
+
+**The pre-commit framework and `.legacy`.** `pre-commit install` (with or
+without `--hook-type <hook>`) does not overwrite a hook it finds: it moves
+it to `.git/hooks/<hook>.legacy` and, on every call, runs that file first
+(when it is executable), then its own items, and fails the hook when
+either fails. Installed after projection, it moves the gates stub there.
+The stub runs the gates `<hook>` under that name, so gates keeps running
+and doctor reports "runs the gates stub it moved to `<hook>.legacy`".
+`project.sh` refreshes an older stub found there (older stubs refused
+every commit under the moved name) and asks for no config entry while the
+moved stub runs. Two install orders work:
+
+- `project.sh`, then `pre-commit install --hook-type <hook>` for each of
+  `pre-commit`, `pre-merge-commit` and `commit-msg`: gates runs through
+  `<hook>.legacy`. `pre-commit install -f` (`--overwrite`) deletes the
+  `.legacy` files, and gates with them, unless the config calls gates.
+- `pre-commit install` first, then `project.sh --wire-manager` (or
+  `--wire-manager` after the first order): the gates items go into
+  `.pre-commit-config.yaml`. With a `.legacy` stub still present gates
+  runs twice per commit; `project.sh` and doctor say so, and
+  `pre-commit install -f --hook-type <hook>` removes the stub.
+
+Doctor fails an older stub at `<hook>.legacy` and names the fix
+(re-run `project.sh`).
 
 **Protected files** get different treatment at the two local boundaries.
 The agent may never edit them, except the constitution, whose Write/Edit

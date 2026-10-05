@@ -695,6 +695,17 @@ elif git -C "$PROJECT_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
         elif grep -q 'Git commit-msg hook\|Git pre-commit hook --' "$hf" 2>/dev/null; then
             echo "${OK}$h installed, executable, delegates to the gates runtime"
             echo "${REC}$h is a copied hook: it stays at the version it was installed with on every branch — run /speckit.gates.upgrade to install the branch-following stub"
+        elif declare -f gates_legacy_stub >/dev/null 2>&1 \
+            && legacy="$(gates_legacy_stub "$PROJECT_ROOT" "$h")" && [[ "$legacy" != "none" ]]; then
+            # `pre-commit install` moved the stub to <hook>.legacy and runs
+            # it first (#201). A stale copy refuses every commit; the static
+            # check below reports it.
+            if [[ "$legacy" == "current" ]]; then
+                echo "${OK}$h is the pre-commit framework's hook and runs the gates stub it moved to $h.legacy (\`pre-commit install -f\` deletes that file; add the gates entry to .pre-commit-config.yaml first)"
+                if gates_manager_wired "$PROJECT_ROOT" pre-commit "$h"; then
+                    echo "${REC}$h runs gates twice: .pre-commit-config.yaml calls the gates hook as well (fix: \`pre-commit install -f --hook-type $h\` deletes $h.legacy)"
+                fi
+            fi
         elif declare -f gates_calls_through >/dev/null 2>&1 && gates_calls_through "$hf" "$h"; then
             # The call-through to .specify/gates/hooks/<name> on a line that
             # runs, not any mention of "gates" (#128).

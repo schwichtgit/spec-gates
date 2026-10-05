@@ -710,6 +710,32 @@ check "stub: a staged .specify/gates path counts as adopted" 1 \
     bash -c "cd '$ST' && echo '{}' >.specify/gates/policy.json && git add .specify/gates/policy.json && git commit -q -m 'chore: adopt'"
 ( cd "$ST" && git rm -q --cached .specify/gates/policy.json && rm -rf .specify ) >/dev/null 2>&1
 
+# `pre-commit install` moves the stub to <hook>.legacy and runs it from
+# there on every commit (#201). The stub still runs the gates <hook>.
+echo ""
+echo "=== stub moved to <hook>.legacy by the pre-commit framework ==="
+# shellcheck source=/dev/null
+source "$REPO_ROOT/tests/lib/fixture.sh"
+PL="$WORKDIR/legacy"
+mkdir -p "$PL/.specify/gates/hooks"
+git -C "$PL" init -q -b feat/current
+git -C "$PL" config user.email t@example.com
+git -C "$PL" config user.name tester
+project_runtime "$PL" "true"
+cp "$GITHOOKS/pre-commit" "$GITHOOKS/commit-msg" "$PL/.specify/gates/hooks/"
+for h in pre-commit commit-msg; do
+    cp "$GITHOOKS/stub.sh" "$PL/.git/hooks/$h.legacy"
+    chmod +x "$PL/.git/hooks/$h.legacy"
+    fx_precommit_hook "$PL/.git/hooks" "$h"
+done
+( cd "$PL" && git add -A && git commit -q --no-verify -m "chore: seed" ) >/dev/null 2>&1
+check "legacy stub: a good commit passes through pre-commit.legacy" 0 \
+    bash -c "cd '$PL' && echo a >a.txt && git add a.txt && git commit -q -m 'feat: add a' 2>'$WORKDIR/legacy.err'"
+check "legacy stub: commit-msg.legacy still refuses a bad subject" 1 \
+    bash -c "cd '$PL' && git commit -q --allow-empty -m 'bad subject'"
+check "legacy stub: commit-msg.legacy answers as the gates commit-msg hook" 0 \
+    bash -c "cd '$PL' && echo 'feat: x' >m.txt && out=\"\$(GATES_PROBE=1 .git/hooks/commit-msg.legacy m.txt 2>&1)\"; grep -q '^gates-probe:commit-msg:' <<<\"\$out\""
+
 # ===========================================================================
 # Part E2c2: commit hook edge cases (issue #129). An empty commit on main is
 # still a commit to main; subjects git writes itself (merge, fixup!,
