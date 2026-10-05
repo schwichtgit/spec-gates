@@ -149,6 +149,15 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   is now present, `expect` on a list means it contains that entry (on an
   object, that key), and proposals follow `policy.schema.json`; a marker
   no valid policy can satisfy is reported as an annotation to fix.
+- **`policy.json` and the constitution are built-in agent protection**
+  (#165). With jq, both hooks protected them only through
+  `protected_files.extra`, so a policy with an empty or missing `extra`
+  let the agent delete or rewrite them. protect-files now refuses edits to
+  both and validate-bash asks before changing them, with and without jq,
+  whatever `extra` says. A malformed or invalid policy makes validate-bash
+  ask before any change, as protect-files does. `extra` entries are now
+  matched under any spelling of the project root (`/tmp` and
+  `/private/tmp`, a symlinked checkout, `../proj/...`).
 - **The git hooks refuse a branch whose runtime was never projected**
   (#159). In a clone that tracks `policy.json` but gitignores the runtime,
   commit-msg took the missing `.runtime-version` for a pre-0.3.4 runtime

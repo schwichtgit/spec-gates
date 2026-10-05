@@ -32,10 +32,13 @@ spec-gates uses four of them:
   files, private keys and certificates, exact credential file names
   (`credentials.json`, `.netrc`, cloud service-account files), sensitive
   directories, lock files, the project's own rules in
-  `.specify/gates/hooks.local.d/`, and every `protected_files.extra` entry
-  (by default the constitution and `policy.json`). It resolves `.`, `..`
-  and `//` in the path first and matches ignoring case, since macOS
-  filesystems are case-insensitive by default.
+  `.specify/gates/hooks.local.d/`, `.specify/gates/policy.json` and
+  `.specify/memory/constitution.md` (always, whatever the policy says),
+  and every `protected_files.extra` entry. It resolves `.`, `..` and `//`
+  in the path first and matches ignoring case, since macOS filesystems are
+  case-insensitive by default. An `extra` entry also matches under
+  another spelling of the project root (`/tmp` and `/private/tmp`, a
+  symlinked checkout), compared by real path.
 - `PreToolUse(Bash)` → `validate-bash.sh`: refuses destructive commands
   (`rm` of root, home or a path outside the temp directories, force push,
   hard reset, `chmod 777`, piping a download into a shell, …). With
@@ -78,8 +81,10 @@ silently allow. Without jq, or for input that is not valid JSON, they read
 the field in a raw mode that keeps every built-in block rule and still
 checks `policy.json`, the constitution and the project's rules; an
 internal error, an undecodable, missing or repeated field, or a
-`protected_files.extra` it cannot read asks. Doctor keeps failing until jq
-is installed.
+`protected_files.extra` it cannot read asks. A malformed or invalid
+`policy.json` cannot say what it protects either, so with jq the Write/Edit
+hook asks before every edit and the Bash hook before every command that
+appears to change a file. Doctor keeps failing until jq is installed.
 
 **The Stop hook does not fail closed.** When `verify.sh` cannot run (no
 jq, no git, no policy), `verify-quality.sh` lets the session end and says

@@ -1293,6 +1293,67 @@ for f in src/app.ts ./src/../README.md .ENV.example "$PN/docs/policy.json"; do
     check "Write/Edit allowed: $f" 0 bash -c "out=\$(printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$PN' '$HOOKS/protect-files.sh') && [[ -z \"\$out\" ]]" _ "$(pn_payload "$f")"
 done
 
+# ===========================================================================
+# Part L: policy.json and the constitution are built-in agent protection,
+# whatever protected_files.extra says, with and without jq (#165)
+# ===========================================================================
+echo ""
+echo "=== policy.json and the constitution: built-in agent protection (#165) ==="
+BP="$WORKDIR/pf165"
+project_runtime "$BP" "true"
+mkdir -p "$BP/.specify/memory" "$BP/docs"
+bp_vb() { jq -nc --arg c "$1" --arg d "$BP" '{cwd:$d,tool_input:{command:$c}}'; }
+# A policy without extra, with extra: [], and three invalid ones.
+BP_POLICIES=('{ "hooks": {} }' '{ "hooks": {}, "protected_files": { "extra": [] } }' '{}' '{ "hooks": ' \
+    '{ "hooks": {}, "protected_files": { "extra": "notalist" } }')
+for pol in "${BP_POLICIES[@]}"; do
+    printf '%s' "$pol" >"$BP/.specify/gates/policy.json"
+    for f in .specify/gates/policy.json .specify/memory/constitution.md "$BP/.specify/gates/policy.json"; do
+        check "Write/Edit refused [$pol]: $f" 2 bash -c "printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$BP' '$HOOKS/protect-files.sh'" _ "$(pn_payload "$f")"
+        check "Write/Edit refused without jq [$pol]: $f" 2 bash -c "printf '%s' \"\$1\" | PATH='$NOJQ' CLAUDE_PROJECT_DIR='$BP' '$HOOKS/protect-files.sh'" _ "$(pn_payload "$f")"
+    done
+    # shellcheck disable=SC2016  # literal command text under test
+    for c in 'rm .specify/gates/policy.json' 'sed -i s/a/b/ .specify/memory/constitution.md' \
+        'echo {} > .specify/gates/policy.json'; do
+        askcheck "Bash change asks [$pol]: $c" "$(bp_vb "$c")" validate-bash.sh CLAUDE_PROJECT_DIR="$BP"
+        askcheck "Bash change asks without jq [$pol]: $c" "$(bp_vb "$c")" validate-bash.sh PATH="$NOJQ" CLAUDE_PROJECT_DIR="$BP"
+    done
+done
+# An invalid policy cannot say what extra protects: any change asks, as in
+# protect-files; a read and a valid policy's unrelated change do not.
+for pol in '{}' '{ "hooks": ' '{ "hooks": {}, "protected_files": { "extra": "notalist" } }'; do
+    printf '%s' "$pol" >"$BP/.specify/gates/policy.json"
+    askcheck "invalid policy: any change asks [$pol]" "$(bp_vb 'rm -rf build')" validate-bash.sh CLAUDE_PROJECT_DIR="$BP"
+    check "invalid policy: a read is allowed [$pol]" 0 bash -c "out=\$(printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$BP' '$HOOKS/validate-bash.sh') && [[ -z \"\$out\" ]]" _ "$(bp_vb 'ls -la')"
+done
+printf '%s' '{ "hooks": {} }' >"$BP/.specify/gates/policy.json"
+check "valid policy: an unrelated change is allowed" 0 bash -c "out=\$(printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$BP' '$HOOKS/validate-bash.sh') && [[ -z \"\$out\" ]]" _ "$(bp_vb 'rm -rf build')"
+check "a policy.json outside .specify/gates stays editable" 0 bash -c "out=\$(printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$BP' '$HOOKS/protect-files.sh') && [[ -z \"\$out\" ]]" _ "$(pn_payload "$BP/docs/policy.json")"
+
+# protected_files.extra under another spelling of the project root: a
+# symlinked root, the real path behind it, ../proj/..., and (macOS) /tmp
+# against /private/tmp.
+printf '%s' '{ "hooks": {}, "protected_files": { "extra": ["docs/internal.md", "gen/**"] } }' >"$BP/.specify/gates/policy.json"
+BPR="$(cd "$BP" && pwd -P)"
+ln -sfn "$BPR" "$WORKDIR/pf165-link"
+mkdir -p "$WORKDIR/pf165-cwd"
+pr_spell() { # <name> <project-dir> <file_path> [cwd]
+    check "$1" 2 bash -c "jq -nc --arg f \"\$1\" --arg d \"\$2\" '{cwd:\$d,tool_input:{file_path:\$f}}' | CLAUDE_PROJECT_DIR='$2' '$HOOKS/protect-files.sh'" _ "$3" "${4:-$2}"
+}
+pr_spell "extra matched: symlinked root, real file path" "$WORKDIR/pf165-link" "$BPR/docs/internal.md"
+pr_spell "extra matched: real root, path through the symlink" "$BPR" "$WORKDIR/pf165-link/docs/internal.md"
+pr_spell "extra matched: ../proj/... from a sibling cwd" "$BP" "../pf165/docs/internal.md" "$WORKDIR/pf165-cwd"
+pr_spell "extra matched: a directory not yet created" "$BPR" "$WORKDIR/pf165-link/gen/new/x.md"
+if [[ -d /private/tmp && "$(cd /tmp && pwd -P)" == /private/tmp ]]; then
+    TP="$(mktemp -d /tmp/gates165.XXXXXX)"
+    mkdir -p "$TP/.specify/gates"
+    cp "$BP/.specify/gates/policy.json" "$TP/.specify/gates/"
+    cp -R "$BP/.specify/gates/lib" "$TP/.specify/gates/"
+    pr_spell "extra matched: /tmp root, /private/tmp path" "$TP" "/private$TP/docs/internal.md"
+    pr_spell "extra matched: /private/tmp root, /tmp path" "/private$TP" "$TP/docs/internal.md"
+    rm -rf "$TP"
+fi
+
 # --- Summary ---
 echo ""
 echo "$PASS of $TOTAL tests passed."

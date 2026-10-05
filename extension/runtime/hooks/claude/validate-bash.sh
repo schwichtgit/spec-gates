@@ -367,11 +367,12 @@ fi
 # from a read by the command text alone is a heuristic, so a command that
 # appears to modify one asks the human instead of blocking; reads stay
 # allowed. The paths: the project's rules (hooks.local.d), the
-# policy-contract artifacts (#137), plus protected_files.extra (glob
-# entries by their literal prefix). Without
-# jq, policy.json and the constitution are always checked, extra is read
-# when it is a plain list of strings, and when it cannot be read a command
-# that changes anything asks (#121). A path counts as named when it appears in the command, when one
+# policy-contract artifacts (#137), policy.json and the constitution
+# (always, whatever extra says, #165), plus protected_files.extra (glob
+# entries by their literal prefix). Without jq, extra is read when it is a
+# plain list of strings; when it cannot be read (no jq, or a policy that is
+# malformed or fails validation) a command that changes anything asks
+# (#121, #165). A path counts as named when it appears in the command, when one
 # of its parent directories appears as a whole argument (`rm -rf
 # .specify/gates`), or when the command first changes into it or a parent
 # (`cd .specify/gates && ...`, `git -C`). Matching ignores case, after
@@ -393,17 +394,35 @@ raw_extra() {
 }
 RAW_EXTRA=""
 EXTRA_UNREAD=0
+EXTRA_WHY="$DEGRADED"
 if [[ -n "$DEGRADED" && -f "$POLICY" ]]; then
     rc=0
     RAW_EXTRA="$(raw_extra)" || rc=$?
     [[ "$rc" -eq 2 ]] && EXTRA_UNREAD=1
+elif [[ -f "$POLICY" ]]; then
+    # The jq reader below returns nothing for a malformed policy or an extra
+    # that is not a list of strings, which would read as "nothing protected".
+    # Same validation verify.sh and protect-files refuse on (#124, #165).
+    _plib="$LROOT/.specify/gates/lib/policy.sh"
+    if ! jq -e '(.protected_files.extra // []) | type == "array" and all(type == "string")' \
+        "$POLICY" >/dev/null 2>&1; then
+        EXTRA_UNREAD=1
+    elif [[ -f "$_plib" ]] && bash -n "$_plib" 2>/dev/null \
+        && ! (
+            # shellcheck source=/dev/null disable=SC1090
+            source "$_plib" && _pf="$(gates_policy_file)" \
+                && { [[ ! -f "$_pf" ]] || gates_validate_policy "$_pf"; }
+        ) >/dev/null 2>&1; then
+        EXTRA_UNREAD=1
+    fi
+    EXTRA_WHY="the policy is malformed or invalid; run /speckit.gates.doctor"
 fi
 protected_prefixes() {
     printf '%s\n' ".specify/gates/hooks.local.d" ".specify/gates/baseline.json" \
-        ".specify/gates/baseline.lock.json" ".specify/gates/policy.effective.json"
+        ".specify/gates/baseline.lock.json" ".specify/gates/policy.effective.json" \
+        ".specify/gates/policy.json" ".specify/memory/constitution.md"
     {
         if [[ -n "$DEGRADED" ]]; then
-            printf '%s\n' ".specify/gates/policy.json" ".specify/memory/constitution.md"
             [[ -n "$RAW_EXTRA" ]] && printf '%s\n' "$RAW_EXTRA"
         elif [[ -f "$POLICY" ]]; then
             jq -r '(.protected_files.extra // [])[] | select(type == "string")' "$POLICY" 2>/dev/null || true
@@ -416,15 +435,18 @@ MUTATE_VERB='(^|[;&|(`[:space:]])(rm|rmdir|unlink|shred|mv|cp|ln|install|truncat
 MUTATE_EDIT='(^|[;&|(`[:space:]])(sed|perl)[[:space:]]+([^;&|]*[[:space:]])?-[a-zA-Z]*i|(^|[;&|(`[:space:]])git[[:space:]]+(rm|mv|checkout|restore|reset|clean|stash)([[:space:]]|$)'
 # shellcheck disable=SC2016
 MUTATE_FIND='(^|[;&|(`[:space:]])find[[:space:]]([^;&|]*[[:space:]])?-(delete|exec|execdir|ok|okdir)([[:space:]]|$)'
-# The command with path spellings normalized, lowercased.
+# The command with path spellings normalized, lowercased. The project root
+# is stripped as given and as its real path (/tmp vs /private/tmp, a
+# symlinked checkout; #165).
+LREAL="$(cd "$LROOT" 2>/dev/null && pwd -P)" || LREAL=""
 # shellcheck disable=SC2016  # $PWD is literal command text here
-NCMD="$(printf '%s\n' "$COMMAND" | awk -v root="$LROOT" '
+NCMD="$(printf '%s\n' "$COMMAND" | awk -v root="$LROOT" -v rroot="${LREAL:-$LROOT}" '
     function strip(s, p,    i, out) {
         out = ""
         while ((i = index(s, p)) > 0) { out = out substr(s, 1, i - 1); s = substr(s, i + length(p)) }
         return out s
     }
-    { s = strip($0, root "/"); s = strip(s, "\"$PWD\"/"); s = strip(s, "\"${PWD}\"/")
+    { s = strip($0, root "/"); s = strip(s, rroot "/"); s = strip(s, "\"$PWD\"/"); s = strip(s, "\"${PWD}\"/")
       s = strip(s, "$PWD/"); s = strip(s, "${PWD}/"); print s }' \
     | sed -E -e 's#//+#/#g' -e 's#/(\./)+#/#g' -e "s#(^|[[:space:]\"'=<>;&|(\`])(\./)+#\1#g" \
     | tr '[:upper:]' '[:lower:]')"
@@ -437,7 +459,7 @@ if grep -qE "$MUTATE_VERB|$MUTATE_EDIT|$MUTATE_FIND" <<<"$NCMD"; then
     MUTATES=1
 fi
 if [[ "$EXTRA_UNREAD" -eq 1 ]] && [[ "$MUTATES" -eq 1 || "$WRITE_REDIRECT" -eq 1 ]]; then
-    defer_ask "policy protected_files.extra cannot be read ($DEGRADED); confirm this command changes no protected path"
+    defer_ask "policy protected_files.extra cannot be read ($EXTRA_WHY); confirm this command changes no protected path"
 fi
 ere_escape() { printf '%s' "$1" | sed 's/[][\.*^$+?(){}|/]/\\&/g'; }
 # shellcheck disable=SC2016
