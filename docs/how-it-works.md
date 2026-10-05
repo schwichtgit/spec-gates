@@ -242,7 +242,8 @@ refuses it there unless the PR description declares the path. The trailer is an 
 declaration, not a credential: real approval is enforced server-side by
 CODEOWNERS plus branch protection. Setting `git.protected_change_trailer`
 to `false` restores the unconditional refusal. The hooks read the switch
-from `HEAD`'s policy as well as the working one, so the commit that turns
+from the staged policy and `HEAD`'s, not the working tree, so an
+unstaged edit does not lift the refusal, and the commit that turns
 it off is still judged by the trailer rule: it passes with a
 `Protected-Change` trailer for each protected path it stages plus
 `Approved-By`, and the refusal applies from the next commit on. The one

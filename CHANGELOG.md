@@ -133,6 +133,12 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   small edit adding a key, or a symlink replaced by a file holding one
   was committed unscanned. Renames now count as their new name, and
   typechanges are scanned.
+- **An unstaged policy edit no longer lifts the trailer-off refusal**
+  (#188). The hooks turned `git.protected_change_trailer` on when the
+  working-tree policy had it on, so re-enabling it without staging that
+  edit let a refused protected commit through. The switch is now read
+  from the staged policy and `HEAD`'s (the working tree only when neither
+  carries a policy).
 - **An unknown `--accept` feature is refused before any gate runs**
   (#179). `verify.sh --accept <name>` with a name that is not a feature
   ran the lint and quality gates first and refused only at the spec gate,

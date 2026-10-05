@@ -556,7 +556,15 @@ check "trailer off: the next protected commit is refused despite trailers" 1 \
     bash -c "cd '$PT' && echo c >const.md && git add const.md && git commit -q -F '$PTM' 2>'$WORKDIR/pt-off.err'"
 check "trailer off: refused by pre-commit's outright refusal" 0 \
     grep -q "BLOCKED: policy-protected file staged: const.md" "$WORKDIR/pt-off.err"
-( cd "$PT" && git reset -q -- . >/dev/null 2>&1; rm -f const.md )
+# The switch is read from the index and HEAD (#188): turning it back on in
+# the working tree without staging that edit does not lift the refusal.
+( cd "$PT" && jq '.git.protected_change_trailer = true' .specify/gates/policy.json >"$WORKDIR/pt-on.json" \
+    && cp "$WORKDIR/pt-on.json" .specify/gates/policy.json )
+check "trailer off: an unstaged edit turning it on is ignored" 1 \
+    bash -c "cd '$PT' && echo c >const.md && git add const.md && git commit -q -F '$PTM' 2>'$WORKDIR/pt-off.err'"
+check "trailer off: unstaged toggle refused by pre-commit's outright refusal" 0 \
+    grep -q "BLOCKED: policy-protected file staged: const.md" "$WORKDIR/pt-off.err"
+( cd "$PT" && git reset -q -- . >/dev/null 2>&1; rm -f const.md; git checkout -q -- .specify/gates/policy.json )
 
 # ===========================================================================
 # Part E2b: hook/runtime version skew. .git/hooks is shared by every branch,
