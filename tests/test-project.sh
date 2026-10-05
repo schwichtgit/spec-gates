@@ -103,6 +103,17 @@ done
 OUT="$(cd "$D" && PATH="$NOGIT" bash "$P" --dry-run --skip-canary 2>&1)" || true
 ok "no git: says git is not installed" grep -q 'git is not installed: the git boundary is not wired' <<<"$OUT"
 ok "no git: does not send the user to git init" bash -c "! grep -q 'after git init' <<<\"\$1\"" _ "$OUT"
+# --check promises exit 1 when work is pending; an unwired git boundary is
+# pending work, not "nothing to do" (#172).
+rc_is "projected with git" 0 "$D" --skip-canary
+rc_is "--check with git: current" 0 "$D" --check
+rc=0
+OUT="$(cd "$D" && PATH="$NOGIT" bash "$P" --check 2>&1)" || rc=$?
+ok "no git: --check exits 1" test "$rc" -eq 1
+ok "no git: --check says the git boundary is not wired" grep -q 'git is not installed: the git boundary is not wired' <<<"$OUT"
+rc=0
+(cd "$D" && PATH="$NOGIT" bash "$P" --check --no-git-hooks >/dev/null 2>&1) || rc=$?
+ok "no git, --no-git-hooks: --check exits 0" test "$rc" -eq 0
 rm -rf "$NOGIT"
 
 echo ""

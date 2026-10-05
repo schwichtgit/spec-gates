@@ -43,3 +43,10 @@ Optional:
 invalid policy: no gate ran, and the validator's errors are printed),
 `2` = at least one gate failed. On an invalid policy, report the errors and
 stop; do not edit the policy to fix it, that is the user's change.
+
+With `--json`, an exit-`1` refusal still prints one object on stdout, next
+to the message on stderr:
+`{"result":"refused","boundary":"ci","reason":"<the stderr message>"}`
+(`boundary` is `unspecified` when the arguments were refused). A run that
+evaluated gates prints the result object with `gates[]` instead, which has
+no `result` key.

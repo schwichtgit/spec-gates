@@ -285,11 +285,12 @@ fi
 # pre-commit framework) gets the gates entry in its own configuration --
 # never in the files it generates -- and only with --wire-manager.
 # Anything else that owns the hooks gets the call-through printed.
-HOOKPLAN="" FOREIGN="" GITNOTE="" MANAGER="" MGRPLAN="" MGRAPPLY="" MGRMANUAL="" MGRDONE=""
+HOOKPLAN="" FOREIGN="" GITNOTE="" NOGIT=0 MANAGER="" MGRPLAN="" MGRAPPLY="" MGRMANUAL="" MGRDONE=""
 STUB="$SRC/hooks/git/stub.sh"
 if [[ "$GITHOOKS" -eq 1 ]]; then
     if ! command -v git >/dev/null 2>&1; then
         GITNOTE="git is not installed: the git boundary is not wired. Install git and run this again."
+        NOGIT=1
     elif ! git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         GITNOTE="not a git work tree: the git boundary is not wired. Run this again after git init."
     else
@@ -469,8 +470,9 @@ if [[ "$DRY" -eq 1 ]]; then
         printf '%s\n' "$CHANGES" | sed 's/^/project:   /'
     fi
     report_side
-    # An unwired git hook is pending work too, even when no file changes.
-    if [[ "$CHECK" -eq 1 ]] && [[ -n "$CHANGES" || -n "$FOREIGN" || -n "$MGRPLAN" || -n "$HELDGONE" ]]; then exit 1; fi
+    # An unwired git hook is pending work too, even when no file changes;
+    # so is a git boundary left unwired because git is missing (#172).
+    if [[ "$CHECK" -eq 1 ]] && [[ -n "$CHANGES" || -n "$FOREIGN" || -n "$MGRPLAN" || -n "$HELDGONE" || "$NOGIT" -eq 1 ]]; then exit 1; fi
     exit 0
 fi
 

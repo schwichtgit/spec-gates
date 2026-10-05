@@ -201,7 +201,12 @@ git boundary; `pr-check.sh` re-checks every commit in the range and
 refuses it there unless the PR description declares the path. The trailer is an auditable
 declaration, not a credential: real approval is enforced server-side by
 CODEOWNERS plus branch protection. Setting `git.protected_change_trailer`
-to `false` restores the unconditional refusal, except for the commit
+to `false` restores the unconditional refusal. The hooks read the switch
+from `HEAD`'s policy as well as the working one, so the commit that turns
+it off is still judged by the trailer rule: it passes with a
+`Protected-Change` trailer for each protected path it stages plus
+`Approved-By`, and the refusal applies from the next commit on. The one
+exception to the refusal is the commit
 `contract.sh sync --update` makes: on a `gates/baseline-<v>` branch,
 `policy.json` changing `extends.version` alone plus the three contract
 artifacts, consistent with the pin, passes (checked against the index).

@@ -29,6 +29,7 @@
 #   2  usage error (missing args, bad project dir)
 #   3  bundled default template not found
 #   4  resulting policy failed schema validation
+#   5  the policy could not be written to <output_path>
 #
 # Dependencies: jq, awk, grep. No Python or Node runtime.
 
@@ -201,6 +202,12 @@ gates_policy_infer() {
         return 4
     fi
 
+    # The summary names the output path, so it follows a successful write.
+    if ! { mkdir -p "$(dirname "$output_path")" && mv "$stage_policy" "$output_path"; }; then
+        echo "ERROR: could not write the policy to $output_path" >&2
+        return 5
+    fi
+
     # Surface a per-field summary on stderr so the operator can see what
     # was inferred vs. what was left at defaults.
     {
@@ -213,8 +220,6 @@ gates_policy_infer() {
             "$(has_taskfile_lint_test "$project_dir" && echo present || echo absent)"
     } >&2
 
-    mkdir -p "$(dirname "$output_path")"
-    mv "$stage_policy" "$output_path"
     return 0
 }
 

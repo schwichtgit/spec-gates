@@ -22,16 +22,45 @@ set -euo pipefail
 #
 # Exit codes: 0 = all gates green, 1 = internal error (bad arguments, no jq,
 # no or invalid policy; no gate ran), 2 = gate failure.
+#
+# With --json, an exit-1 refusal still prints exactly one object on stdout,
+# {"result":"refused","boundary":...,"reason":...}, next to the stderr
+# message, so a workflow step never parses empty output.
 
 BOUNDARY="unspecified"
 JSON=0
 DRY_RUN=0
 ACCEPT_ARG=""
 
+# --json is known before the argument loop so an argument error can answer
+# in JSON too.
+for _arg in "$@"; do [[ "$_arg" == "--json" ]] && JSON=1; done
+
+json_str() { # <text>: JSON string literal; pure bash, jq may be missing
+    local s="$1"
+    s="${s//\\/\\\\}"; s="${s//\"/\\\"}"
+    s="${s//$'\n'/\\n}"; s="${s//$'\t'/\\t}"; s="${s//$'\r'/\\r}"
+    s="$(printf '%s' "$s" | LC_ALL=C tr -d '\000-\037')"
+    printf '"%s"' "$s"
+}
+
+refused() { # <reason>: the --json refusal object (if --json), exit 1
+    if [[ "$JSON" == "1" ]]; then
+        printf '{"result":"refused","boundary":%s,"reason":%s}\n' \
+            "$(json_str "$BOUNDARY")" "$(json_str "$1")"
+    fi
+    exit 1
+}
+
+refuse() { # <message>: no gate ran; stderr message, exit 1
+    echo "gates: $1" >&2
+    refused "$1"
+}
+
 usage() { # <message>: argument error, exit 1
     echo "gates: $1" >&2
     echo "usage: verify.sh --boundary agent|git|ci [--json] [--dry-run] [--accept <feature|all>]" >&2
-    exit 1
+    refused "$1"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -60,19 +89,16 @@ GATES_DIR="$PROJECT_ROOT/.specify/gates"
 POLICY_FILE="$GATES_DIR/policy.json"
 
 if ! command -v jq >/dev/null 2>&1; then
-    echo "gates: jq not found — cannot evaluate policy (run /speckit.gates.doctor)" >&2
-    exit 1
+    refuse "jq not found — cannot evaluate policy (run /speckit.gates.doctor)"
 fi
 # The spec gate proves with git that an accept block left the tree
 # unchanged; without git that check would pass blind (#121). Exit 1 like
 # jq: the Stop hook then lets the session end instead of locking it.
 if ! command -v git >/dev/null 2>&1; then
-    echo "gates: git not found — cannot check the working tree (run /speckit.gates.doctor)" >&2
-    exit 1
+    refuse "git not found — cannot check the working tree (run /speckit.gates.doctor)"
 fi
 if [[ ! -f "$POLICY_FILE" ]]; then
-    echo "gates: no policy at $POLICY_FILE (run /speckit.gates.init)" >&2
-    exit 1
+    refuse "no policy at $POLICY_FILE (run /speckit.gates.init)"
 fi
 
 # Path is resolved at runtime from the projected layout; the source= hint helps
@@ -92,8 +118,7 @@ source "$GATES_DIR/lib/contract.sh"
 # same exit 1, which the Stop hook treats as a setup error (it allows the
 # stop and says why) and the git and CI boundaries as a failure.
 if ! gates_validate_policy "$(gates_policy_file)"; then
-    echo "gates: invalid policy, no gate ran; fix the errors above (run /speckit.gates.doctor)" >&2
-    exit 1
+    refuse "invalid policy, no gate ran; fix the errors above (run /speckit.gates.doctor)"
 fi
 
 FAILED=0
@@ -271,8 +296,7 @@ if [[ "$SPEC_ENABLED" != "false" && -z "${GATES_SPEC_EXEC:-}" ]]; then
         if [[ -n "$ACCEPT_ARG" && "$ACCEPT_ARG" != "all" ]]; then
             if ! grep -qx -- "$ACCEPT_ARG" <<<"$(gates_spec_features "$PROJECT_ROOT")"; then
                 AVAILABLE="$(gates_spec_features "$PROJECT_ROOT" | tr '\n' ' ')"
-                echo "gates: --accept: unknown feature: $ACCEPT_ARG (available: ${AVAILABLE:-none})" >&2
-                exit 1
+                refuse "--accept: unknown feature: $ACCEPT_ARG (available: ${AVAILABLE:-none})"
             fi
         fi
         SPEC_SEV="$(gates_policy_section_get spec severity)"
