@@ -283,13 +283,21 @@ esac
 # ---------------------------------------------------------------------------
 # Spec-conformance gate (feature 002): fenced accept blocks in specs/*/tasks.md
 # run as executable acceptance criteria. Complete features (spec.md Status:
-# Complete) are enforced at spec.severity; the rest is informational. Skipped
-# entirely when GATES_SPEC_EXEC is set — accept blocks export it, so a block
-# that invokes verify.sh cannot re-enter accept-block execution.
+# Complete) are enforced at spec.severity; the rest is informational.
+# GATES_SPEC_EXEC is the recursion guard: accept blocks export it, so a block
+# that invokes verify.sh does not re-enter accept-block execution. Any caller
+# can set it, so a guarded run records the spec gate as skipped with the
+# reason (text, --json and the attestation) instead of dropping it (#164).
 # ---------------------------------------------------------------------------
 SPEC_ENABLED="$(gates_policy_section_get spec enabled)"
 SPEC_ATT_JSON=""
-if [[ "$SPEC_ENABLED" != "false" && -z "${GATES_SPEC_EXEC:-}" ]]; then
+if [[ "$SPEC_ENABLED" != "false" && -n "${GATES_SPEC_EXEC:-}" ]]; then
+    SPEC_SKIP_REASON="GATES_SPEC_EXEC is set (run from inside an accept block), so accept blocks did not run"
+    record "spec" "skipped" "$SPEC_SKIP_REASON"
+    if [[ "$DRY_RUN" != "1" ]]; then
+        att_gate "spec" "" "" "" "" "" "skipped" "$SPEC_SKIP_REASON" 0
+    fi
+elif [[ "$SPEC_ENABLED" != "false" ]]; then
     if [[ "$DRY_RUN" == "1" ]]; then
         record "spec" "planned" "spec conformance (accept blocks)"
     else

@@ -270,10 +270,20 @@ CLAUDE_PROJECT_DIR="$D" GATES_SPEC_EXEC=1 \
 expect "GATES_SPEC_EXEC=1 skips the spec gate (failing fixture passes)" "$RC" 0
 J="$(CLAUDE_PROJECT_DIR="$D" GATES_SPEC_EXEC=1 \
     bash "$D/.specify/gates/verify.sh" --boundary ci --json 2>/dev/null || true)"
-expect "guarded run has no spec gate entry" \
-    "$(printf '%s' "$J" | jq -r '[.gates[] | select(.name == "spec")] | length')" 0
+# Issue #164: any caller can set the guard, so the skip is never silent.
+expect "guarded run records the spec gate as skipped" \
+    "$(printf '%s' "$J" | jq -r '[.gates[] | select(.name == "spec") | .status] | join(",")')" skipped
+expect_contains "guarded run names the guard as the reason" \
+    "$(printf '%s' "$J" | jq -r '.gates[] | select(.name == "spec") | .detail')" "GATES_SPEC_EXEC is set"
+expect "guarded run attests the spec gate as skipped" \
+    "$(printf '%s' "$J" | jq -r '[.attestation.gates[] | select(.name == "spec") | .result] | join(",")')" skipped
+expect_contains "guarded attestation carries the reason" \
+    "$(printf '%s' "$J" | jq -r '.attestation.gates[] | select(.name == "spec") | .reason')" "GATES_SPEC_EXEC is set"
 expect "guarded run has no attestation spec object" \
     "$(printf '%s' "$J" | jq -r '.attestation | has("spec")')" false
+OUT="$(CLAUDE_PROJECT_DIR="$D" GATES_SPEC_EXEC=1 \
+    bash "$D/.specify/gates/verify.sh" --boundary ci 2>&1 || true)"
+expect_contains "guarded text output shows the skipped spec gate" "$OUT" "[skipped] spec -- GATES_SPEC_EXEC is set"
 
 # --- enforcement: SC-001 / SC-002 regressions ---
 echo ""
@@ -448,6 +458,110 @@ EOF
 OUT="$(gate_out "$D")"
 expect_contains "block outside a git work tree blocks the run" "$OUT" "EXIT=2"
 expect_contains "non-git failure names the cause" "$OUT" "cannot check for mutations: not a git work tree"
+
+# --- issue #164: repository state outside the working tree, and children ---
+echo ""
+echo "=== read-only check: git config, hooks, refs, ignored files, children ==="
+
+# A committed fixture with a hook, an ignored directory and an ignored file,
+# so HEAD, a hook and ignored content all exist before the block runs.
+isofix() { # <dir> [policy-json]
+    local dir="$1"
+    project "$dir" "${2:-$MINIMAL}"
+    printf 'cache/\n*.log\n' >"$dir/.gitignore"
+    printf 'attestations.jsonl\n' >"$dir/.specify/gates/.gitignore"
+    mkdir -p "$dir/cache"
+    printf 'old\n' >"$dir/cache/data"
+    printf 'old\n' >"$dir/run.log"
+    printf '#!/bin/sh\nexit 0\n' >"$dir/.git/hooks/pre-commit"
+    chmod +x "$dir/.git/hooks/pre-commit"
+    git -C "$dir" add -A
+    git -C "$dir" -c user.email=b@test -c user.name=baseline commit -qm base --no-verify
+}
+
+# Run a one-block Complete feature in a fresh fixture; prints gate output.
+isoblock() { # <name> <block-body> [policy-json]
+    local d="$WORKDIR/iso-$1"
+    isofix "$d" "${3:-$MINIMAL}"
+    # shellcheck disable=SC2016  # literal backticks and a %s placeholder
+    printf -- '- [x] T001 Must leave the repository alone\n\n  ```accept\n%s\n  ```\n' "$2" \
+        | mkfeature "$d" 500-iso Complete
+    gate_out "$d"
+}
+
+OUT="$(isoblock hookspath '  git config core.hooksPath /dev/null')"
+expect_contains "block switching core.hooksPath blocks the run" "$OUT" "EXIT=2"
+expect_contains "config change is named" "$OUT" "git config modified: core.hookspath"
+
+OUT="$(isoblock hookwrite '  printf "#!/bin/sh\\n" >.git/hooks/commit-msg')"
+expect_contains "block writing a git hook blocks the run" "$OUT" "EXIT=2"
+expect_contains "hook write is named" "$OUT" "git hooks modified: commit-msg"
+
+OUT="$(isoblock hookchmod '  chmod -x .git/hooks/pre-commit')"
+expect_contains "block disabling a hook's exec bit blocks the run" "$OUT" "EXIT=2"
+expect_contains "hook mode change is named" "$OUT" "git hooks modified: pre-commit"
+
+OUT="$(isoblock commit '  git -c user.email=a@test -c user.name=a commit -q --allow-empty --no-verify -m x')"
+expect_contains "block committing blocks the run" "$OUT" "EXIT=2"
+expect_contains "commit is named as a ref change" "$OUT" "refs modified: HEAD"
+
+OUT="$(isoblock tag '  git tag v9')"
+expect_contains "block tagging blocks the run" "$OUT" "EXIT=2"
+expect_contains "tag is named" "$OUT" "refs modified: refs/tags/v9"
+
+OUT="$(isoblock ignwrite '  echo new >>cache/data')"
+expect_contains "block writing an ignored file blocks the run" "$OUT" "EXIT=2"
+expect_contains "ignored write is named" "$OUT" "ignored files modified: cache/data"
+
+OUT="$(isoblock ignbackdate '  echo new >>run.log
+  touch -t 200001010000 run.log')"
+expect_contains "backdating mtime does not hide an ignored write" "$OUT" "ignored files modified: run.log"
+
+OUT="$(isoblock igncreate '  echo x >new.log')"
+expect_contains "block creating an ignored file blocks the run" "$OUT" "ignored files modified: new.log"
+
+OUT="$(isoblock igndelete '  rm -rf cache')"
+expect_contains "block deleting an ignored directory blocks the run" "$OUT" "ignored files modified: cache"
+
+OUT="$(isoblock remote '  git update-ref refs/remotes/origin/main HEAD
+  git status >/dev/null
+  cat cache/data run.log .git/hooks/pre-commit >/dev/null')"
+expect_contains "reads and a remote-tracking ref update pass" "$OUT" "EXIT=0"
+
+OUT="$(isoblock excluded '  echo new >>cache/data' \
+    '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } }, "spec": { "snapshot_exclude": ["cache/**"] } }')"
+expect_contains "spec.snapshot_exclude exempts an ignored path" "$OUT" "EXIT=0"
+
+# A nested verify.sh (recursion guard set) appends its attestation; the gate
+# exempts its own evidence log, and the nested run reports spec as skipped.
+# shellcheck disable=SC2016  # block text, expanded when the block runs
+OUT="$(isoblock nested '  out="$(CLAUDE_PROJECT_DIR="$PWD" bash .specify/gates/verify.sh --boundary ci)"
+  grep -q "skipped. spec" <<<"$out"
+  test -s .specify/gates/attestations.jsonl')"
+expect_contains "nested verify.sh inside a block passes" "$OUT" "EXIT=0"
+
+OUT="$(isoblock child '  (sleep 2; echo late >late.txt) &')"
+expect_contains "block leaving a child running blocks the run" "$OUT" "EXIT=2"
+expect_contains "leftover child is named" "$OUT" "left a process running"
+sleep 3
+TOTAL=$((TOTAL + 1))
+if [[ ! -e "$WORKDIR/iso-child/late.txt" ]]; then
+    echo "PASS: passing block's child is stopped, no late write"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL: passing block's child kept running and wrote late.txt"
+    FAIL=$((FAIL + 1))
+fi
+
+OUT="$(isoblock reaped '  sleep 30 &
+  kill $!')"
+expect_contains "block that stops its own child passes" "$OUT" "EXIT=0"
+# The child takes a moment to exit on TERM; the block does not wait for it.
+# shellcheck disable=SC2016  # block text, expanded when the block runs
+OUT="$(isoblock slowexit '  bash -c '"'"'trap "kill \$c; sleep 0.2; exit 0" TERM; sleep 30 & c=$!; wait'"'"' &
+  sleep 0.2
+  kill $!')"
+expect_contains "block whose stopped child is still exiting passes" "$OUT" "EXIT=0"
 
 # --- policy: severity, include, exclude, enabled ---
 echo ""

@@ -378,7 +378,7 @@ gates_validate_policy() {
         def brand_keys: ["terms", "allow_phrases"];
         def att_keys: ["enabled", "max_records", "parity"];
         def parity_values: ["error", "warning", "off"];
-        def spec_keys: ["enabled", "severity", "include", "exclude", "timeout_s"];
+        def spec_keys: ["enabled", "severity", "include", "exclude", "timeout_s", "snapshot_exclude"];
         def spec_sev_values: ["error", "warning"];
         def ext_keys: ["source", "version", "file"];
         def pos_int: type == "number" and floor == . and . >= 1;
@@ -445,6 +445,7 @@ gates_validate_policy() {
                         else [] end )
                     + ( if ($s | has("include")) then str_array("spec: include"; $s.include) else [] end )
                     + ( if ($s | has("exclude")) then str_array("spec: exclude"; $s.exclude) else [] end )
+                    + ( if ($s | has("snapshot_exclude")) then str_array("spec: snapshot_exclude"; $s.snapshot_exclude) else [] end )
                     + ( if ($s | has("timeout_s")) and ($s.timeout_s | pos_int | not)
                           then ["spec: timeout_s must be an integer >= 1"]
                         else [] end )

@@ -391,12 +391,17 @@ tool gates and before `parity`:
    (and any feature named via `--accept`), blocks run serially from the
    repository root with output captured (shown only on failure), a
    per-block watchdog (`spec.timeout_s`, default 30s) that stops the
-   block's whole process group, and working-tree snapshots around each
-   block (`git status` plus a content hash of every dirty or untracked
-   file). A block that mutates the working tree, including a write to a
-   file that was already modified, fails its criterion, and nothing is
-   ever auto-reverted. Outside a git work tree there is nothing to check
-   against, so blocks fail closed.
+   block's whole process group, and snapshots around each block:
+   `git status` plus a content hash of every dirty or untracked file, git
+   config in every scope, the hooks directory git uses, `HEAD` and every
+   local ref, and gitignored files (checked by ctime). A block that
+   changes any of them, including a write to a file that was already
+   modified, a `git config core.hooksPath`, a commit or a tag, fails its
+   criterion, and nothing is ever auto-reverted. The process group is
+   stopped after every block too, and a block that leaves a process
+   running fails. `spec.snapshot_exclude` exempts untracked or ignored
+   paths another process writes during the run. Outside a git work tree
+   there is nothing to check against, so blocks fail closed.
 4. **Enforce**: a Complete feature fails the `spec` gate on any unchecked
    task or failing block, naming the feature, the task or criterion, and
    the cause. Incomplete features are informational
@@ -406,10 +411,13 @@ tool gates and before `parity`:
 
 **Recursion guard.** An accept block that invokes `verify.sh` (this
 repository's own blocks do) would re-enter the spec gate and recurse.
-Blocks execute with `GATES_SPEC_EXEC=1` exported, and `verify.sh` skips the
-spec gate entirely when it is set. Consumers that must probe the spec gate
-from inside a block (the canary suite, the test suites) clear the sentinel
-explicitly for their sandboxed runs.
+Blocks execute with `GATES_SPEC_EXEC=1` exported, and `verify.sh` runs no
+accept blocks when it is set. Since any caller can set it, the spec gate
+is then reported as `skipped` with the reason (text, `--json`, and the
+attestation), and validate-bash asks before a command that sets it.
+Consumers that must probe the spec gate from inside a block (the canary
+suite, the test suites) clear the sentinel explicitly for their sandboxed
+runs.
 
 **Evidence and self-test.** The attestation record gains a `spec` gate
 entry (`candidates` = features, `checked` = blocks executed) and a

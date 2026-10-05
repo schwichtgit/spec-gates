@@ -258,6 +258,7 @@ refused severity-case '{ "hooks": { "prettier": { "include": ["**/*.md"], "sever
 refused spec-severity "{ \"hooks\": { $VQ }, \"spec\": { \"severity\": \"eror\" } }" 'spec: invalid severity "eror"'
 refused spec-timeout "{ \"hooks\": { $VQ }, \"spec\": { \"timeout_s\": \"abc\" } }" 'spec: timeout_s must be an integer >= 1'
 refused spec-timeout-neg "{ \"hooks\": { $VQ }, \"spec\": { \"timeout_s\": -1 } }" 'spec: timeout_s must be an integer >= 1'
+refused spec-snapshot-exclude "{ \"hooks\": { $VQ }, \"spec\": { \"snapshot_exclude\": \"cache/**\" } }" 'spec: snapshot_exclude must be an array of strings'
 refused max-records-zero "{ \"hooks\": { $VQ }, \"attestation\": { \"max_records\": 0 } }" 'attestation: max_records must be an integer >= 1'
 refused max-records-str "{ \"hooks\": { $VQ }, \"attestation\": { \"max_records\": \"abc\" } }" 'attestation: max_records must be an integer >= 1'
 refused hook-not-object '{ "hooks": { "prettier": "on" } }' 'prettier: must be an object'

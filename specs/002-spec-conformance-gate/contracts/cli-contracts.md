@@ -38,9 +38,12 @@ verify.sh --boundary agent|git|ci [--json] [--dry-run] [--accept <feature|all>]
 - **`--dry-run`**: the `spec` gate reports `planned` like other gates; no
   discovery side effects to plan, so the entry is the gate name only.
 - **Recursion guard**: block execution exports `GATES_SPEC_EXEC=1`; a
-  `verify.sh` run that sees this variable skips the `spec` gate class
-  entirely (no entry, no attestation `spec` object). An accept block that
-  invokes `verify.sh` therefore cannot re-enter accept-block execution.
+  `verify.sh` run that sees this variable runs no accept blocks: the
+  `spec` gate entry is `skipped` with the reason, in text, `--json` and
+  the attestation gate list, and there is no attestation `spec` object.
+  An accept block that invokes `verify.sh` therefore cannot re-enter
+  accept-block execution, and a caller that sets the variable cannot hide
+  the skip (#164).
 - **`--json`**: `gates[]` gains the `spec` GateEntry; the top-level
   attestation object gains the `spec` object (see data-model.md). Existing
   keys unchanged.

@@ -48,22 +48,58 @@ the association):
    exactly the failure class this project forbids).
 6. **Termination**: an opening ` ```accept ` fence with no closing fence
    in the file is a parse error naming the opening line.
-7. **Read-only contract**: a block must not modify the working tree. The
-   runner snapshots the tree around each block: `git status --porcelain`
-   (every untracked file listed) plus a content hash of each dirty or
-   untracked file, so a write to an already-modified file is caught too.
-   Any delta fails the block naming the changed paths (research R5).
-   Outside a git work tree the block is not run and fails closed
-   (`cannot check for mutations: not a git work tree`). Blocks needing
-   scratch space must use `mktemp -d` outside the repository and clean up.
-8. **Budget**: each block runs under the policy's `spec.timeout_s`
-   watchdog (default 30s); exceeding it fails the block. The block runs in
-   its own process group and the watchdog stops the whole group (TERM,
-   then KILL after a short grace), so no child outlives the run.
+7. **Read-only contract**: a block must not modify the repository. The
+   runner snapshots it around each block and any delta fails the block,
+   naming what changed (research R5, #164):
+   - the working tree: `git status --porcelain` (every untracked file
+     listed) plus a content hash of each dirty or untracked file, so a
+     write to an already-modified file is caught too
+     (`working tree modified: <paths>`);
+   - git configuration in every scope (`git config --list --show-origin`),
+     except `branch.*`, which creating a branch in any worktree writes
+     (`git config modified: <keys>`);
+   - the hooks directory git uses (`git rev-parse --git-path hooks`, which
+     follows `core.hooksPath`): every file's exec bit and content hash
+     (`git hooks modified: <names>`);
+   - `HEAD` (commit and symbolic target) and every ref except
+     `refs/remotes/*`, which a background fetch moves
+     (`refs modified: <refs>`);
+   - gitignored files: the set of ignored roots
+     (`git ls-files -o -i --directory`), and any file or directory under
+     them whose ctime is newer than a marker taken just before the block
+     (`ignored files modified: <paths>`). ctime moves on every write and
+     cannot be set back by unprivileged code; it is used instead of
+     content hashes so a large `node_modules/` costs a directory walk, not
+     a full read, per block.
+
+   Exempt: untracked or ignored paths the gate itself writes
+   (`.specify/gates/attestations.jsonl` and its temp file, appended by a
+   nested `verify.sh`), plus the globs in `spec.snapshot_exclude`, meant
+   for files another process writes while blocks run. Tracked files are
+   never exempt. Outside a git work tree the block is not run and fails
+   closed (`cannot check for mutations: not a git work tree`). Blocks
+   needing scratch space must use `mktemp -d` outside the repository and
+   clean up. Not covered: files outside the repository (other than the
+   global and system git config), and other worktrees' `HEAD`; concurrent
+   git activity in a sibling worktree (a commit there) fails a block, so
+   rerun.
+
+8. **Budget and processes**: each block runs under the policy's
+   `spec.timeout_s` watchdog (default 30s); exceeding it fails the block.
+   The block runs in its own process group, which is stopped (TERM, then
+   KILL after a short grace) on a timeout and also after every block
+   exits. A process still running half a second after the block exits
+   fails the block (`left a process running after it exited (stopped)`),
+   pass or not: its later writes would land after the snapshot. A child
+   that calls `setsid` (or double-forks into a new session) leaves the
+   group and is out of reach; that is a documented limit, not a guarantee.
 9. **No re-entry**: blocks run with `GATES_SPEC_EXEC=1` in the
-   environment; a nested `verify.sh` call skips the `spec` gate class, so
+   environment; a nested `verify.sh` call does not run accept blocks, so
    a block may invoke the gate runner (e.g. inside a sandbox fixture)
-   without recursing into accept-block execution.
+   without recursing into accept-block execution. Any caller can set the
+   variable, so the skip is never silent: the `spec` gate entry is
+   `skipped` with the reason in text, `--json` and the attestation, and
+   the agent's Bash hook asks before a command that sets it.
 
 ## Execution environment
 

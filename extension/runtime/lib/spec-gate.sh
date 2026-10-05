@@ -17,7 +17,8 @@
 # silently skipped (FR-005).
 #
 # All bash 3.2 + jq + POSIX awk/sed. Blocks execute with GATES_SPEC_EXEC=1
-# so a block that invokes verify.sh cannot re-enter the spec gate.
+# so a block that invokes verify.sh cannot re-enter the spec gate (that run
+# reports the spec gate as skipped).
 
 # shellcheck disable=SC2034   # library file; SPEC_* globals consumed by callers
 
@@ -176,17 +177,48 @@ gates_spec_parse() { # <tasks-md> <outdir>
     }' "$file"
 }
 
-# Content snapshot of the working tree for the read-only check (R5): one
-# "XY<TAB>hash<TAB>path[<TAB>orig]" line per `git status --porcelain=v1 -z
-# --untracked-files=all` entry. Status lines alone miss a write to a file
-# that is already dirty or untracked (#136), so each such file's content is
-# hashed as well; clean tracked files are covered by the status itself.
+# Untracked and ignored paths the gate itself writes while a block runs (a
+# nested verify.sh appends its attestation), left out of the read-only
+# check together with the policy's spec.snapshot_exclude globs. A tracked
+# path is never exempt. gates_spec_gate sets GATES_SPEC_SNAPSHOT_EXCLUDE.
+GATES_SPEC_SNAPSHOT_BUILTIN_EXCLUDE=".specify/gates/attestations.jsonl
+.specify/gates/.attestations.jsonl.*"
+
+gates_spec_excluded() { # <path>
+    local g
+    while IFS= read -r g; do
+        [[ -z "$g" ]] && continue
+        gates_glob_match "$1" "$g" && return 0
+    done <<<"${GATES_SPEC_SNAPSHOT_EXCLUDE:-$GATES_SPEC_SNAPSHOT_BUILTIN_EXCLUDE}"
+    return 1
+}
+
+# Snapshot of everything an accept block must leave alone (R5, #136, #164),
+# written sorted to <state> as "kind<TAB>value<TAB>name" lines:
+#   tree  one per `git status --porcelain=v1 -z --untracked-files=all`
+#         entry; value = status, content hash and rename source. Status
+#         alone misses a write to a file that is already dirty or
+#         untracked (#136), so those files are hashed.
+#   cfg   one per `git config --list --show-origin` entry (every scope, so
+#         a --global core.hooksPath counts too); branch.* is left out, since
+#         creating a branch in any sibling worktree writes it.
+#   hook  one per file under the hooks directory git uses (`--git-path
+#         hooks`, which follows core.hooksPath): exec bit and content hash.
+#   ref   HEAD (commit and symbolic target) and every ref except
+#         refs/remotes/*, which a background fetch moves.
+#   ign   one per ignored root (`git ls-files -o -i --directory`): a file,
+#         or a directory that is ignored as a whole. Content changes under
+#         a root are found by ctime against a marker instead of hashing,
+#         which would cost a full read of node_modules per block (see
+#         gates_spec_ignored_writes).
 # Returns nonzero when git cannot produce the snapshot.
-gates_spec_snapshot() { # <root> <scratch-file>
-    local root="$1" scratch="$2" entry xy path orig n=0 i
-    local xys=() paths=() origs=() hashes=() files=() fidx=()
+gates_spec_snapshot() { # <root> <state-file>
+    local root="$1" state="$2" scratch="$2.tmp" list="$2.list"
+    local entry xy path orig n=0 i hdir rel kv key val head sym
+    local xys=() paths=() origs=() hashes=() fidx=()
     git -C "$root" status --porcelain=v1 -z --untracked-files=all \
         >"$scratch" 2>/dev/null || return 1
+    : >"$list"
     while IFS= read -r -d '' entry; do
         xy="${entry:0:2}"
         path="${entry:3}"
@@ -195,6 +227,7 @@ gates_spec_snapshot() { # <root> <scratch-file>
         case "$xy" in
             *R* | *C*) IFS= read -r -d '' orig || true ;;
         esac
+        [[ "$xy" == "??" ]] && gates_spec_excluded "$path" && continue
         xys[n]="$xy"
         paths[n]="$path"
         origs[n]="$orig"
@@ -202,7 +235,7 @@ gates_spec_snapshot() { # <root> <scratch-file>
             hashes[n]="link:$(readlink "$root/$path" 2>/dev/null || true)"
         elif [[ -f "$root/$path" ]]; then
             hashes[n]=""
-            files+=("$path")
+            printf '%s\n' "$path" >>"$list"
             fidx+=("$n")
         elif [[ -e "$root/$path" ]]; then
             hashes[n]="other"
@@ -211,46 +244,215 @@ gates_spec_snapshot() { # <root> <scratch-file>
         fi
         n=$((n + 1))
     done <"$scratch"
-    if [[ ${#files[@]} -gt 0 ]]; then
-        # One hash-object call for every dirty file, hashes in argument order.
-        git -C "$root" hash-object --no-filters -- "${files[@]}" \
-            >"$scratch" 2>/dev/null || return 1
+    if [[ ${#fidx[@]} -gt 0 ]]; then
+        # One hash-object call for every dirty file, paths fed on stdin
+        # (an argument list this long would hit the argv limit).
+        git -C "$root" hash-object --no-filters --stdin-paths \
+            <"$list" >"$scratch" 2>/dev/null || return 1
         i=0
         while IFS= read -r entry; do
             hashes[fidx[i]]="$entry"
             i=$((i + 1))
         done <"$scratch"
-        [[ $i -eq ${#files[@]} ]] || return 1
+        [[ $i -eq ${#fidx[@]} ]] || return 1
     fi
-    i=0
-    while [[ $i -lt $n ]]; do
-        printf '%s\t%s\t%s\t%s\n' "${xys[i]}" "${hashes[i]}" "${paths[i]}" "${origs[i]}"
-        i=$((i + 1))
+    {
+        i=0
+        while [[ $i -lt $n ]]; do
+            printf 'tree\t%s %s %s\t%s\n' "${xys[i]}" "${hashes[i]}" "${origs[i]}" "${paths[i]}"
+            i=$((i + 1))
+        done
+
+        git -C "$root" config --list --show-origin -z >"$scratch" 2>/dev/null || return 1
+        while IFS= read -r -d '' entry && IFS= read -r -d '' kv; do
+            key="${kv%%$'\n'*}"
+            case "$key" in branch.*) continue ;; esac
+            val=""
+            [[ "$kv" == *$'\n'* ]] && val="${kv#*$'\n'}"
+            val="${val//[$'\t\n']/ }"
+            printf 'cfg\t%s %s\t%s\n' "$entry" "$val" "$key"
+        done <"$scratch"
+
+        hdir="$(git -C "$root" rev-parse --git-path hooks 2>/dev/null)" || return 1
+        [[ "$hdir" == /* ]] || hdir="$root/$hdir"
+        if [[ -d "$hdir" ]]; then
+            find "$hdir" \( -type f -o -type l \) -print0 >"$scratch" 2>/dev/null || return 1
+            : >"$list"
+            local hrels=() hx=()
+            while IFS= read -r -d '' path; do
+                rel="${path#"$hdir"/}"
+                if [[ -L "$path" ]]; then
+                    printf 'hook\tlink:%s\t%s\n' "$(readlink "$path" 2>/dev/null || true)" "$rel"
+                    continue
+                fi
+                printf '%s\n' "$path" >>"$list"
+                hrels+=("$rel")
+                if [[ -x "$path" ]]; then hx+=("x"); else hx+=("-"); fi
+            done <"$scratch"
+            if [[ ${#hrels[@]} -gt 0 ]]; then
+                git -C "$root" hash-object --no-filters --stdin-paths \
+                    <"$list" >"$scratch" 2>/dev/null || return 1
+                i=0
+                while IFS= read -r entry; do
+                    printf 'hook\t%s:%s\t%s\n' "${hx[i]}" "$entry" "${hrels[i]}"
+                    i=$((i + 1))
+                done <"$scratch"
+                [[ $i -eq ${#hrels[@]} ]] || return 1
+            fi
+        else
+            printf 'hook\tabsent\t%s\n' "$hdir"
+        fi
+
+        git -C "$root" for-each-ref --format='%(objectname)%09%(refname)' \
+            >"$scratch" 2>/dev/null || return 1
+        awk -F'\t' '$2 !~ /^refs\/remotes\// { printf "ref\t%s\t%s\n", $1, $2 }' "$scratch"
+        head="$(git -C "$root" rev-parse -q --verify HEAD 2>/dev/null)" || head="unborn"
+        sym="$(git -C "$root" symbolic-ref -q HEAD 2>/dev/null)" || sym="detached"
+        printf 'ref\t%s %s\tHEAD\n' "$head" "$sym"
+
+        git -C "$root" ls-files -z -o -i --exclude-standard --directory \
+            >"$scratch" 2>/dev/null || return 1
+        while IFS= read -r -d '' path; do
+            path="${path%/}"
+            gates_spec_excluded "$path" && continue
+            printf 'ign\t-\t%s\n' "$path"
+        done <"$scratch"
+    } >"$list.out" || return 1
+    sort -u "$list.out" >"$state" || return 1
+    rm -f "$scratch" "$list" "$list.out"
+}
+
+# Create <marker> and wait until the clock has visibly moved past it on the
+# same filesystem: Linux stamps files from a coarse clock, and some
+# filesystems keep whole seconds, so a write right after the marker could
+# otherwise carry the marker's own timestamp and go unseen by -cnewer.
+gates_spec_mark() { # <marker>
+    local probe="$1.probe" n=0
+    : >"$1" 2>/dev/null || return 1
+    while [[ $n -lt 150 ]]; do
+        rm -f "$probe"
+        : >"$probe" 2>/dev/null || break
+        if [[ -n "$(find "$probe" -newer "$1" 2>/dev/null)" ]]; then
+            rm -f "$probe"
+            return 0
+        fi
+        sleep 0.01
+        n=$((n + 1))
     done
+    rm -f "$probe"
+    return 0
+}
+
+# Ignored paths written since <marker>: every file or directory under the
+# ignored roots of <state> whose ctime is newer. ctime moves on any write,
+# chmod, create, delete or rename inside a directory, and unprivileged code
+# cannot set it back (touch -t sets mtime only).
+gates_spec_ignored_writes() { # <root> <state> <marker>
+    local root="$1" state="$2" marker="$3" kind val path
+    while IFS=$'\t' read -r kind val path; do
+        [[ "$kind" == ign ]] || continue
+        [[ -e "$root/$path" || -L "$root/$path" ]] || continue
+        printf './%s\0' "$path"
+    done <"$state" >"$state.roots"
+    if [[ -s "$state.roots" ]]; then
+        # shellcheck disable=SC2016  # expanded by the inner sh
+        (cd "$root" && xargs -0 sh -c 'find "$@" -cnewer "$0" -print0' "$marker" \
+            <"$state.roots") >"$state.found" 2>/dev/null || true
+        while IFS= read -r -d '' path; do
+            path="${path#./}"
+            gates_spec_excluded "$path" && continue
+            printf 'ign\t%s\n' "$path"
+        done <"$state.found"
+    fi
+    rm -f "$state.roots" "$state.found"
+}
+
+# One detail string from sorted "kind<TAB>name" change lines, at most ten
+# names per kind.
+gates_spec_change_detail() { # <changes-file>
+    awk -F'\t' '
+        { n[$1]++; if (n[$1] <= 10) l[$1] = l[$1] (l[$1] == "" ? "" : " ") $2 }
+        END {
+            split("tree ign cfg hook ref", order, " ")
+            label["tree"] = "working tree modified"
+            label["ign"] = "ignored files modified"
+            label["cfg"] = "git config modified"
+            label["hook"] = "git hooks modified"
+            label["ref"] = "refs modified"
+            out = ""
+            for (i = 1; i <= 5; i++) {
+                k = order[i]
+                if (!(k in n)) continue
+                s = label[k] ": " l[k]
+                if (n[k] > 10) s = s " (+" (n[k] - 10) " more)"
+                out = out (out == "" ? "" : "; ") s
+            }
+            printf "%s", out
+        }' "$1"
+}
+
+# Is any live (non-zombie) process left in process group <pgid>? ps is the
+# precise check; without it (minimal images) kill -0, which also counts a
+# zombie that is about to be reaped.
+gates_spec_group_alive() { # <pgid>
+    local procs
+    if procs="$(ps -A -o pgid= -o stat= 2>/dev/null)" && [[ -n "$procs" ]]; then
+        awk -v g="$1" '$1 == g && $2 !~ /^Z/ { found = 1 } END { exit !found }' <<<"$procs"
+        return
+    fi
+    kill -0 -- -"$1" 2>/dev/null
+}
+
+# Stop process group <pgid>: TERM, a two-second grace, then KILL.
+gates_spec_group_stop() { # <pgid>
+    local n=0
+    kill -TERM -- -"$1" 2>/dev/null || return 0
+    while [[ $n -lt 20 ]] && kill -0 -- -"$1" 2>/dev/null; do
+        sleep 0.1
+        n=$((n + 1))
+    done
+    kill -KILL -- -"$1" 2>/dev/null
+    return 0
 }
 
 # Execute one accept block (R4/R5): repo-root cwd, pure-shell watchdog (no
-# timeout(1) on macOS base), content snapshots before and after. Outside a
-# git work tree the block does not run: a mutation check that cannot happen
-# fails closed. The block is a job of a `set -m` subshell, so it leads its
-# own process group, and a timeout signals that whole group (TERM, then
-# KILL) so no descendant outlives the run (#136).
+# timeout(1) on macOS base), snapshots before and after. Outside a git work
+# tree the block does not run: a mutation check that cannot happen fails
+# closed. The block is a job of a `set -m` subshell, so it leads its own
+# process group. A timeout stops that whole group (#136); so does the end
+# of every block, and a block that leaves a process running past a short
+# grace fails (#164): a late write would land after the snapshot. A child
+# that calls setsid leaves the group and is out of reach.
+# The previous block's after-snapshot is reused as this block's before-
+# snapshot (SPEC_SNAP_PREV), since the gate writes nothing in between.
 # Returns 0 pass, 1 fail, 2 timeout, 3 mutation; detail in SPEC_BLOCK_DETAIL.
 gates_spec_run_block() { # <cmdfile> <timeout-s> <root> <outfile>
     local cmdfile="$1" timeout="$2" root="$3" outfile="$4"
-    local snap="$outfile.snap" marker="$outfile.timedout"
+    local marker="$outfile.timedout" leftover="$outfile.leftover"
+    local before="$outfile.before" after="$outfile.after" mark gitdir
     SPEC_BLOCK_DETAIL=""
     : >"$outfile"
     if [[ "$(git -C "$root" rev-parse --is-inside-work-tree 2>/dev/null)" != "true" ]]; then
+        SPEC_SNAP_PREV=""
         SPEC_BLOCK_DETAIL="cannot check for mutations: not a git work tree"
         return 1
     fi
-    local before="" after=""
-    if ! before="$(gates_spec_snapshot "$root" "$snap")"; then
-        SPEC_BLOCK_DETAIL="cannot check for mutations: git status failed"
+    if [[ -n "${SPEC_SNAP_PREV:-}" && -f "$SPEC_SNAP_PREV" ]]; then
+        before="$SPEC_SNAP_PREV"
+    elif ! gates_spec_snapshot "$root" "$before"; then
+        SPEC_BLOCK_DETAIL="cannot check for mutations: git snapshot failed"
         return 1
     fi
-    rm -f "$marker"
+    SPEC_SNAP_PREV=""
+    # The ctime marker lives in the git dir, on the repository's own
+    # filesystem, so it shares the timestamp resolution of what it guards.
+    gitdir="$(git -C "$root" rev-parse --absolute-git-dir 2>/dev/null || true)"
+    mark="$gitdir/gates-spec-mark.$$"
+    if [[ -z "$gitdir" ]] || ! gates_spec_mark "$mark"; then
+        mark="$outfile.mark"
+        gates_spec_mark "$mark"
+    fi
+    rm -f "$marker" "$leftover"
     local rc=0
     # The watchdog gets /dev/null stdio: it (and its sleep) must not hold
     # inherited fds, or a block that captures a nested verify.sh via $()
@@ -272,13 +474,7 @@ gates_spec_run_block() { # <cmdfile> <timeout-s> <root> <outfile>
         (
             sleep "$timeout"
             : >"$marker"
-            kill -TERM -- -"$pid" 2>/dev/null
-            n=0
-            while [[ $n -lt 20 ]] && kill -0 -- -"$pid" 2>/dev/null; do
-                sleep 0.1
-                n=$((n + 1))
-            done
-            kill -KILL -- -"$pid" 2>/dev/null
+            gates_spec_group_stop "$pid"
         ) >/dev/null 2>&1 </dev/null &
         watcher=$!
         brc=0
@@ -288,32 +484,49 @@ gates_spec_run_block() { # <cmdfile> <timeout-s> <root> <outfile>
         else
             kill -TERM -- -"$watcher" 2>/dev/null
             wait "$watcher" 2>/dev/null
+            # A child that is already on its way out (the block killed it
+            # without waiting) gets half a second before it counts.
+            n=0
+            while [[ $n -lt 5 ]] && gates_spec_group_alive "$pid"; do
+                sleep 0.1
+                n=$((n + 1))
+            done
+            if gates_spec_group_alive "$pid"; then
+                : >"$leftover"
+                gates_spec_group_stop "$pid"
+            fi
         fi
         exit "$brc"
     ) 2>/dev/null || rc=$?
     if [[ -f "$marker" ]]; then
-        rm -f "$marker" "$snap"
+        rm -f "$marker" "$leftover" "$mark"
         SPEC_BLOCK_DETAIL="timeout after ${timeout}s"
         return 2
     fi
     if [[ "$rc" -ne 0 ]]; then
-        rm -f "$snap"
         SPEC_BLOCK_DETAIL="exit $rc"
+        [[ -f "$leftover" ]] && SPEC_BLOCK_DETAIL="exit $rc; left a process running (stopped)"
+        rm -f "$leftover" "$mark"
         return 1
     fi
-    if ! after="$(gates_spec_snapshot "$root" "$snap")"; then
-        rm -f "$snap"
-        SPEC_BLOCK_DETAIL="cannot check for mutations: git status failed"
+    if [[ -f "$leftover" ]]; then
+        rm -f "$leftover" "$mark"
+        SPEC_BLOCK_DETAIL="left a process running after it exited (stopped)"
         return 1
     fi
-    rm -f "$snap"
-    if [[ "$before" != "$after" ]]; then
-        local changed
-        changed="$({
-            printf '%s\n' "$before"
-            printf '%s\n' "$after"
-        } | grep -v '^$' | sort | uniq -u | cut -f3 | sort -u | tr '\n' ' ')"
-        SPEC_BLOCK_DETAIL="working tree modified: ${changed% }"
+    if ! gates_spec_snapshot "$root" "$after"; then
+        rm -f "$mark"
+        SPEC_BLOCK_DETAIL="cannot check for mutations: git snapshot failed"
+        return 1
+    fi
+    {
+        sort "$before" "$after" | uniq -u | cut -f1,3
+        gates_spec_ignored_writes "$root" "$after" "$mark"
+    } | sort -u >"$outfile.changes"
+    rm -f "$mark"
+    SPEC_SNAP_PREV="$after"
+    if [[ -s "$outfile.changes" ]]; then
+        SPEC_BLOCK_DETAIL="$(gates_spec_change_detail "$outfile.changes")"
         return 3
     fi
     return 0
@@ -339,6 +552,9 @@ gates_spec_gate() { # <root> <accept-arg> <json 0|1>
     local timeout
     timeout="$(gates_policy_section_get spec timeout_s)"
     [[ -z "$timeout" ]] && timeout=30
+    SPEC_SNAP_PREV=""
+    GATES_SPEC_SNAPSHOT_EXCLUDE="$GATES_SPEC_SNAPSHOT_BUILTIN_EXCLUDE
+$(gates_policy_section_list spec snapshot_exclude)"
     local tmp
     if ! tmp="$(mktemp -d 2>/dev/null || mktemp -d -t gates-spec)"; then
         SPEC_RESULT="fail"
