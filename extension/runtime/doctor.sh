@@ -11,34 +11,52 @@ set -uo pipefail
 #
 # Exit 0 = everything required (incl. policy-enabled linters) is present.
 # Exit 1 = something required is missing.
+# Exit 2 = usage error (an unknown option): nothing was checked.
 #
 # --ci leaves out what only a developer clone has: the git hook stubs in
 # .git/hooks (CI never installs them) and the git boundary checks. Every
 # other check runs, so a CI step can run doctor (#148).
+#
+# Options go in any order: --installed-only, --ci, --probe-git; or
+# --canary, which runs the canary suite and passes it every other
+# argument (canary.sh's --json, --only <ids>). An unknown option is a
+# usage error, never a plain run that reads as a pass (#203).
+
+usage() {
+    echo "doctor: $*" >&2
+    echo "usage: doctor.sh [--installed-only] [--ci] [--probe-git] | doctor.sh --canary [canary.sh options]" >&2
+    exit 2
+}
+INSTALLED_ONLY=0
+PROBE_GIT=0
+CI_MODE=0
+CANARY=0
+DOCTOR_FLAGS=""
+OTHER_ARGS=()
+for _a in "$@"; do
+    case "$_a" in
+        --installed-only) INSTALLED_ONLY=1 DOCTOR_FLAGS="$DOCTOR_FLAGS $_a" ;;
+        --ci) CI_MODE=1 DOCTOR_FLAGS="$DOCTOR_FLAGS $_a" ;;
+        # Run hooks another tool owns too (their own steps run with them).
+        --probe-git) PROBE_GIT=1 DOCTOR_FLAGS="$DOCTOR_FLAGS $_a" ;;
+        --canary) CANARY=1 ;;
+        *) OTHER_ARGS+=("$_a") ;;
+    esac
+done
 
 # --canary delegates to the canary suite (projected as a sibling of this
-# script), propagating its exit code and output.
-if [[ "${1:-}" == "--canary" ]]; then
-    shift
+# script), propagating its exit code and output; canary.sh judges its own
+# options.
+if [[ "$CANARY" -eq 1 ]]; then
+    [[ -z "$DOCTOR_FLAGS" ]] || usage "--canary runs only the canary suite; it takes none of:$DOCTOR_FLAGS"
     CANARY_SH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/canary.sh"
     if [[ ! -f "$CANARY_SH" ]]; then
         echo "doctor: canary.sh not found next to doctor.sh — re-project the runtime (/speckit.gates.init)" >&2
         exit 1
     fi
-    exec bash "$CANARY_SH" "$@"
+    exec bash "$CANARY_SH" ${OTHER_ARGS[@]+"${OTHER_ARGS[@]}"}
 fi
-
-INSTALLED_ONLY=0
-PROBE_GIT=0
-CI_MODE=0
-for _a in "$@"; do
-    case "$_a" in
-        --installed-only) INSTALLED_ONLY=1 ;;
-        --ci) CI_MODE=1 ;;
-        # Run hooks another tool owns too (their own steps run with them).
-        --probe-git) PROBE_GIT=1 ;;
-    esac
-done
+[[ "${#OTHER_ARGS[@]}" -eq 0 ]] || usage "unknown option: ${OTHER_ARGS[0]}"
 
 PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 GATES_LIB_DIR="$PROJECT_ROOT/.specify/gates/lib"
@@ -79,6 +97,14 @@ SKIP="  [--]  "
 have() { command -v "$1" >/dev/null 2>&1; }
 
 INSTALL_HINT="apt-get install, apk add, brew install"
+
+# How to finish a half-done upgrade. A runtime projected by 0.3.x has no
+# .specify/gates/project.sh to ask (#203).
+if [[ -f "$PROJECT_ROOT/.specify/gates/project.sh" ]]; then
+    FINISH_HINT="bash .specify/gates/project.sh --check prints the finishing command"
+else
+    FINISH_HINT="finish it: specify extension add gates --from <the versioned release URL> (README \"Upgrade\"), then bash .specify/extensions/gates/runtime/project.sh"
+fi
 
 # Tools project.sh and the gates cannot run without, shared by the full
 # run and --installed-only (#122): each missing one is named with what it
@@ -200,7 +226,7 @@ if [[ "$INSTALLED_ONLY" -eq 1 ]]; then
         dormant) echo "${OK}gates $IVER installed; the runtime is not projected yet (bash .specify/extensions/gates/runtime/project.sh)" ;;
         dev) echo "${OK}gates $IVER installed" ;;
         removed)
-            echo "${BAD}the extension is not installed, but .specify/gates/ is projected — a half-done upgrade (bash .specify/gates/project.sh --check prints the finishing command)"
+            echo "${BAD}the extension is not installed, but .specify/gates/ is projected — a half-done upgrade ($FINISH_HINT)"
             MISSING=$((MISSING + 1))
             ;;
         mismatch)
@@ -368,7 +394,7 @@ if declare -f gates_install_state >/dev/null 2>&1 && [[ -d "$PROJECT_ROOT/.speci
     case "$(gates_install_state "$PROJECT_ROOT")" in
         removed)
             echo ""
-            echo "${BAD}the gates extension was removed but not added back (half-done upgrade) — bash .specify/gates/project.sh --check prints the finishing command"
+            echo "${BAD}the gates extension was removed but not added back (half-done upgrade) — $FINISH_HINT"
             MISSING=$((MISSING + 1))
             ;;
         mismatch)
@@ -442,11 +468,14 @@ if declare -f gates_ci_missing >/dev/null 2>&1 && [[ -d "$PROJECT_ROOT/.specify/
             # Without the installed table, the projected trees stand in for it.
             hown="$hsrc"
             [[ -z "$HTABLE" ]] && case "$hp" in .specify/gates/* | .claude/hooks/gates/*) hown=1 ;; esac
-            if [[ -n "$hown" && ! -e "$PROJECT_ROOT/$hp" ]]; then
+            if [[ -n "$hown" && ! -s "$PROJECT_ROOT/$hp" ]]; then
                 # A held deletion (#168): the hook, gate or canary that runs
                 # this file is off, and a missing agent hook exits 127,
-                # which Claude Code does not treat as a block.
-                echo "${BAD}held file is missing: $hp — a deletion cannot be held; the check that runs it is off. Restore it: bash .specify/extensions/gates/runtime/project.sh --take-upstream $hp"
+                # which Claude Code does not treat as a block. A file
+                # emptied to 0 bytes is the same disablement (#203).
+                hgone="missing"
+                [[ -e "$PROJECT_ROOT/$hp" ]] && hgone="empty"
+                echo "${BAD}held file is $hgone: $hp — a deletion cannot be held; the check that runs it is off. Restore it: bash .specify/extensions/gates/runtime/project.sh --take-upstream $hp"
                 MISSING=$((MISSING + 1))
                 continue
             fi
@@ -646,9 +675,16 @@ fi
 # (#167: its install command never ran); hooks that were never wired get a
 # [rec] nudge only (agent+CI-only repos are a legitimate setup). Zip installs drop execute bits (Python extraction),
 # which is exactly how downstream repos end up in the gap state.
+DOC_GITERR="$(git -C "$PROJECT_ROOT" rev-parse --git-dir 2>&1 >/dev/null)" || true
 if [[ "$CI_MODE" -eq 1 ]]; then
     echo ""
     echo "${SKIP}git boundary not checked (--ci: git hooks exist only in a developer clone)"
+elif grep -q 'dubious ownership' <<<"$DOC_GITERR"; then
+    # git refuses a repository another user owns (#203): no hook can be
+    # read or proven, and skipping the section would hide why.
+    echo ""
+    echo "${BAD}git boundary not checked: git refuses this repository (dubious ownership: another user owns it). If you trust it: git config --global --add safe.directory '$PROJECT_ROOT'"
+    MISSING=$((MISSING + 1))
 elif git -C "$PROJECT_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
     echo ""
     echo "Git boundary (hooks git actually runs):"

@@ -296,6 +296,17 @@ if (cd "$IW/asset" && tar -cJf "$IW/good.tar.xz" shellcheck-v9.9.9) 2>/dev/null 
         "$(wc -l <"$IW/proj/.specify/gates/shellcheck.sha256" | tr -d ' ')" "2"
     expect "--update refuses a download that differs from the published digest" \
         "$(inst Linux x86_64 "$IW/evil.tar.xz" --update)" "1"
+    # Releases before v0.11.0 carry no GitHub digests (#203): the refusal
+    # names the limit and the by-hand pin file.
+    jq '.assets[] |= del(.digest)' "$IW/release.json" >"$IW/release.nodigest" \
+        && mv "$IW/release.nodigest" "$IW/release.json"
+    expect "--update on a release without digests: refused" "$(inst Linux x86_64 "$IW/good.tar.xz" --update)" "1"
+    expect "--update without digests: names the v0.11.0 limit" \
+        "$(grep -c 'GitHub publishes asset digests only from shellcheck v0.11.0 on' "$IW/out")" "1"
+    expect "--update without digests: names the by-hand pin file" \
+        "$(grep -c "lines to $IW/proj/.specify/gates/shellcheck.local.sha256" "$IW/out")" "1"
+    jq -n --arg d "sha256:$GOOD_SHA" '{assets: [("darwin.aarch64", "darwin.x86_64", "linux.aarch64", "linux.x86_64")
+        | {name: "shellcheck-v9.9.9.\(.).tar.xz", digest: $d}]}' >"$IW/release.json"
 
     # Run from the packaging source (#159): the installer in
     # extension/runtime/ of a git work tree, no CLAUDE_PROJECT_DIR, started

@@ -832,7 +832,9 @@ ran is the CI run's own log: `verify.sh` prints a
 Spec Kit's `extension remove` and `extension add` are two commands, not a
 transaction. If the `add` fails, the projected copy of `project.sh`
 (`.specify/gates/project.sh --check`) reports the half-done upgrade and the
-command that finishes it, and doctor fails until it is done. A
+command that finishes it, and doctor fails until it is done. A 0.3.x
+projection has no projected `project.sh`: re-run the `add`, then the
+installed `project.sh`. A
 `specify extension add --dev` install renders the gates skills as symlinks
 that exist only on the author's machine; doctor fails on symlinked,
 dangling or missing skills. `doctor --installed-only`, run from the

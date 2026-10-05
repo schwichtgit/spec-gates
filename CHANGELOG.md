@@ -711,6 +711,20 @@ false`, pre-commit refused the protected artifacts outright; it now
   `_`-prefixed keys are not an enforcement delta, and no `Source:` line
   exceeds 100 characters. The release workflow probes the git hooks and
   the shellcheck installer.
+- **Small install findings** (#203). doctor refuses an unknown option
+  (exit 2) instead of running a plain check, and takes its options in any
+  order; `--canary` passes the rest to `canary.sh` and refuses doctor's
+  own options. `project.sh --check` now fails, as the full run does, on a
+  hook manager whose hooks were never installed, and both fail on a stale
+  hold. A held file emptied to 0 bytes is treated like a held deletion. A
+  repository git refuses for dubious ownership is named as such, with the
+  `safe.directory` fix, and fails. Under lefthook adopted after the gates
+  stubs, `project.sh` names the hooks whose stub still runs apart from
+  those that run no gates. For a 0.3.x projection, which has no
+  `.specify/gates/project.sh`, the half-done-upgrade advice names the add
+  command. `install-shellcheck.sh --update` cannot pin releases before
+  v0.11.0 (they carry no GitHub digests); this limit is documented, and
+  the refusal names the by-hand pin file.
 
 ## 0.3.6 — 2026-10-02
 

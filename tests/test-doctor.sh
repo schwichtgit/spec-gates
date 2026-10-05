@@ -668,6 +668,12 @@ rc=0
 CLAUDE_PROJECT_DIR="$U" bash "$U/.specify/gates/doctor.sh" --ci >"$U/out.txt" 2>&1 || rc=$?
 has "--ci: a held deletion fails" "$U" "[MISSING] held file is missing: .claude/hooks/gates/protect-files.sh"
 expect "doctor --ci exits 1 on a held deletion" "$rc" "1"
+# A held file emptied to 0 bytes is the same disablement (#203).
+: >"$U/.claude/hooks/gates/protect-files.sh"
+rc="$(run_doctor "$U")"
+has "a held empty file fails" "$U" "[MISSING] held file is empty: .claude/hooks/gates/protect-files.sh"
+lacks "the empty file is not reported as kept" "$U" "held: .claude/hooks/gates/protect-files.sh"
+expect "doctor exits 1 on a held empty file" "$rc" "1"
 mv "$U/pf.sh.bak" "$U/.claude/hooks/gates/protect-files.sh"
 rm -f "$U/.specify/gates/.upgrade-holds"
 mkdir -p "$U/.github/workflows"
@@ -1196,6 +1202,13 @@ OUT_IO="$(CLAUDE_PROJECT_DIR="$DOR" bash "$DOR/.specify/gates/doctor.sh" --insta
 expect "--installed-only on a removed extension exits 1" "$rc" "1"
 run_doctor "$DOR" >/dev/null
 has "the full run names the half-done upgrade" "$DOR" "[MISSING] the gates extension was removed but not added back"
+# 0.3.x never projected project.sh, so `project.sh --check` would exit
+# 127 there: doctor names the add command instead (#203).
+has "without a projected project.sh, the add command is named" "$DOR" "finish it: specify extension add gates --from"
+lacks "without a projected project.sh, no project.sh --check advice" "$DOR" "project.sh --check prints"
+cp "$REPO_ROOT/extension/runtime/project.sh" "$DOR/.specify/gates/"
+run_doctor "$DOR" >/dev/null
+has "with a projected project.sh, --check is the advice" "$DOR" "bash .specify/gates/project.sh --check prints the finishing command"
 fx_cleanup "$DOR"
 
 echo ""
@@ -1264,6 +1277,49 @@ expect "no git, cmp or SHA-256 tool: doctor fails" "$rc" 1
 has "no git: install hint" "$DNT" "[MISSING] git — not installed"
 has "no cmp: named" "$DNT" "[MISSING] cmp — not installed"
 has "no SHA-256 tool: named" "$DNT" "[MISSING] sha256sum or shasum — neither is installed"
+
+echo ""
+echo "=== options: unknown ones refused, any order (#203) ==="
+DFL="$WORKDIR/flags"
+project "$DFL" '{ "hooks": {} }' no
+# A stand-in canary suite that shows what it was given.
+printf '#!/bin/bash\necho "canary-args:$*"\nexit 7\n' >"$DFL/.specify/gates/canary.sh"
+doc_flags() { # <args...> -> exit code; output in $DFL/out.txt
+    local rc=0
+    CLAUDE_PROJECT_DIR="$DFL" bash "$DFL/.specify/gates/doctor.sh" "$@" >"$DFL/out.txt" 2>&1 || rc=$?
+    echo "$rc"
+}
+for bad in --canry --probe-gti -x; do
+    expect "$bad: usage error" "$(doc_flags "$bad")" "2"
+    has "$bad: named as an unknown option" "$DFL" "doctor: unknown option: $bad"
+    lacks "$bad: no checks ran" "$DFL" "=== spec-gates doctor"
+done
+expect "an unknown option after a known one: usage error" "$(doc_flags --ci --bogus)" "2"
+expect "--canary first: the canary suite runs" "$(doc_flags --canary)" "7"
+expect "--canary after canary options: the canary suite runs" "$(doc_flags --only bash --canary)" "7"
+has "--canary passes canary.sh its options" "$DFL" "canary-args:--only bash"
+expect "--ci --canary --probe-git: refused, not a plain run" "$(doc_flags --ci --canary --probe-git)" "2"
+has "the refusal names the doctor options" "$DFL" "it takes none of: --ci --probe-git"
+lacks "and runs no canary" "$DFL" "canary-args:"
+doc_flags --ci --probe-git >/dev/null
+has "--ci --probe-git: --ci honoured" "$DFL" "git boundary not checked (--ci"
+doc_flags --probe-git --ci >/dev/null
+has "--probe-git --ci: --ci honoured" "$DFL" "git boundary not checked (--ci"
+
+echo ""
+echo "=== git refuses the repository: dubious ownership (#203) ==="
+DDB="$(fx_project)"
+(cd "$DDB" && GATES_TEST=1 bash .specify/extensions/gates/runtime/project.sh --skip-canary >/dev/null 2>&1)
+if ! (cd "$DDB" && GIT_TEST_ASSUME_DIFFERENT_OWNER=1 git rev-parse --git-dir >/dev/null 2>&1); then
+    rc=0
+    (cd "$DDB" && GIT_TEST_ASSUME_DIFFERENT_OWNER=1 CLAUDE_PROJECT_DIR="$DDB" bash .specify/gates/doctor.sh) >"$DDB/out.txt" 2>&1 || rc=$?
+    has "dubious ownership: the cause is named" "$DDB" "[MISSING] git boundary not checked: git refuses this repository (dubious ownership"
+    has "dubious ownership: the fix is printed" "$DDB" "git config --global --add safe.directory '$DDB'"
+    expect "dubious ownership: doctor exits 1" "$rc" "1"
+else
+    echo "SKIP: this git ignores GIT_TEST_ASSUME_DIFFERENT_OWNER"
+fi
+fx_cleanup "$DDB"
 echo ""
 [[ "$SKIPPED" -gt 0 ]] && echo "$SKIPPED healthy-fixture case(s) skipped: this host lacks tools doctor requires."
 echo "$PASS of $TOTAL tests passed."

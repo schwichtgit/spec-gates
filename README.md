@@ -285,6 +285,9 @@ its enforcement frontmatter — one registry, two consumers.
   `bash .specify/gates/install-shellcheck.sh` (Linux and macOS, x86_64
   and aarch64); for a version spec-gates ships no checksums for, run it
   with `--update` and commit `.specify/gates/shellcheck.local.sha256`.
+  `--update` reads GitHub's asset digests, which shellcheck releases carry
+  only from v0.11.0 on; for an older version, add the checksums to that
+  file by hand, from assets you verified another way.
 - **Claude Code** for the agent boundary. The git and CI boundaries are
   agent-agnostic.
 
@@ -372,7 +375,9 @@ signature, and it downloads the zip itself, so steps 2 and 4 are what tie
 the installed files to a verified release. Step 3 is two commands, not
 one transaction: if the `add` fails, the projected runtime keeps working,
 and `bash .specify/gates/project.sh --check` prints the command that
-finishes the upgrade.
+finishes the upgrade. A runtime projected by 0.3.x has no
+`.specify/gates/project.sh`; there, re-run the `specify extension add`
+command, then step 5.
 
 **No cosign on this machine** (a locked-down workstation, say): the
 checksum check is still required, and the signature can be checked

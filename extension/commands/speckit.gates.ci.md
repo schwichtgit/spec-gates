@@ -77,7 +77,9 @@ create`; GitLab: `glab repo create` or the web UI; Jenkins: the SCM
      `bash .specify/gates/install-shellcheck.sh --update`, which reads the
      release's published digests, checks them against a download, and
      writes `.specify/gates/shellcheck.local.sha256` (commit it; upgrades
-     never touch it).
+     never touch it). shellcheck releases carry those digests only from
+     v0.11.0 on; for an older version `--update` refuses, and the
+     checksums go into that file by hand.
 
    When merging into an existing pipeline, keep these install steps. The
    `canary.sh` step fails when a linter the policy enables is not

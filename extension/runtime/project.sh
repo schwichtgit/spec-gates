@@ -168,9 +168,10 @@ while IFS=$'\t' read -r s r; do
     if inlist "$KEEP" "$r" && [[ "$st" != "held" ]]; then
         # A deletion is never held (#168): every projected file is run or
         # read by a hook, a gate, the canary suite or CI, and a missing
-        # hook exits 127, which Claude Code treats as non-blocking.
-        [[ -e "$ROOT/$r" ]] \
-            || refuse "--keep-local $r: there is no local file to keep. A deletion cannot be held:" \
+        # hook exits 127, which Claude Code treats as non-blocking. A file
+        # emptied to 0 bytes turns the check off the same way (#203).
+        [[ -s "$ROOT/$r" ]] \
+            || refuse "--keep-local $r: there is no local file to keep (it is missing or empty). A deletion cannot be held, and an empty file is one:" \
                 "every projected file is run by a hook, a gate, the canary suite or CI, and without it that check is off." \
                 "Restore it with --take-upstream $r (or opt out of a whole boundary with --no-agent-hooks / --no-git-hooks)."
         st=edited
@@ -185,8 +186,9 @@ while IFS=$'\t' read -r s r; do
         absent | pristine) WRITES="$(addline "$WRITES" "$s"$'\t'"$r")" ;;
         held)
             HELD="$(addline "$HELD" "$r")"
-            # A holds file written before #168 may hold a deletion.
-            [[ -e "$ROOT/$r" ]] || HELDGONE="$(addline "$HELDGONE" "$r")"
+            # A holds file written before #168 may hold a deletion, or a
+            # file emptied after the hold was taken (#203).
+            [[ -s "$ROOT/$r" ]] || HELDGONE="$(addline "$HELDGONE" "$r")"
             cmp -s "$SRC/$s" "$ROOT/$r" && STALE="$(addline "$STALE" "$r")"
             ;;
         edited)
@@ -285,14 +287,23 @@ fi
 # pre-commit framework) gets the gates entry in its own configuration --
 # never in the files it generates -- and only with --wire-manager.
 # Anything else that owns the hooks gets the call-through printed.
-HOOKPLAN="" LEGACYPLAN="" FOREIGN="" GITNOTE="" NOGIT=0 MANAGER="" MGRPLAN="" MGRAPPLY="" MGRMANUAL="" MGRDONE=""
+HOOKPLAN="" LEGACYPLAN="" FOREIGN="" GITNOTE="" NOGIT=0 GITREFUSED=0 MANAGER="" MGRPLAN="" MGRAPPLY="" MGRMANUAL="" MGRDONE=""
+MGRINSTALL=""
 STUB="$SRC/hooks/git/stub.sh"
 if [[ "$GITHOOKS" -eq 1 ]]; then
     if ! command -v git >/dev/null 2>&1; then
         GITNOTE="git is not installed: the git boundary is not wired. Install git and run this again."
         NOGIT=1
-    elif ! git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-        GITNOTE="not a git work tree: the git boundary is not wired. Run this again after git init."
+    elif ! GITERR="$(git -C "$ROOT" rev-parse --is-inside-work-tree 2>&1 >/dev/null)"; then
+        if grep -q 'dubious ownership' <<<"$GITERR"; then
+            # A repository owned by another user (#203): git refuses it, so
+            # it is no greenfield. Name the cause; the boundary is unwired.
+            GITREPO="$(sed -n "s/.*dubious ownership in repository at '\(.*\)'.*/\1/p" <<<"$GITERR")"
+            GITNOTE="git refuses this repository: dubious ownership (another user owns ${GITREPO:-$ROOT}), so the git boundary is not wired. If you trust it, run: git config --global --add safe.directory '${GITREPO:-$ROOT}', then run this again."
+            GITREFUSED=1
+        else
+            GITNOTE="not a git work tree: the git boundary is not wired. Run this again after git init."
+        fi
     else
         HOOKSDIR="$(cd "$ROOT" && git rev-parse --git-path hooks)"
         [[ "$HOOKSDIR" == /* ]] || HOOKSDIR="$ROOT/$HOOKSDIR"
@@ -322,6 +333,11 @@ if [[ "$GITHOOKS" -eq 1 ]]; then
                             MGRMANUAL="$(addline "$MGRMANUAL" "$n")"
                         fi
                     fi
+                elif [[ ! -e "$f" ]]; then
+                    # Wired, but the manager's install command has not
+                    # generated the hook (#148): pending, in --check too
+                    # (#203).
+                    MGRINSTALL="$(addline "$MGRINSTALL" "$n")"
                 fi
             elif [[ "$MANAGER" == "unknown" ]]; then
                 if ! gates_calls_through "$f" "$n"; then
@@ -415,13 +431,15 @@ report_side() {
         printf '%s\n' "$HELD" | sed 's/^/project:   /'
     fi
     if [[ -n "$HELDGONE" ]]; then
-        say "FAILED: held files that do not exist (a deletion cannot be held; the hook, gate or canary that runs it is off):" >&2
+        say "FAILED: held files that do not exist or are empty (a deletion cannot be held; the hook, gate or canary that runs it is off):" >&2
         printf '%s\n' "$HELDGONE" | sed 's/^/project:   /' >&2
         say "  restore each with: bash .specify/extensions/gates/runtime/project.sh --take-upstream <path>" >&2
     fi
+    # A stale hold keeps upgrades from updating the file; doctor fails on
+    # it, so this run does too (#203).
     if [[ -n "$STALE" ]]; then
-        say "stale holds (the held file now equals $VERSION; remove the line from $GATES_HOLDS_REL):"
-        printf '%s\n' "$STALE" | sed 's/^/project:   /'
+        say "FAILED: stale holds (the held file now equals $VERSION, so upgrades would never update it; remove the line from $GATES_HOLDS_REL):" >&2
+        printf '%s\n' "$STALE" | sed 's/^/project:   /' >&2
     fi
     if [[ -n "$LINT_MISSING" && "$LINTIGN" -eq 0 ]]; then
         say "this repo runs prettier, and .prettierignore does not exclude (upgrades overwrite these, so local formatting is lost):"
@@ -436,9 +454,21 @@ report_side() {
         say "  add them from .specify/extensions/gates/ci/, or record a deliberate omission as ci:<step> in $GATES_HOLDS_REL"
     fi
     [[ -n "$GITNOTE" ]] && say "$GITNOTE"
-    local n mf
+    local n mf notrun="" stubrun=""
     if [[ "$WIREMGR" -eq 0 && -n "$MGRPLAN" ]]; then
-        say "$MANAGER owns the git hooks and does not run gates for: $(printf '%s' "$MGRPLAN" | tr '\n' ' ')"
+        # Before the manager's install command replaces them, the gates
+        # stubs still run (#203): name those apart, so the summary does
+        # not claim a hook runs no gates when it does today.
+        for n in $MGRPLAN; do
+            if [[ "$(gates_hook_owner "$ROOT" "$n")" == "gates" ]]; then
+                stubrun="$stubrun $n"
+            else
+                notrun="$notrun $n"
+            fi
+        done
+        [[ -n "$notrun" ]] && say "$MANAGER owns the git hooks and does not run gates for:$notrun"
+        [[ -n "$stubrun" ]] \
+            && say "$(gates_manager_file "$ROOT" "$MANAGER" pre-commit) has no gates entry for:$stubrun (git still runs the gates stub for them, until $MANAGER's install command replaces it)"
         for n in $MGRPLAN; do
             mf="$(gates_manager_file "$ROOT" "$MANAGER" "$n")"
             if gates_manager_appendable "$ROOT" "$MANAGER" "$n"; then
@@ -485,9 +515,16 @@ if [[ "$DRY" -eq 1 ]]; then
         printf '%s\n' "$CHANGES" | sed 's/^/project:   /'
     fi
     report_side
+    # The same pending state the full run reports in its proof (#203).
+    for n in $MGRINSTALL; do
+        say "pending: $(gates_manager_file "$ROOT" "$MANAGER" "$n") calls the gates $n hook, but git runs no $n hook until you run \`$(gates_manager_install_hint "$MANAGER" "$n")\`"
+    done
     # An unwired git hook is pending work too, even when no file changes;
-    # so is a git boundary left unwired because git is missing (#172).
-    if [[ "$CHECK" -eq 1 ]] && [[ -n "$CHANGES" || -n "$FOREIGN" || -n "$MGRPLAN" || -n "$HELDGONE" || "$NOGIT" -eq 1 ]]; then exit 1; fi
+    # so is a git boundary left unwired because git is missing (#172) or
+    # refuses the repository, a hook the manager has not generated yet
+    # and a stale or emptied hold (#203).
+    if [[ "$CHECK" -eq 1 ]] && [[ -n "$CHANGES" || -n "$FOREIGN" || -n "$MGRPLAN" || -n "$MGRINSTALL" \
+        || -n "$HELDGONE" || -n "$STALE" || "$NOGIT" -eq 1 || "$GITREFUSED" -eq 1 ]]; then exit 1; fi
     exit 0
 fi
 
@@ -604,5 +641,5 @@ if [[ "$GITHOOKS" -eq 1 && -z "$GITNOTE" && -z "$FOREIGN" && -z "$MGRPENDING" ]]
         fi
     done
 fi
-[[ -n "$FOREIGN" || -n "$MGRPENDING" || -n "$HELDGONE" ]] && RC=1
+[[ -n "$FOREIGN" || -n "$MGRPENDING" || -n "$HELDGONE" || -n "$STALE" || "$GITREFUSED" -eq 1 ]] && RC=1
 exit "$RC"

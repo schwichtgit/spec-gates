@@ -43,7 +43,9 @@ the half-done diagnosis are possible; it never writes.
    after step 7. `unknown` → print the call-through, exit 1 after step 7.
 6. Write the manifest (atomic), then append holds for `--keep-local`.
 7. Report: policy notices (absent defaulted schema properties), missing
-   lint ignores, CI drift, holds.
+   lint ignores, CI drift, holds. A stale hold, or a held file that is
+   missing or empty, → exit 1 (in `--check` too, as are a manager hook
+   not yet installed and a repository git refuses).
 8. Prove: `canary.sh` (all) and the git probe (contracts/hooks.md).
    Any failure → exit 1 naming the canary or hook.
 

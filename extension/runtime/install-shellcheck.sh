@@ -28,6 +28,9 @@ set -euo pipefail
 # --update reads each asset's digest from the GitHub release API and checks
 # it against a fresh download before writing, so pinning another version is
 # one reviewable change: .tool-versions plus shellcheck.local.sha256.
+# GitHub publishes those digests only from shellcheck v0.11.0 on, so an
+# older version cannot be pinned this way: --update fails, and its pins go
+# into shellcheck.local.sha256 by hand, from assets verified some other way.
 #
 # The project root is $CLAUDE_PROJECT_DIR when set, else the git work tree
 # this script sits in, else the working directory.
@@ -89,7 +92,10 @@ if [[ "${1:-}" == "--update" ]]; then
         asset="shellcheck-v$VERSION.$plat.tar.xz"
         digest="$(jq -r --arg a "$asset" '.assets[] | select(.name == $a) | .digest // empty' \
             "$TMP/release.json" | sed 's/^sha256://')"
-        [[ -n "$digest" ]] || die "no published digest for $asset"
+        # The shellcheck releases carry GitHub asset digests only from
+        # v0.11.0 on; nothing older can be pinned from the API (#203).
+        [[ -n "$digest" ]] \
+            || die "no published digest for $asset: GitHub publishes asset digests only from shellcheck v0.11.0 on, so --update cannot pin v$VERSION. Pin v0.11.0 or later, or verify the four assets yourself and add their '<sha256>  <asset>' lines to $LOCAL_SUMS"
         curl -fsSL -o "$TMP/$asset" "$BASE/$asset" || die "download of $asset failed"
         [[ "$(sha256 "$TMP/$asset")" == "$digest" ]] \
             || die "$asset does not match its published digest"

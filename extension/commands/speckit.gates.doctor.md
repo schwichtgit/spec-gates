@@ -25,6 +25,11 @@ the checking; this command runs it, shows the output, and explains it.
   projection as not current. `--ci` leaves out the git hook wiring and
   the git boundary section and runs every other check.
 - `--canary`: run the canary suite instead (`canary.sh`; same exit code).
+  Every other argument goes to `canary.sh` (`--json`, `--only <ids>`);
+  doctor's own options cannot be combined with it.
+
+Options go in any order. An unknown option is a usage error (exit 2) and
+nothing is checked.
 
 ## Steps
 
@@ -122,7 +127,8 @@ raw output. State whether enforcement is fully active at each boundary
 
 ## Exit codes
 
-`0` = healthy, `1` = at least one `[MISSING]` item. When doctor's output is
+`0` = healthy, `1` = at least one `[MISSING]` item, `2` = usage error
+(an unknown option). When doctor's output is
 piped through an early-closing consumer (`head`, `grep -q`), the shell may
 report exit `141` (SIGPIPE): standard pipe behavior, not a doctor verdict;
 run it unpiped for the meaningful exit code.
