@@ -183,9 +183,10 @@ fi
 
 # Bulk staging (#71): with policy git.block_bulk_staging on, refuse a
 # `git add` that stages everything or a whole directory, so an untracked
-# directory cannot be swept into a commit. Explicit files, -u and -p stay
-# allowed. Agent boundary only: pre-commit sees the index, not how it was
-# filled. bulk_staging_on: 0 on, 1 off, 2 the policy cannot be read.
+# directory cannot be swept into a commit, and the forms that stage every
+# tracked change (`git add -u`, `git commit -a`, #190). Explicit files and
+# -p stay allowed. Agent boundary only: pre-commit sees the index, not how
+# it was filled. bulk_staging_on: 0 on, 1 off, 2 the policy cannot be read.
 bulk_staging_on() {
     local pf="$LROOT/.specify/gates/policy.json" v
     [[ -f "$pf" ]] || return 1
@@ -202,9 +203,11 @@ bulk_staging_on() {
 # environment assignments, env, command, sudo, exec, nohup, time or nice,
 # and after git's global options (-C, -c, --no-pager, ...) -- and print one
 # finding per line:
-#   BULK <arg>   `git add`/`git stage` staging in bulk: -A, --all, `.`, a
-#                directory (quoted or not), "$PWD", a glob or a pathspec
-#                with magic (`:/`, `:(top)`), which git expands itself
+#   BULK <cmd>   `git add`/`git stage` staging in bulk: -A, --all, -u,
+#                --update, --renormalize, `.`, a directory (quoted or
+#                not), "$PWD", a glob or a pathspec with magic (`:/`,
+#                `:(top)`), which git expands itself; `git commit` with -a
+#                or --all
 #   BULKQ <arg>  an argument this check cannot resolve (an unbalanced quote,
 #                an escaped space, a variable or a command substitution)
 #   HOOKS <what> a git hook bypass: --no-verify, `commit -n`, a
@@ -229,7 +232,7 @@ bulk_staging_on() {
 # A `cd <dir>` segment moves the directory later relative paths resolve
 # against; a `cd` this cannot resolve makes them unknown too.
 git_scan() {
-    local seg t t2 q a base cdir sub n i dashdash xa whole staged wtree force seqoff
+    local seg t t2 q a v base cdir sub n i dashdash xa whole staged wtree force seqoff
     local hskip=""
     local scwd="$CWD"
     local asg='^[A-Za-z_][A-Za-z0-9_]*='
@@ -328,6 +331,43 @@ git_scan() {
                     --) dashdash=1; continue ;;
                     --no-veri*) printf 'HOOKS %s\n' "$a"; continue ;;
                 esac
+                # `-a` stages every tracked change (#190), also inside a
+                # cluster (`-am`), up to the first option that takes a
+                # value; the value itself (`-m "drop -a"`) is skipped.
+                if [[ "$sub" == commit && "$a" == -* ]]; then
+                    if [[ "$a" == --all ]] \
+                        || [[ "$a" != --* && "${a%%[mFcCtSu]*}" == *a* ]]; then
+                        printf 'BULK git commit %s\n' "$a"
+                    fi
+                    v=""
+                    case "$a" in
+                        --*=*) v="${a#*=}" ;;
+                        --message | --file | --reuse-message | --reedit-message | --template \
+                            | --author | --date | --fixup | --squash | --trailer | --cleanup)
+                            v="${w[i]:-}"
+                            i=$((i + 1))
+                            ;;
+                        --*) ;;
+                        *)
+                            t="${a#-}"
+                            t="${t#"${t%%[mFcCt]*}"}"
+                            if [[ "${#t}" -eq 1 ]]; then
+                                v="${w[i]:-}"
+                                i=$((i + 1))
+                            elif [[ -n "$t" ]]; then
+                                v="${t#?}"
+                            fi
+                            ;;
+                    esac
+                    # A quoted value the word split cut: skip to its end.
+                    while [[ "$i" -lt "$n" ]]; do
+                        t="${v//[!\"]/}"
+                        q="${v//[!\']/}"
+                        [[ $((${#t} % 2)) -ne 0 || $((${#q} % 2)) -ne 0 ]] || break
+                        v="$v ${w[i]}"
+                        i=$((i + 1))
+                    done
+                fi
                 # `-n` is --no-verify for commit, also inside a cluster
                 # (`-nm`), up to the first option that takes a value.
                 if [[ "$sub" == commit && "$a" == -* && "$a" != --* ]] \
@@ -427,13 +467,14 @@ git_scan() {
             [[ "$sub" == add || "$sub" == stage ]] || continue
             if [[ "$dashdash" -eq 0 ]]; then
                 case "$a" in
-                    -A | --all | --no-ignore-removal | --pathspec-from-file*)
-                        printf 'BULK %s\n' "$a"
+                    -A | --all | --no-ignore-removal | --pathspec-from-file* \
+                        | -u | --u* | --renormalize)
+                        printf 'BULK git %s %s\n' "$sub" "$a"
                         continue
                         ;;
                     --*) continue ;;
-                    -*A*)
-                        printf 'BULK %s\n' "$a"
+                    -*A* | -*u*)
+                        printf 'BULK git %s %s\n' "$sub" "$a"
                         continue
                         ;;
                     -*) continue ;;
@@ -458,7 +499,7 @@ git_scan() {
             # Pathspec magic (`:/`, `:(top)`, `:!x`): git expands it, and
             # the segment split may have cut it at the parenthesis.
             if [[ "$t" == :* ]]; then
-                printf 'BULK %s\n' "$a"
+                printf 'BULK git %s %s\n' "$sub" "$a"
                 continue
             fi
             q="${a//[!\"]/}"
@@ -471,15 +512,15 @@ git_scan() {
             # shellcheck disable=SC2016,SC2088
             case "$t" in
                 '$PWD' | '$PWD/'* | '${PWD}' | '${PWD}/'* | '~' | '~/'*)
-                    printf 'BULK %s\n' "$a"
+                    printf 'BULK git %s %s\n' "$sub" "$a"
                     ;;
                 *'$'* | *'`'* | *\\*) printf 'BULKQ %s\n' "$a" ;;
-                . | ./ | :* | */ | *[*?[]*) printf 'BULK %s\n' "$a" ;;
+                . | ./ | :* | */ | *[*?[]*) printf 'BULK git %s %s\n' "$sub" "$a" ;;
                 *)
                     if [[ -z "$base" && "$t" != /* ]]; then
                         printf 'BULKQ %s\n' "$a"
                     elif [[ "$t" == /* && -d "$t" ]] || [[ "$t" != /* && -d "$base/$t" ]]; then
-                        printf 'BULK %s\n' "$a"
+                        printf 'BULK git %s %s\n' "$sub" "$a"
                     fi
                     ;;
             esac
@@ -527,11 +568,11 @@ if [[ -z "$BLOCKED" ]] && grep -q '^BULK' <<<"$GIT_SCAN"; then
     BULK="$(awk '/^BULK / { sub(/^BULK /, ""); print; exit }' <<<"$GIT_SCAN")"
     BULKQ="$(awk '/^BULKQ / { sub(/^BULKQ /, ""); print; exit }' <<<"$GIT_SCAN")"
     if [[ "$rc" -eq 0 && -n "$BULK" ]]; then
-        BLOCKED="Bulk staging (git add $BULK) refused by policy git.block_bulk_staging; stage explicit paths"
+        BLOCKED="Bulk staging ($BULK) refused by policy git.block_bulk_staging; stage explicit paths"
     elif [[ "$rc" -eq 0 ]]; then
         defer_ask "git add $BULKQ may stage in bulk, which policy git.block_bulk_staging refuses, and this check cannot resolve the argument; confirm it names files"
     elif [[ "$rc" -eq 2 ]]; then
-        defer_ask "git add ${BULK:-$BULKQ} stages in bulk, and .specify/gates/policy.json cannot be read to check git.block_bulk_staging; run /speckit.gates.doctor"
+        defer_ask "${BULK:-git add $BULKQ} stages in bulk, and .specify/gates/policy.json cannot be read to check git.block_bulk_staging; run /speckit.gates.doctor"
     fi
 fi
 HOOKS="$(awk '/^HOOKS / { sub(/^HOOKS /, ""); print; exit }' <<<"$GIT_SCAN")"

@@ -182,6 +182,13 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   paths relative to the input `cwd` too, also under another spelling of
   the project root, and asks for any change made from inside a protected
   directory.
+- **Emoji are checked in the whole commit message; `git add -u` and
+  `git commit -a` count as bulk staging** (#190). commit-msg checked
+  emoji in the subject only; it now checks the body too, after dropping
+  comment lines and the scissors section. Behavior change: with
+  `git.block_bulk_staging` on, `git add -u`/`--update`,
+  `git add --renormalize` and `git commit -a`/`--all` (also `-am`) are
+  refused, since each stages every tracked change; they were allowed.
 - **Commits made without commit hooks ask first** (#187). Like
   `git revert`, the only one documented, `git cherry-pick`, `git rebase`
   and `git am` create commits without running `pre-commit` or

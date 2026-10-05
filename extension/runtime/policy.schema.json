@@ -89,7 +89,7 @@
           "type": "boolean",
           "default": false,
           "x-since": "0.4.0",
-          "description": "Refuse bulk staging at the agent boundary: git add -A / --all / . / :/ / *, or a directory argument. Explicit file paths, -u and -p stay allowed. The git boundary cannot tell how the index was filled, so this rule is agent-boundary only."
+          "description": "Refuse bulk staging at the agent boundary: git add -A / --all / -u / --update / --renormalize / . / :/ / *, a directory argument, or git commit -a / --all. Explicit file paths and -p stay allowed. The git boundary cannot tell how the index was filled, so this rule is agent-boundary only."
         },
         "ai_branding": {
           "type": "object",

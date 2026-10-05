@@ -445,9 +445,11 @@ Two settings in `.specify/gates/policy.json` cover the most common cases:
   `git -C <dir>`) at the agent boundary, so an untracked directory
   cannot be swept into a commit. `git stage`, `env git add`,
   `GIT_DIR=… git add` and `git --no-pager add` count too; an argument the
-  check cannot resolve (`"$f"`) asks. Explicit files, `-u` and `-p` stay
-  allowed. The git boundary cannot tell how files were staged, so this is
-  an agent-boundary rule.
+  check cannot resolve (`"$f"`) asks. The forms that stage every tracked
+  change count as well: `git add -u` (`--update`, also in a cluster such
+  as `-vu`), `git add --renormalize` and `git commit -a` (`--all`, `-am`).
+  Explicit files and `-p` stay allowed. The git boundary cannot tell how
+  files were staged, so this is an agent-boundary rule.
 - The file hook blocks only on strong evidence: `.env` files, keys and
   certificates (`*.pem`, `*.key`, `*.p12`, `*.jks`, `*.keystore`, …),
   exact credential file names (`credentials.json`, `.netrc`, `.pypirc`,
@@ -490,7 +492,8 @@ CI) apply the same rules, from `lib/message.sh`:
 - A Conventional Commits subject, at most 72 characters
   (`git.conventional_commits`).
 - No AI-isms and no self-referential phrasing (`git.forbid_ai_isms`), no
-  emoji.
+  emoji anywhere in the message, subject or body (comment lines and the
+  `git commit -v` diff below the scissors line are not part of it).
 - No AI branding: the terms in `git.ai_branding.terms` (default
   `Anthropic`, `GPT`, `OpenAI`, `Copilot`), and a standalone `Claude`.
   `Claude Code`, `CLAUDE.md`, `.claude/` paths and `claude-*`

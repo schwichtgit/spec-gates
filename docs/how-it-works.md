@@ -57,7 +57,9 @@ spec-gates uses four of them:
   `git stash clear`, `git clean` with `-f` or `--force` anywhere, …). With
   `git.block_bulk_staging` it also refuses bulk staging: `git add` or
   `git stage` with `-A` (also in a cluster such as `-vA`), `--all`,
-  `--no-ignore-removal`, `--pathspec-from-file`, `.`, `:/` and other
+  `--no-ignore-removal`, `--pathspec-from-file`, `-u`/`--update` and
+  `--renormalize` (which stage every tracked change, as does
+  `git commit -a`/`--all`, also refused), `.`, `:/` and other
   pathspec magic, globs (quoted or not), `"$PWD"`, `~` and directory
   arguments (relative to an earlier `cd` in the same command), including
   behind `env`, `command`, `sudo`, variable assignments and git's global
@@ -155,7 +157,9 @@ When work becomes history. `pre-commit` blocks commits to `main`, scans
 staged content for secrets and forbidden files (renamed and typechanged
 files included), and runs the same verify
 entrypoint. `commit-msg` enforces Conventional Commits and refuses
-AI-isms, emoji, AI branding and `Co-Authored-By` trailers. The branding
+AI-isms, emoji (anywhere in the message, not only the subject; comment
+lines and the scissors section are dropped first), AI branding and
+`Co-Authored-By` trailers. The branding
 list is policy (`git.ai_branding.terms`); a legitimate phrase that contains
 a term, such as a product name a repository integrates, is allowed via
 `git.ai_branding.allow_phrases` (matched literally, ignoring case, like the
