@@ -82,13 +82,22 @@ fi
 # rather than by its subject, and the fixup!/squash!/amend! prefixes of
 # `git commit --fixup/--squash` are not Conventional Commits and are not
 # meant to be. They skip the subject-format rule; every other rule applies.
+# A prefix counts only when the rest of the subject is the subject of an
+# existing commit, which is what git writes (#170): `fixup! anything` typed
+# by hand is judged like any other subject. Nested prefixes (`fixup! fixup!
+# x`) match too, since the commit they name carries the inner prefix.
 MERGE_HEAD_FILE="$(git rev-parse --git-path MERGE_HEAD 2>/dev/null || true)"
 GENERATED=""
 if [[ -n "$MERGE_HEAD_FILE" && -f "$MERGE_HEAD_FILE" ]]; then
     GENERATED=merge
 else
-    case "${MSG%%$'\n'*}" in
-        "fixup! "* | "squash! "* | "amend! "*) GENERATED=fixup ;;
+    SUBJECT="${MSG%%$'\n'*}"
+    case "$SUBJECT" in
+        "fixup! "* | "squash! "* | "amend! "*)
+            if grep -qxF -- "${SUBJECT#* }" <<<"$(git log --format=%s 2>/dev/null || true)"; then
+                GENERATED=fixup
+            fi
+            ;;
     esac
 fi
 

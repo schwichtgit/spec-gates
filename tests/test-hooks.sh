@@ -727,6 +727,13 @@ printf 'fixup! feat: work\n\nCo-Authored-By: someone <s@example.com>\n' >"$MSGF"
 check "fixup!: other rules still apply (Co-Authored-By)" 1 bash -c "cd '$EC' && '$GITHOOKS/commit-msg' '$MSGF'"
 printf 'squash! feat: work\n\nWritten with Copilot.\n' >"$MSGF"
 check "squash!: other rules still apply (branding)" 1 bash -c "cd '$EC' && '$GITHOOKS/commit-msg' '$MSGF'"
+# The prefix counts only before the subject of an existing commit (#170).
+for p in 'fixup!' 'squash!' 'amend!'; do
+    printf '%s anything at all\n' "$p" >"$MSGF"
+    check "$p before a subject no commit has is judged like any subject" 1 bash -c "cd '$EC' && '$GITHOOKS/commit-msg' '$MSGF'"
+done
+printf 'fixup! fixup! feat: work\n' >"$MSGF"
+check "fixup! of a fixup! commit passes" 0 bash -c "cd '$EC' && git commit -q --allow-empty -m 'fixup! feat: work' && '$GITHOOKS/commit-msg' '$MSGF'"
 
 # ===========================================================================
 # Part E2d: linked worktrees. Hooks live in the shared hooks directory
@@ -1291,6 +1298,146 @@ for f in .specify/gates/./hooks.local.d/x.sh ./.ENV; do
 done
 for f in src/app.ts ./src/../README.md .ENV.example "$PN/docs/policy.json"; do
     check "Write/Edit allowed: $f" 0 bash -c "out=\$(printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$PN' '$HOOKS/protect-files.sh') && [[ -z \"\$out\" ]]" _ "$(pn_payload "$f")"
+done
+
+# ===========================================================================
+# Part L: policy.json and the constitution are built-in agent protection,
+# whatever protected_files.extra says, with and without jq (#165)
+# ===========================================================================
+echo ""
+echo "=== policy.json and the constitution: built-in agent protection (#165) ==="
+BP="$WORKDIR/pf165"
+project_runtime "$BP" "true"
+mkdir -p "$BP/.specify/memory" "$BP/docs"
+bp_vb() { jq -nc --arg c "$1" --arg d "$BP" '{cwd:$d,tool_input:{command:$c}}'; }
+# A policy without extra, with extra: [], and three invalid ones.
+BP_POLICIES=('{ "hooks": {} }' '{ "hooks": {}, "protected_files": { "extra": [] } }' '{}' '{ "hooks": ' \
+    '{ "hooks": {}, "protected_files": { "extra": "notalist" } }')
+for pol in "${BP_POLICIES[@]}"; do
+    printf '%s' "$pol" >"$BP/.specify/gates/policy.json"
+    for f in .specify/gates/policy.json .specify/memory/constitution.md "$BP/.specify/gates/policy.json"; do
+        check "Write/Edit refused [$pol]: $f" 2 bash -c "printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$BP' '$HOOKS/protect-files.sh'" _ "$(pn_payload "$f")"
+        check "Write/Edit refused without jq [$pol]: $f" 2 bash -c "printf '%s' \"\$1\" | PATH='$NOJQ' CLAUDE_PROJECT_DIR='$BP' '$HOOKS/protect-files.sh'" _ "$(pn_payload "$f")"
+    done
+    # shellcheck disable=SC2016  # literal command text under test
+    for c in 'rm .specify/gates/policy.json' 'sed -i s/a/b/ .specify/memory/constitution.md' \
+        'echo {} > .specify/gates/policy.json'; do
+        askcheck "Bash change asks [$pol]: $c" "$(bp_vb "$c")" validate-bash.sh CLAUDE_PROJECT_DIR="$BP"
+        askcheck "Bash change asks without jq [$pol]: $c" "$(bp_vb "$c")" validate-bash.sh PATH="$NOJQ" CLAUDE_PROJECT_DIR="$BP"
+    done
+done
+# An invalid policy cannot say what extra protects: any change asks, as in
+# protect-files; a read and a valid policy's unrelated change do not.
+for pol in '{}' '{ "hooks": ' '{ "hooks": {}, "protected_files": { "extra": "notalist" } }'; do
+    printf '%s' "$pol" >"$BP/.specify/gates/policy.json"
+    askcheck "invalid policy: any change asks [$pol]" "$(bp_vb 'rm -rf build')" validate-bash.sh CLAUDE_PROJECT_DIR="$BP"
+    check "invalid policy: a read is allowed [$pol]" 0 bash -c "out=\$(printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$BP' '$HOOKS/validate-bash.sh') && [[ -z \"\$out\" ]]" _ "$(bp_vb 'ls -la')"
+done
+printf '%s' '{ "hooks": {} }' >"$BP/.specify/gates/policy.json"
+check "valid policy: an unrelated change is allowed" 0 bash -c "out=\$(printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$BP' '$HOOKS/validate-bash.sh') && [[ -z \"\$out\" ]]" _ "$(bp_vb 'rm -rf build')"
+check "a policy.json outside .specify/gates stays editable" 0 bash -c "out=\$(printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$BP' '$HOOKS/protect-files.sh') && [[ -z \"\$out\" ]]" _ "$(pn_payload "$BP/docs/policy.json")"
+
+# protected_files.extra under another spelling of the project root: a
+# symlinked root, the real path behind it, ../proj/..., and (macOS) /tmp
+# against /private/tmp.
+printf '%s' '{ "hooks": {}, "protected_files": { "extra": ["docs/internal.md", "gen/**"] } }' >"$BP/.specify/gates/policy.json"
+BPR="$(cd "$BP" && pwd -P)"
+ln -sfn "$BPR" "$WORKDIR/pf165-link"
+mkdir -p "$WORKDIR/pf165-cwd"
+pr_spell() { # <name> <project-dir> <file_path> [cwd]
+    check "$1" 2 bash -c "jq -nc --arg f \"\$1\" --arg d \"\$2\" '{cwd:\$d,tool_input:{file_path:\$f}}' | CLAUDE_PROJECT_DIR='$2' '$HOOKS/protect-files.sh'" _ "$3" "${4:-$2}"
+}
+pr_spell "extra matched: symlinked root, real file path" "$WORKDIR/pf165-link" "$BPR/docs/internal.md"
+pr_spell "extra matched: real root, path through the symlink" "$BPR" "$WORKDIR/pf165-link/docs/internal.md"
+pr_spell "extra matched: ../proj/... from a sibling cwd" "$BP" "../pf165/docs/internal.md" "$WORKDIR/pf165-cwd"
+pr_spell "extra matched: a directory not yet created" "$BPR" "$WORKDIR/pf165-link/gen/new/x.md"
+if [[ -d /private/tmp && "$(cd /tmp && pwd -P)" == /private/tmp ]]; then
+    TP="$(mktemp -d /tmp/gates165.XXXXXX)"
+    mkdir -p "$TP/.specify/gates"
+    cp "$BP/.specify/gates/policy.json" "$TP/.specify/gates/"
+    cp -R "$BP/.specify/gates/lib" "$TP/.specify/gates/"
+    pr_spell "extra matched: /tmp root, /private/tmp path" "$TP" "/private$TP/docs/internal.md"
+    pr_spell "extra matched: /private/tmp root, /tmp path" "/private$TP" "$TP/docs/internal.md"
+    rm -rf "$TP"
+fi
+
+# ===========================================================================
+# Part M: command variants the agent hooks used to miss (#170)
+# ===========================================================================
+echo ""
+echo "=== validate-pr: a title or body it cannot read is refused (#170) ==="
+vp() { # <name> <expect> <command>
+    check "$1" "$2" bash -c "jq -nc --arg c \"\$1\" '{tool_input:{command:\$c}}' | CLAUDE_PROJECT_DIR='$RT' '$HOOKS/validate-pr.sh'" _ "$3"
+}
+# shellcheck disable=SC2016  # literal command text under test
+for c in 'gh pr create -t "feat: x" -b "$(cat body.md)"' 'gh pr create -t "feat: x" --body "$B"' \
+    'gh pr create -t "feat: x" -b `cat body.md`' 'gh pr create -t "feat: x" --body Claude' \
+    'gh pr create -t "feat: x" --body=Claude' 'gh pr create -tfeat -bWord' \
+    'gh pr create -t "feat: x" --body ok --body "Built with Claude Code"' \
+    'gh pr create --title "feat: x" --title "add stuff" --body ok' \
+    "bash -c 'gh pr create --title x --body y'" 'gh api repos/o/r/pulls -f title=feat -f body=x' \
+    'gh api repos/o/r/pulls -f title="feat: x" -f body="Generated with Claude Code"' \
+    'gh api repos/o/r/pulls -f title="feat: x" -f body="$B"' 'gh api repos/o/r/pulls --input pr.json' \
+    "gh pr create --title \"feat: x\" --body \"\$(cat <<EOF
+Adds \$HOME.
+EOF
+)\""; do
+    vp "PR command refused: $c" 2 "$c"
+done
+# shellcheck disable=SC2016
+for c in 'gh pr create -t "feat: x" --body Word' 'gh pr create -t "feat: x" --body=Word' \
+    "gh pr create --title 'feat: x' --body 'Costs \$5 and \`x\`.'" 'gh pr create -d -t "feat: x" -b "y"' \
+    'gh api repos/o/r/pulls -f title="feat: x" -f body="Adds a parser."' 'gh api repos/o/r/pulls' \
+    'gh api repos/o/r/issues -f title=anything' 'git commit -m "fix: handle gh pr create"' \
+    "gh pr create --title \"feat: x\" --body \"\$(cat <<'EOF'
+## Summary
+Adds \$HOME and \`x\` handling.
+EOF
+)\""; do
+    expect="$PR_OK"
+    [[ "$c" == *issues* || "$c" == git* ]] && expect=0
+    vp "PR command allowed: $c" "$expect" "$c"
+done
+vp "a heredoc body is still checked" 2 "gh pr create --title \"feat: x\" --body \"\$(cat <<'EOF'
+I have made it seamless.
+EOF
+)\""
+printf 'Generated with Claude Code\n' >"$WORKDIR/api-body.md"
+vp "gh api -F body=@file is read and checked" 2 "gh api -X PATCH repos/o/r/pulls/5 -F body=@$WORKDIR/api-body.md"
+for b in 'Generated  with  Claude Code' 'Generated by Claude Code' 'Made with Claude Code' \
+    'Created with [Claude Code](https://claude.com/claude-code)' 'Generated with
+Claude Code'; do
+    vp "agent attribution variant refused: $b" 2 "gh pr create --title 'feat: x' --body '$b'"
+done
+vp "Claude Code named in prose is not attribution" "$PR_OK" "gh pr create --title 'feat: x' --body 'Adds a hook for Claude Code users.'"
+
+echo ""
+echo "=== validate-bash: destructive git, protected-path and staging variants (#170) ==="
+VV="$WORKDIR/vb170"
+mkdir -p "$VV/.specify/gates" "$VV/src/sub"
+printf '%s' '{ "hooks": {}, "git": { "block_bulk_staging": true } }' >"$VV/.specify/gates/policy.json"
+vv_payload() { jq -nc --arg c "$1" --arg d "$VV" '{cwd:$d,tool_input:{command:$c}}'; }
+vv_allows() { # <name> <command>
+    check "$1" 0 bash -c "out=\$(printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$VV' '$HOOKS/validate-bash.sh') && [[ -z \"\$out\" ]]" _ "$(vv_payload "$2")"
+}
+for c in 'git checkout -- .' 'git checkout -q .' 'git checkout HEAD -- .' 'git checkout . && ls' \
+    'git restore -- .' 'git restore :/' 'git restore --staged --worktree .' "git restore ':(top)'" \
+    'git clean --force' 'git clean -d --force' 'git clean -d -f' 'git -C src checkout -- .' \
+    'cd src; git add -- sub'; do
+    check "refused: $c" 2 bash -c "printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$VV' '$HOOKS/validate-bash.sh'" _ "$(vv_payload "$c")"
+    check "refused without jq: $c" 2 bash -c "printf '%s' \"\$1\" | PATH='$NOJQ' CLAUDE_PROJECT_DIR='$VV' '$HOOKS/validate-bash.sh'" _ "$(vv_payload "$c")"
+done
+for c in 'git clean -n' 'git restore --staged .' 'git checkout main' 'git checkout -- src/a.ts' \
+    'git restore src/a.ts' 'cd src && git add a.ts' 'echo {a,b}' 'python3 -c "print(1)"' "awk '{print \$1,\$2}' notes.txt"; do
+    vv_allows "allowed: $c" "$c"
+done
+# shellcheck disable=SC2016
+for c in '/bin/rm .specify/gates/policy.json' '\rm .specify/gates/policy.json' 'rm .specify/gates/policy.{json,x}' \
+    'rm .specify/gates/policy\.json' "sh -c 'rm .specify/gates/policy.json'" 'bash -c "rm .specify/memory/constitution.md"' \
+    'eval "rm .specify/gates/policy.json"' 'echo .specify/gates/policy.json | xargs rm' \
+    "python3 -c \"open('.specify/gates/policy.json','w').write('{}')\"" 'git add `ls`' 'xargs git add < list.txt' \
+    'cd "$D"; git add -- sub'; do
+    askcheck "asks: $c" "$(vv_payload "$c")" validate-bash.sh CLAUDE_PROJECT_DIR="$VV"
 done
 
 # --- Summary ---

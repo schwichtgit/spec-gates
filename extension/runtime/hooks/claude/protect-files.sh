@@ -177,6 +177,17 @@ case "$FILE_PATH" in
         ;;
 esac
 
+# The policy and the constitution are protected whatever protected_files.extra
+# says and whether or not jq is present (#165): an agent that could rewrite
+# them could switch off every other rule, and the policy is exactly what an
+# invalid or unread policy cannot vouch for.
+case "$FILE_PATH" in
+    .specify/gates/policy.json | */.specify/gates/policy.json \
+        | .specify/memory/constitution.md | */.specify/memory/constitution.md)
+        BLOCKED="Gates policy or constitution (a human edits these; the commit needs a Protected-Change trailer)"
+        ;;
+esac
+
 # Lock files
 case "$BASENAME" in
     package-lock.json|yarn.lock|pnpm-lock.yaml|Cargo.lock|poetry.lock)
@@ -223,9 +234,31 @@ if [[ -z "$BLOCKED" ]]; then
         REL="$FILE_PATH"
         # A case-insensitive match (nocasematch), so the cut is by length.
         [[ "$FILE_PATH" == "$PROJECT_ROOT/"* ]] && REL="${FILE_PATH:$((${#PROJECT_ROOT} + 1))}"
+        # The same file under another spelling of the root (#165): /tmp and
+        # /private/tmp on macOS, a symlinked checkout, ../proj/x. Compare the
+        # real project root with the target's real parent directory (or its
+        # nearest existing ancestor, since a Write may create directories).
+        # A relative path is taken from the session's cwd.
+        REAL_REL=""
+        REAL_ROOT="$(cd "$PROJECT_ROOT" 2>/dev/null && pwd -P)" || REAL_ROOT=""
+        _cwd="$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)" || _cwd=""
+        _abs="$FILE_PATH"
+        [[ "$_abs" == /* ]] || _abs="${_cwd:-$PWD}/$_abs"
+        _dir="${_abs%/*}"
+        _rest="${_abs##*/}"
+        while [[ -n "$_dir" && ! -d "$_dir" ]]; do
+            _rest="${_dir##*/}/$_rest"
+            _dir="${_dir%/*}"
+        done
+        _real="$(cd "${_dir:-/}" 2>/dev/null && pwd -P)" || _real=""
+        if [[ -n "$REAL_ROOT" && -n "$_real" ]]; then
+            _real="${_real%/}/$_rest"
+            [[ "$_real" == "$REAL_ROOT/"* ]] && REAL_REL="${_real:$((${#REAL_ROOT} + 1))}"
+        fi
         while IFS= read -r entry; do
             [[ -z "$entry" ]] && continue
             if gates_glob_match "$REL" "$entry" \
+                || { [[ -n "$REAL_REL" ]] && gates_glob_match "$REAL_REL" "$entry"; } \
                 || gates_glob_match "$FILE_PATH" "$entry" \
                 || [[ "$BASENAME" == "$entry" ]]; then
                 BLOCKED="Protected by policy (protected_files.extra: $entry)"
