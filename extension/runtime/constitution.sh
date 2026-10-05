@@ -123,6 +123,22 @@ cmd_detect() {
     gates_const_detect "$constitution" "$DEFAULT_TEMPLATE"
 }
 
+# align and check read the enforced policy; one verify.sh would refuse (#124)
+# enforces nothing, so a principle must not read as active against it (#199).
+# An explicit --policy must exist; without one, a project with no policy yet
+# keeps reporting its policy surfaces as missing.
+require_valid_policy() { # [<policy-override>]
+    local file="${1:-}"
+    declare -f gates_validate_policy >/dev/null 2>&1 || return 0
+    if [[ -z "$file" ]]; then
+        file="$(gates_policy_file)"
+        [[ -f "$file" ]] || return 0
+    fi
+    gates_validate_policy "$file" && return 0
+    echo "constitution: invalid policy $file, nothing evaluated; fix the errors above (run /speckit.gates.doctor)" >&2
+    return 1
+}
+
 cmd_align() {
     local constitution="$DEFAULT_CONSTITUTION" policy=""
     while [[ $# -gt 0 ]]; do
@@ -141,6 +157,7 @@ cmd_align() {
                 ;;
         esac
     done
+    require_valid_policy "$policy" || return 1
     gates_const_align "$PROJECT_ROOT" "$constitution" "$policy"
 }
 
@@ -162,6 +179,7 @@ cmd_check() {
                 ;;
         esac
     done
+    require_valid_policy "$policy" || return 1
     gates_const_check "$PROJECT_ROOT" "$constitution" "$policy" "$(basename "$constitution")"
 }
 

@@ -377,7 +377,11 @@ _gates_check_tool() { # <tool> <root>
     local rc=0
     case "$tool" in
         prettier)
-            "$bin" --check "${files[@]}" || rc=$?
+            # prettier reads .gitignore by default and silently skips an
+            # explicitly named file it lists, so a tracked file someone
+            # put in .gitignore passed unchecked (#199). Untracked ignored
+            # files never reach this list; .prettierignore still applies.
+            "$bin" --check --ignore-path .prettierignore "${files[@]}" || rc=$?
             ;;
         markdownlint)
             # --no-globs: markdownlint-cli2 UNIONS a config file's "globs"

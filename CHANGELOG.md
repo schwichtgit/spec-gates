@@ -194,6 +194,16 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   `commit-msg`; validate-bash allowed all four. It now asks before each
   (also `--continue` and `--skip`), naming the CI boundary as the only
   check, and the docs list all four.
+- **Small gates findings from RC3** (#199). `verify.sh` without
+  `--boundary`, or with `--accept ""`, is a usage error (exit 1) instead of
+  a full run. `--dry-run` lists the `parity` gate. prettier checks a
+  tracked file even when `.gitignore` lists it. In `spec.snapshot_exclude`,
+  `cache/` now covers the directory like `cache/**`, and a pattern of only
+  `*`, `?` and `/` makes the policy invalid. `constitution.sh align` no
+  longer proposes values below the schema minimum, `align` and `check`
+  refuse an invalid policy instead of reporting principles active against
+  it, and a heading or marker inside a fenced code block is not a
+  principle.
 - **An unknown `--accept` feature is refused before any gate runs**
   (#179). `verify.sh --accept <name>` with a name that is not a feature
   ran the lint and quality gates first and refused only at the spec gate,

@@ -188,6 +188,9 @@ gates_spec_excluded() { # <path>
     local g
     while IFS= read -r g; do
         [[ -z "$g" ]] && continue
+        # "dir/" names the directory: the ignored root "dir" (listed
+        # without its slash) and every path under it (#199).
+        [[ "$g" == */ ]] && g="${g%/}/**"
         gates_glob_match "$1" "$g" && return 0
     done <<<"${GATES_SPEC_SNAPSHOT_EXCLUDE:-$GATES_SPEC_SNAPSHOT_BUILTIN_EXCLUDE}"
     return 1

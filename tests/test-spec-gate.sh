@@ -547,6 +547,13 @@ OUT="$(isoblock excluded '  echo new >>cache/data' \
     '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } }, "spec": { "snapshot_exclude": ["cache/**"] } }')"
 expect_contains "spec.snapshot_exclude exempts an ignored path" "$OUT" "EXIT=0"
 
+# "dir/" names the directory, like "dir/**" (#199): the ignored root and
+# untracked files under it.
+OUT="$(isoblock excldir '  echo new >>cache/data
+  mkdir -p scratch && echo x >scratch/new.txt' \
+    '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } }, "spec": { "snapshot_exclude": ["cache/", "scratch/"] } }')"
+expect_contains "a trailing-slash snapshot_exclude exempts the directory" "$OUT" "EXIT=0"
+
 # A nested verify.sh (recursion guard set) appends its attestation; the gate
 # exempts its own evidence log, and the nested run reports spec as skipped.
 # shellcheck disable=SC2016  # block text, expanded when the block runs

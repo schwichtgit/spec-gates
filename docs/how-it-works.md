@@ -353,7 +353,9 @@ Dispatch follows the policy's `verify-quality.orchestrator`:
   policy's include and exclude globs via `lib/formatter-dispatch.sh`. In a
   git work tree it skips untracked files git ignores (husky's generated
   `.husky/_/`, build output), since CI never sees them; a tracked file is
-  checked even when an ignore pattern matches it.
+  checked even when an ignore pattern matches it (prettier runs with
+  `--ignore-path .prettierignore`, so `.gitignore` never hides a tracked
+  file from it, while `.prettierignore` still applies).
 - `task`: `task lint` (error class) and `task test` (warning class), the
   fixed Taskfile convention. `policy-infer` seeds it when a Taskfile
   declares top-level `lint` and `test` targets.
@@ -378,8 +380,9 @@ locked in by a broken configuration. The other agent hooks match:
 `protect-files` asks before every edit (it cannot tell what the policy
 protects), `post-edit` and `format-changed` format nothing, and doctor
 reports the policy as `[MISSING]`; `project.sh` refuses to project under
-it. A bad `--boundary` value, `--boundary` or `--accept` without a value, or
-an `--accept` name that is not a feature, is a usage error (exit `1`)
+it. A missing `--boundary`, a bad `--boundary` value, `--boundary` or
+`--accept` without a value (an empty value included), or an `--accept`
+name that is not a feature, is a usage error (exit `1`)
 refused before any gate runs.
 
 **Environment overrides are visible.** `GATES_POLICY_FILE` replaces the
@@ -483,7 +486,10 @@ tool gates and before `parity`:
    criterion, and nothing is ever auto-reverted. The process group is
    stopped after every block too, and a block that leaves a process
    running fails. `spec.snapshot_exclude` exempts untracked or ignored
-   paths another process writes during the run. Outside a git work tree
+   paths another process writes during the run; `cache/` names the
+   directory and everything under it, like `cache/**`, and a pattern of
+   only `*`, `?` and `/` (which would exempt everything) makes the policy
+   invalid. Outside a git work tree
    there is nothing to check against, so blocks fail closed.
 4. **Enforce**: a Complete feature fails the `spec` gate on any unchecked
    task or failing block, naming the feature, the task or criterion, and
@@ -593,7 +599,8 @@ The marker is an HTML comment (invisible when rendered, surviving prettier
 and the core command's fill and version pass) bound by position to the
 principle heading above it. Principles are the `###` headings under
 `## Core Principles`; sub-headings in other sections (Additional
-Constraints, Governance) are prose. The grammar is fixed: a `surface` from
+Constraints, Governance) are prose, and a heading or marker inside a
+fenced code block is example content, never a principle. The grammar is fixed: a `surface` from
 `policy | agent-hook | git-hook | ci | accept | scanner | prose`, a `ref`
 required for all but `prose`, and an optional `expect` for policy surfaces.
 A malformed marker, or one outside Core Principles, is fail-closed: `check`
@@ -618,8 +625,10 @@ Each principle is `active`, `missing` (with a concrete proposed change), or
 `pending-boundary` (the whole boundary is not projected yet). A policy
 proposal follows `policy.schema.json`, so applying it makes the principle
 active; a marker no valid policy can satisfy (a path the schema lacks, an
-`expect` outside the allowed values) is proposed as an annotation fix
-instead. Proposed policy changes target the **overlay**, so with a live contract they flow
+`expect` outside the allowed values or below the schema's minimum) is
+proposed as an annotation fix instead. `align` and `check` refuse (exit
+`1`) a policy `verify.sh` would refuse, whether named with `--policy` or
+resolved, since nothing in it is enforced. Proposed policy changes target the **overlay**, so with a live contract they flow
 through `sync` into the effective policy like any other deviation. `align`
 never writes; applying is the session's job, change by change, with
 approval.

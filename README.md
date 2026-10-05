@@ -132,7 +132,8 @@ section, with its defaults:
 
 `snapshot_exclude` takes path globs of untracked or gitignored files the
 read-only check skips, for a cache another process writes while blocks
-run.
+run; `cache/` covers the directory and everything under it, and a pattern
+that would match every path (`*`, `**`) is refused.
 
 ## Policy as a versioned contract
 

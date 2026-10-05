@@ -501,7 +501,7 @@ expect "policy: no proposal doubles the hooks prefix" "$(grep -c 'hooks\.hooks' 
 PLV="$WORKDIR/policy-lists"
 mkdir -p "$PLV/.specify/gates" "$PLV/.specify/memory"
 cat >"$PLV/.specify/gates/policy.json" <<'EOF'
-{ "git": { "block_main_commits": false, "ai_branding": { "terms": ["Copilot", "Claude"], "allow_phrases": [] } },
+{ "hooks": {}, "git": { "block_main_commits": false, "ai_branding": { "terms": ["Copilot", "Claude"], "allow_phrases": [] } },
   "spec": { "include": ["specs/**"] } }
 EOF
 cat >"$PLV/.specify/memory/constitution.md" <<'EOF'
@@ -567,7 +567,7 @@ expect_contains "policy: an expect outside the enum is an annotation fix" "$pl" 
 expect "policy: no proposal sets a value no policy accepts" "$(grep -c 'non-false\|= fatal\|= Gemini' <<<"$pl")" "0"
 # Applying the proposals makes the principles active: they converge.
 cat >"$PLV/.specify/gates/policy.json" <<'EOF'
-{ "git": { "block_main_commits": true, "ai_branding": { "terms": ["Copilot", "Claude", "Gemini"], "allow_phrases": ["x"] } },
+{ "hooks": {}, "git": { "block_main_commits": true, "ai_branding": { "terms": ["Copilot", "Claude", "Gemini"], "allow_phrases": ["x"] } },
   "spec": { "include": ["specs/**"], "exclude": ["y"] } }
 EOF
 pl="$(plv)"
@@ -575,6 +575,64 @@ expect_state "policy: the list addition converges" "$pl" "III. List Non Member" 
 expect_state "policy: the empty-list entry converges" "$pl" "IV. Empty List" "active"
 expect_state "policy: the absent-list entry converges" "$pl" "VII. Absent List" "active"
 expect_state "policy: the boolean proposal converges" "$pl" "VIII. False Boolean" "active"
+
+# An expect below the schema minimum is an annotation fix (#199): proposing
+# it would make verify.sh refuse the policy.
+PMIN="$WORKDIR/policy-min"
+mkdir -p "$PMIN/.specify/gates" "$PMIN/.specify/memory"
+printf '{ "hooks": {} }\n' >"$PMIN/.specify/gates/policy.json"
+cat >"$PMIN/.specify/memory/constitution.md" <<'EOF'
+# C
+
+## Core Principles
+
+### I. Negative Timeout
+<!-- gates:enforce surface=policy ref=spec.timeout_s expect=-5 -->
+x
+
+### II. Zero Records
+<!-- gates:enforce surface=policy ref=attestation.max_records expect=0 -->
+x
+
+### III. Valid Timeout
+<!-- gates:enforce surface=policy ref=spec.timeout_s expect=60 -->
+x
+EOF
+pm="$(CLAUDE_PROJECT_DIR="$PMIN" bash "$CONST" align --constitution "$PMIN/.specify/memory/constitution.md")"
+expect_contains "policy: a negative expect below the minimum is an annotation fix" "$pm" \
+    "fix the annotation: spec.timeout_s is an integer >= 1, expect=-5 can never match"
+expect_contains "policy: a zero expect below the minimum is an annotation fix" "$pm" \
+    "fix the annotation: attestation.max_records is an integer >= 1, expect=0 can never match"
+expect_contains "policy: an expect at or above the minimum is still proposed" "$pm" "set spec.timeout_s = 60"
+expect "policy: no proposal sets a value below the minimum" "$(grep -c '= -5\|= 0,' <<<"$pm")" "0"
+
+# align and check refuse a policy verify.sh would refuse (#199): nothing in
+# it is enforced, so no principle may read as active against it.
+printf '{ "hooks": {}, "spec": { "timeout_s": 60 }, "attestation": { "max_records": 0 } }\n' >"$PMIN/invalid.json"
+rc=0
+pmi="$(CLAUDE_PROJECT_DIR="$PMIN" bash "$CONST" align --constitution "$PMIN/.specify/memory/constitution.md" \
+    --policy "$PMIN/invalid.json" 2>&1)" || rc=$?
+expect "align --policy <invalid>: exit 1" "$rc" "1"
+expect_contains "align --policy <invalid>: names the validator error" "$pmi" "max_records must be an integer >= 1"
+expect_absent "align --policy <invalid>: reports no principle active" "$pmi" "active"
+# The invalid policy satisfies this principle, so only the refusal fails it.
+printf '# C\n\n## Core Principles\n\n### I. Valid Timeout\n<!-- gates:enforce surface=policy ref=spec.timeout_s expect=60 -->\n' \
+    >"$PMIN/one.md"
+rc=0
+pmi="$(CLAUDE_PROJECT_DIR="$PMIN" bash "$CONST" check --constitution "$PMIN/one.md" \
+    --policy "$PMIN/invalid.json" 2>&1)" || rc=$?
+expect "check --policy <invalid>: exit 1" "$rc" "1"
+expect_contains "check --policy <invalid>: refuses the policy" "$pmi" "invalid policy"
+expect_absent "check --policy <invalid>: reports nothing enforced" "$pmi" "enforced:"
+rc=0
+pmi="$(CLAUDE_PROJECT_DIR="$PMIN" bash "$CONST" align --constitution "$PMIN/.specify/memory/constitution.md" \
+    --policy "$PMIN/no-such.json" 2>&1)" || rc=$?
+expect "align --policy <missing file>: exit 1" "$rc" "1"
+cp "$PMIN/invalid.json" "$PMIN/.specify/gates/policy.json"
+rc=0
+pmi="$(CLAUDE_PROJECT_DIR="$PMIN" bash "$CONST" align --constitution "$PMIN/.specify/memory/constitution.md" 2>&1)" || rc=$?
+expect "align against an invalid project policy: exit 1" "$rc" "1"
+expect_absent "align against an invalid project policy: reports no principle active" "$pmi" "active"
 
 # Overlay targeting: a missing policy surface proposes an overlay edit.
 expect_contains "align: missing policy proposes an OVERLAY edit" "$alm" "policy.json (overlay)"
@@ -587,7 +645,7 @@ cat >"$C3/.specify/gates/policy.json" <<'EOF'
 { "extends": { "source": "x", "version": "v1" }, "spec": { "severity": "error" } }
 EOF
 cat >"$C3/.specify/gates/policy.effective.json" <<'EOF'
-{ "extends": { "source": "x", "version": "v1" }, "spec": { "severity": "error" } }
+{ "extends": { "source": "x", "version": "v1" }, "hooks": {}, "spec": { "severity": "error" } }
 EOF
 cat >"$C3/.specify/memory/constitution.md" <<'EOF'
 # C
@@ -714,6 +772,35 @@ rc=0
 sc2chk="$(CLAUDE_PROJECT_DIR="$WORKDIR" bash "$CONST" check --constitution "$WORKDIR/scope2.md")" || rc=$?
 expect "scope: check fails on the misplaced marker" "$rc" "1"
 expect_contains "scope: check names its line" "$sc2chk" "scope2.md:8: malformed marker"
+# A heading or marker inside a fenced code block is example content, not a
+# principle (#199), for backtick and tilde fences, with a shorter fence
+# nested inside a longer one.
+cat >"$WORKDIR/scope-fence.md" <<'MD'
+## Core Principles
+
+### I. Real
+<!-- gates:enforce surface=prose -->
+
+````markdown
+### II. Example
+<!-- gates:enforce surface=nope -->
+```
+<!-- gates:enforce surface=nope -->
+```
+````
+
+~~~text
+### III. Tilde Example
+<!-- gates:enforce surface=nope -->
+~~~
+
+### IV. After The Fences
+<!-- gates:enforce surface=prose -->
+MD
+scf="$(cparse "$WORKDIR/scope-fence.md")"
+expect "fence: only the two real principles are parsed" "$(grep -c '^PRINCIPLE' <<<"$scf")" "2"
+expect_absent "fence: a marker inside a fence is not MALFORMED" "$scf" "MALFORMED"
+expect_parse "fence: the principle after the fences keeps its marker" "$scf" "IV. After The Fences" "prose"
 printf '# C\n\n### Orphan\n' >"$WORKDIR/scope3.md"
 expect "scope: no Core Principles -> no principles, NOCORE" "$(cparse "$WORKDIR/scope3.md")" "NOCORE"
 sc3chk="$(CLAUDE_PROJECT_DIR="$WORKDIR" bash "$CONST" check --constitution "$WORKDIR/scope3.md" || true)"
