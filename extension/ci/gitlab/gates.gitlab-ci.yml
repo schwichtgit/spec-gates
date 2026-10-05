@@ -43,7 +43,26 @@ gates:
     # masked CI/CD variable holding a read_api token) or CI_JOB_TOKEN. A
     # truncated description it cannot fetch fails the job; before 16.7
     # without a token only the title is checked (pr-check prints a notice).
-    - bash .specify/gates/pr-check.sh
+    # In an MR pipeline the check runs the BASE revision's pr-check.sh and
+    # lib against the MR checkout (GATES_RUNTIME_DIR), so an MR cannot
+    # replace the code that judges it. A base without pr-check.sh (the MR
+    # adopting spec-gates) runs the MR's own copy. This file still comes
+    # from the MR: protect it and .specify/gates/** with protected branches
+    # + CODEOWNERS (approval required).
+    - |
+      set -e
+      base="${CI_MERGE_REQUEST_DIFF_BASE_SHA:-}"
+      if [ -z "$base" ]; then
+        bash .specify/gates/pr-check.sh
+      elif git cat-file -e "$base:.specify/gates/pr-check.sh" 2>/dev/null; then
+        rt="$(mktemp -d)"
+        git archive "$base" .specify/gates | tar -x -C "$rt"
+        echo "pr-check: running the base revision's pr-check.sh ($base)"
+        GATES_RUNTIME_DIR="$rt/.specify/gates" bash "$rt/.specify/gates/pr-check.sh"
+      else
+        echo "pr-check: the base ($base) has no pr-check.sh (adoption MR); running the merge request's own copy"
+        bash .specify/gates/pr-check.sh
+      fi
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == "main"'

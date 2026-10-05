@@ -51,15 +51,18 @@ echo c >"$W/c.md"
 ) >/dev/null 2>&1
 BASE="$(git -C "$W" rev-parse main)"
 
-# Run pr-check in the fixture with a clean CI environment plus <env...>.
+# Run pr-check ($RUN_SCRIPT under $RUN_SHELL, default the checkout's copy under
+# bash) in the fixture with a clean CI environment plus <env...>.
+RUN_SCRIPT=.specify/gates/pr-check.sh
+RUN_SHELL=(bash)
 run() { # <env-assignment>... -> exit code
     local rc=0
     (cd "$W" && env -u GITHUB_EVENT_NAME -u GITHUB_BASE_REF -u CI_MERGE_REQUEST_DIFF_BASE_SHA \
         -u CI_MERGE_REQUEST_TITLE -u CI_MERGE_REQUEST_DESCRIPTION -u CHANGE_TARGET -u CHANGE_TITLE \
         -u GATES_PR_TITLE -u GATES_PR_BODY -u GATES_COMMIT_RANGE -u CLAUDE_PROJECT_DIR \
         -u CI_MERGE_REQUEST_IID -u CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED -u CI_API_V4_URL \
-        -u CI_PROJECT_ID -u CI_JOB_TOKEN -u GATES_GITLAB_TOKEN \
-        "$@" bash .specify/gates/pr-check.sh) >"$WORKDIR/out.txt" 2>&1 || rc=$?
+        -u CI_PROJECT_ID -u CI_JOB_TOKEN -u GATES_GITLAB_TOKEN -u GATES_RUNTIME_DIR \
+        "$@" "${RUN_SHELL[@]}" "$RUN_SCRIPT") >"$WORKDIR/out.txt" 2>&1 || rc=$?
     echo "$rc"
 }
 GH=(GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=main)
@@ -299,6 +302,141 @@ expect "the commit counts as touching a protected path" \
     "$(grep -c '1 touching protected paths' "$WORKDIR/out.txt")" 1
 expect "declared baseline.json commit -> exit 0" \
     "$(cd "$W" && git commit -q --amend -m $'chore: edit the baseline snapshot\n\nProtected-Change: .specify/gates/baseline.json\nApproved-By: Reviewer' && run GATES_COMMIT_RANGE="HEAD^..HEAD")" 0
+
+echo ""
+echo "=== an invalid base policy is a setup error, not an empty rule set (#166) ==="
+# A base whose policy cannot be read used to yield no rules: an undeclared
+# constitution change passed with "0 touching protected paths".
+CONST=".specify/memory/constitution.md"
+bad_base() { # <branch> <policy text> -> base sha; head adds an undeclared constitution change
+    (
+        cd "$W"
+        git checkout -q -b "$1" "$BASE"
+        printf '%s\n' "$2" >.specify/gates/policy.json
+        git add -A && git commit -q -m "chore: break the policy"
+        git checkout -q -b "$1-head"
+        mkdir -p .specify/memory && echo "# changed" >"$CONST"
+        git add -A && git commit -q -m "docs: rewrite the constitution"
+    ) >/dev/null 2>&1
+    git -C "$W" rev-parse "$1"
+}
+BADBASE="$(bad_base base-badjson '{"hooks":')"
+expect "base policy is not valid JSON -> setup error (exit 2)" "$(run GATES_COMMIT_RANGE="$BADBASE..HEAD")" 2
+expect "the refusal names the invalid base policy" \
+    "$(grep -c 'policy committed at the base .* is invalid' "$WORKDIR/out.txt")" 1
+expect "the protected count is never printed" "$(grep -c 'touching protected paths' "$WORKDIR/out.txt")" 0
+BADBASE="$(bad_base base-badshape '{ "hooks": { "x": "s" } }')"
+expect "base policy has the wrong shape -> setup error (exit 2)" "$(run GATES_COMMIT_RANGE="$BADBASE..HEAD")" 2
+expect "the validator's own finding is shown" "$(grep -c 'x: must be an object' "$WORKDIR/out.txt")" 1
+
+echo ""
+echo "=== adoption PR: the base has no policy (#166) ==="
+HEADPOL='{ "hooks": {}, "protected_files": { "extra": ["c.md"] } }'
+(
+    cd "$W"
+    git checkout -q -b base-nopolicy "$BASE"
+    git rm -q .specify/gates/policy.json && git commit -q -m "chore: before adoption"
+    git checkout -q -b feat/adopt
+    printf '%s\n' "$HEADPOL" >.specify/gates/policy.json
+    git add -A && git commit -q -m "chore: adopt spec-gates" \
+        -m $'Protected-Change: .specify/gates/policy.json\nApproved-By: Reviewer'
+    mkdir -p .specify/memory && echo "# principles" >"$CONST"
+    git add -A && git commit -q -m "docs: add the constitution"
+) >/dev/null 2>&1
+NOPOL="$(git -C "$W" rev-parse base-nopolicy)"
+expect "undeclared constitution change, no base policy -> exit 1" "$(run GATES_COMMIT_RANGE="$NOPOL..HEAD")" 1
+expect "the constitution is named although the PR's policy does not list it" \
+    "$(grep -c "without a declaration: $CONST" "$WORKDIR/out.txt")" 1
+expect "the fallback to the PR's own policy is stated" "$(grep -c 'adoption PR' "$WORKDIR/out.txt")" 1
+expect "declared constitution change, no base policy -> exit 0" \
+    "$(cd "$W" && git commit -q --amend -m "docs: add the constitution" -m "Protected-Change: $CONST
+Approved-By: Reviewer" && run GATES_COMMIT_RANGE="$NOPOL..HEAD")" 0
+(cd "$W" && echo more >>c.md && git add c.md && git commit -q -m "docs: amend c") >/dev/null 2>&1
+expect "no base policy: the PR's own protected list applies (undeclared c.md -> exit 1)" \
+    "$(run GATES_COMMIT_RANGE="$NOPOL..HEAD")" 1
+expect "no base policy, the PR's policy invalid in the checkout -> exit 2" \
+    "$(cd "$W" && printf '{"hooks":\n' >.specify/gates/policy.json && run GATES_COMMIT_RANGE="$NOPOL..HEAD")" 2
+expect "the refusal names the PR's invalid policy" "$(grep -c "pull request's own policy is invalid" "$WORKDIR/out.txt")" 1
+git -C "$W" checkout -q -- .specify/gates/policy.json
+
+echo ""
+echo "=== the base revision's pr-check judges the PR (#166) ==="
+# The PR (pushed with --no-verify) replaces pr-check.sh with `exit 0`,
+# empties lib/policy.sh and changes c.md undeclared. Its own copy passes;
+# the base's copy, run against the PR checkout, finds the violation.
+(
+    cd "$W"
+    git checkout -q -b feat/sabotage "$BASE"
+    printf '#!/bin/bash\nexit 0\n' >.specify/gates/pr-check.sh
+    printf '# emptied\n' >.specify/gates/lib/policy.sh
+    echo more >>c.md
+    git add -A && git commit -q -m "chore: speed up the check"
+) >/dev/null 2>&1
+expect "the PR's own pr-check.sh passes its own sabotage -> exit 0" "$(run GATES_COMMIT_RANGE="$BASE..HEAD")" 0
+RT="$WORKDIR/base-runtime"
+mkdir -p "$RT"
+git -C "$W" archive "$BASE" .specify/gates | tar -x -C "$RT"
+RUN_SCRIPT="$RT/.specify/gates/pr-check.sh"
+expect "the base's pr-check.sh with GATES_RUNTIME_DIR -> exit 1" \
+    "$(run GATES_COMMIT_RANGE="$BASE..HEAD" GATES_RUNTIME_DIR="$RT/.specify/gates")" 1
+expect "it names the undeclared c.md" "$(grep -c 'without a declaration: c.md' "$WORKDIR/out.txt")" 1
+expect "GATES_RUNTIME_DIR that is not a directory -> exit 2" \
+    "$(run GATES_COMMIT_RANGE="$BASE..HEAD" GATES_RUNTIME_DIR="$WORKDIR/nowhere")" 2
+
+# The shipped CI templates do this themselves: each one's PR step, run as
+# written against the sabotaged checkout, must use the base's copy.
+GH_T="$REPO_ROOT/extension/ci/github/gates.yml"
+GL_T="$REPO_ROOT/extension/ci/gitlab/gates.gitlab-ci.yml"
+JK_T="$REPO_ROOT/extension/ci/jenkins/Jenkinsfile.gates"
+Q="'''"
+awk '/- name: Check the pull request/ { s = 1 } s && /run: \|$/ { r = 1; next } r { sub(/^          /, ""); print }' \
+    "$GH_T" >"$WORKDIR/tpl-github.sh"
+awk '/BASE revision/ { s = 1 } s && /^    - \|$/ { r = 1; next } r && /^  [a-z]/ { exit } r { sub(/^      /, ""); print }' \
+    "$GL_T" >"$WORKDIR/tpl-gitlab.sh"
+awk -v q="$Q" '/BASE revision/ { s = 1 } s && index($0, "sh " q) { r = 1; next } r && index($0, q) { exit } r' \
+    "$JK_T" >"$WORKDIR/tpl-jenkins.sh"
+git -C "$W" update-ref refs/remotes/origin/main "$BASE"
+TPL_GH=(GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=main GATES_PR_TITLE="feat: x")
+TPL_GL=(CI_MERGE_REQUEST_DIFF_BASE_SHA="$BASE" CI_MERGE_REQUEST_TITLE="feat: x")
+TPL_JK=(CHANGE_TARGET=main CHANGE_TITLE="feat: x")
+for p in github gitlab jenkins; do
+    case "$p" in
+        github) RUN_SHELL=(bash -e -o pipefail) && envs=("${TPL_GH[@]}") ;;
+        gitlab) RUN_SHELL=(sh) && envs=("${TPL_GL[@]}") ;;
+        jenkins) RUN_SHELL=(sh) && envs=("${TPL_JK[@]}") ;;
+    esac
+    RUN_SCRIPT="$WORKDIR/tpl-$p.sh"
+    expect "$p template: the step was extracted" "$(grep -c 'GATES_RUNTIME_DIR=' "$RUN_SCRIPT")" 1
+    expect "$p template: sabotaged PR is judged by the base's pr-check -> exit 1" "$(run "${envs[@]}")" 1
+    expect "$p template: the log says the base copy ran" \
+        "$(grep -c "running the base revision's pr-check.sh" "$WORKDIR/out.txt")" 1
+done
+# A base without pr-check.sh (the PR adopting spec-gates): the PR's own copy
+# runs, and the log says so.
+(
+    cd "$W"
+    git checkout -q -b base-noruntime "$BASE"
+    git rm -q .specify/gates/pr-check.sh && git commit -q -m "chore: before the runtime"
+    git checkout -q -b feat/runtime
+    git checkout -q "$BASE" -- .specify/gates/pr-check.sh
+    echo more >>c.md
+    git add -A && git commit -q -m "chore: add the runtime"
+) >/dev/null 2>&1
+NORT="$(git -C "$W" rev-parse base-noruntime)"
+git -C "$W" update-ref refs/remotes/origin/main "$NORT"
+for p in github gitlab jenkins; do
+    case "$p" in
+        github) RUN_SHELL=(bash -e -o pipefail) && envs=("${TPL_GH[@]}") ;;
+        gitlab) RUN_SHELL=(sh) && envs=(CI_MERGE_REQUEST_DIFF_BASE_SHA="$NORT" CI_MERGE_REQUEST_TITLE="feat: x") ;;
+        jenkins) RUN_SHELL=(sh) && envs=("${TPL_JK[@]}") ;;
+    esac
+    RUN_SCRIPT="$WORKDIR/tpl-$p.sh"
+    expect "$p template: base without pr-check.sh -> the PR's copy runs (exit 1 on undeclared c.md)" \
+        "$(run "${envs[@]}")" 1
+    expect "$p template: the fallback is stated" "$(grep -c 'has no pr-check.sh' "$WORKDIR/out.txt")" 1
+done
+RUN_SCRIPT=.specify/gates/pr-check.sh
+RUN_SHELL=(bash)
 
 echo ""
 echo "$PASS of $TOTAL tests passed."

@@ -584,7 +584,7 @@ run_pr_canary() {
         || setup_fail "pr commit"
     local -a clean=(env -u GITHUB_EVENT_NAME -u GITHUB_BASE_REF -u CI_MERGE_REQUEST_DIFF_BASE_SHA
         -u CI_MERGE_REQUEST_TITLE -u CI_MERGE_REQUEST_DESCRIPTION -u CHANGE_TARGET -u CHANGE_TITLE
-        -u GATES_PR_TITLE -u GATES_PR_BODY -u GATES_COMMIT_RANGE CLAUDE_PROJECT_DIR="$d")
+        -u GATES_PR_TITLE -u GATES_PR_BODY -u GATES_COMMIT_RANGE -u GATES_RUNTIME_DIR CLAUDE_PROJECT_DIR="$d")
     out1="$(cd "$d" && "${clean[@]}" bash .specify/gates/pr-check.sh --range "$base..HEAD" 2>&1)" || rc1=$?
     out2="$(cd "$d" && "${clean[@]}" GATES_PR_TITLE='feat: canary' GATES_PR_BODY='I have made this seamless.' \
         bash .specify/gates/pr-check.sh 2>&1)" || rc2=$?

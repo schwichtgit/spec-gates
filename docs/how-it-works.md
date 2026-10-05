@@ -260,6 +260,24 @@ squash merge keeps the description and drops the commit trailers. GitHub
 re-runs it when a PR is `edited`; GitLab starts no pipeline on an MR edit,
 so a fresh pipeline is needed after one.
 
+A base policy that is not valid (broken JSON, wrong shape) stops the check
+with exit 2 and names the problem, as `verify.sh` refuses it; it never
+reads as "nothing is protected". A base with no policy at all is the PR
+that adopts spec-gates: it is checked against the PR's own policy, and
+`policy.json`, the constitution, `hooks.local.d/**` and the contract
+artifacts are protected whatever that policy says. The log says so.
+
+The code that runs the check comes from the base too. The projected
+templates extract `.specify/gates/pr-check.sh` and `lib/` from the base
+revision (`git archive`) into a temporary directory and run that copy
+against the PR checkout, pointing it at its own libraries with
+`GATES_RUNTIME_DIR`. A PR that replaces `pr-check.sh` with `exit 0` is
+still judged by the base's copy. When the base has no `pr-check.sh` (the
+adoption PR), the PR's own copy runs and the log says so. A base whose
+`pr-check.sh` predates `GATES_RUNTIME_DIR` still loads the PR's
+libraries, so this protection starts with the first base that carries a
+release supporting it.
+
 ## One entrypoint
 
 `verify.sh --boundary agent|git|ci [--json] [--dry-run]`
@@ -656,8 +674,21 @@ asks rather than claims to block.
 Defense in depth is the point of the three-boundary design. Whatever an
 agent changes locally still has to pass the git hooks (whose own changes
 need a reviewed trailer when protected) and then CI and server-side branch
-protection, which run in an environment the agent cannot rewrite. The
-boundaries an agent cannot touch backstop the ones it theoretically could.
+protection. The boundaries an agent cannot touch backstop the ones it
+theoretically could.
+
+CI is only as independent as the code it runs, and a pull request brings
+its own copy of most of it. The PR check runs the base revision's
+`pr-check.sh` and libraries, so a PR cannot replace the check that judges
+its protected changes. The rest still comes from the PR head:
+`verify.sh`, `canary.sh` and, on GitHub and GitLab, the pipeline file
+itself, so a PR (pushed with `--no-verify`) can rewrite the steps that
+run on it. The human backstop is required, not optional: branch
+protection (or a ruleset) that requires the gates check and a review, and
+CODEOWNERS entries for `.specify/gates/**` and the pipeline file
+(`.github/workflows/`, `.gitlab-ci.yml`, `Jenkinsfile`) with code-owner
+review required, so a change to the enforcement itself needs an owner's
+approval.
 
 ## Spec Kit compatibility
 

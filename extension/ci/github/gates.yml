@@ -66,9 +66,24 @@ jobs:
       # PR title/description against the commit-message rules, and
       # Protected-Change declarations across the PR's commits. Passed via
       # env, never interpolated into the script (injection-safe).
+      # The check runs the BASE branch's pr-check.sh and lib against the PR
+      # checkout (GATES_RUNTIME_DIR), so a PR cannot replace the code that
+      # judges it. A base without pr-check.sh (the PR adopting spec-gates)
+      # runs the PR's own copy. This workflow file still comes from the PR:
+      # protect it and .specify/gates/** with branch protection + CODEOWNERS.
       - name: Check the pull request (text + protected changes)
         if: github.event_name == 'pull_request'
         env:
           GATES_PR_TITLE: ${{ github.event.pull_request.title }}
           GATES_PR_BODY: ${{ github.event.pull_request.body }}
-        run: bash .specify/gates/pr-check.sh
+        run: |
+          base="origin/$GITHUB_BASE_REF"
+          if git cat-file -e "$base:.specify/gates/pr-check.sh" 2>/dev/null; then
+            rt="$(mktemp -d)"
+            git archive "$base" .specify/gates | tar -x -C "$rt"
+            echo "pr-check: running the base revision's pr-check.sh ($base)"
+            GATES_RUNTIME_DIR="$rt/.specify/gates" bash "$rt/.specify/gates/pr-check.sh"
+          else
+            echo "pr-check: the base ($base) has no pr-check.sh (adoption PR); running the pull request's own copy"
+            bash .specify/gates/pr-check.sh
+          fi

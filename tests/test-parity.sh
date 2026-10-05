@@ -119,6 +119,15 @@ for tpl in "$GH_T" "$GL_T" "$JK_T"; do
     else
         fail "$name does not run canary.sh"
     fi
+    # The PR check runs the base revision's copy, not the PR's own (#166).
+    # shellcheck disable=SC2016  # literal $base and $rt, as the templates have them
+    if grep -qF 'git archive "$base" .specify/gates | tar -x -C "$rt"' <<<"$(code_lines "$tpl")" \
+        && grep -qF 'GATES_RUNTIME_DIR="$rt/.specify/gates" bash "$rt/.specify/gates/pr-check.sh"' \
+            <<<"$(code_lines "$tpl")"; then
+        pass "$name runs the base revision's pr-check.sh"
+    else
+        fail "$name runs the pull request's own pr-check.sh"
+    fi
 done
 # shellcheck disable=SC2016  # a literal $WORKSPACE, as the Jenkinsfile has it
 if grep -qF 'PATH+GATES=' <<<"$(code_lines "$JK_T")" \

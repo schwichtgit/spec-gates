@@ -90,7 +90,30 @@ create`; GitLab: `glab repo create` or the web UI; Jenkins: the SCM
    count for every commit, since a squash merge keeps the description).
    Merge commits are checked too, and the rules come from the policy at
    the PR's base, so the PR cannot relax its own check. It needs full history (`fetch-depth: 0` / `GIT_DEPTH: 0`, set in the
-   templates) and skips itself outside PR/MR pipelines. Platform notes:
+   templates) and skips itself outside PR/MR pipelines. A base policy
+   that is not valid fails the step (exit 2) and names the problem. A base
+   with no policy (the PR that adopts spec-gates) is checked against the
+   PR's own policy, with `policy.json`, the constitution, `hooks.local.d`
+   and the contract artifacts protected regardless.
+
+   The step runs the BASE revision's `pr-check.sh`: it extracts
+   `.specify/gates/pr-check.sh` and `lib/` from the base with
+   `git archive` into a temporary directory and runs that copy against
+   the PR checkout with `GATES_RUNTIME_DIR` pointing at it, so a PR cannot
+   replace the check that judges it. A base without `pr-check.sh` runs
+   the PR's own copy and says so in the log. When merging into an
+   existing pipeline, keep this extraction; a plain
+   `bash .specify/gates/pr-check.sh` runs the PR's copy. A base whose
+   `pr-check.sh` predates `GATES_RUNTIME_DIR` still loads the PR's
+   libraries, so the protection starts once the base carries this
+   release.
+
+   The pipeline file, `verify.sh` and `canary.sh` still come from the PR.
+   Recommend the human backstop every time: branch protection requiring
+   the gates check and a review, and CODEOWNERS entries for
+   `.specify/gates/**` and the pipeline file with code-owner review
+   required (`--protect` sets up the first; CODEOWNERS is the user's to
+   write). Platform notes:
    - github: the workflow also runs on `edited`, so a title or
      description change re-runs the check.
    - gitlab: editing an MR title or description does NOT start a
@@ -156,6 +179,9 @@ otherwise. If `--protect` fails with 403, tell the user their options
 workflow itself still works regardless.
 
 Scope: `--protect` covers only the enforcement-relevant server-side
-settings (required check + PR). Governance scaffolding (CODEOWNERS,
-Dependabot, PR templates) is intentionally out of scope — that belongs to a
-Spec Kit bundle or a template repo.
+settings (required check + PR). It does not write files: CODEOWNERS,
+Dependabot and PR templates belong to a Spec Kit bundle or a template
+repo. Still recommend a CODEOWNERS entry for `.specify/gates/**` and the
+workflow file, with `require_code_owner_review` set in the ruleset: the
+workflow comes from the PR under review, so owner review is what keeps a
+PR from rewriting its own checks.
