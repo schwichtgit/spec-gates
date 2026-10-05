@@ -160,7 +160,7 @@ toolpath() { # <dir> <excluded-tool>... -> builds <dir> with symlinks
     local dir="$1" t x skip
     shift
     mkdir -p "$dir"
-    for t in cat grep git head sed awk tail wc tr dirname basename perl python3 jq; do
+    for t in cat grep git head sed awk tail wc tr dirname basename readlink perl python3 jq; do
         skip=0
         for x in "$@"; do [[ "$t" == "$x" ]] && skip=1; done
         [[ "$skip" -eq 1 ]] && continue
@@ -1493,6 +1493,66 @@ mkdir -p "$CA/.specify/gates/hooks.local.d/protect-files"
 printf '#!/bin/bash\necho "constitution frozen" >&2\nexit 1\n' >"$CA/.specify/gates/hooks.local.d/protect-files/10.sh"
 check "a project rule still refuses the constitution" 2 bash -c "printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$CA' '$HOOKS/protect-files.sh'" _ "$(pn_payload .specify/memory/constitution.md)"
 rm -rf "$CA/.specify/gates/hooks.local.d"
+
+# Symlinks inside the project (#193): protect-files judges the fully
+# resolved real path, file and parents, for every built-in rule and every
+# extra entry, with and without jq; validate-bash asks for an ln that links
+# to or through a protected path.
+echo ""
+echo "=== symlinks inside the project: real path protection (#193) ==="
+SL="$WORKDIR/pf193"
+project_runtime "$SL" "true"
+mkdir -p "$SL/.specify/memory" "$SL/.specify/gates/hooks.local.d" "$SL/docs" "$SL/src" "$SL/sub"
+: >"$SL/.specify/memory/constitution.md"
+: >"$SL/docs/internal.md"
+: >"$SL/src/a.ts"
+(
+    cd "$SL" || exit 1
+    ln -s .specify/gates gdir
+    ln -s .specify sp
+    ln -s .specify/gates/policy.json pol.json
+    ln -s .specify/memory/constitution.md con.md
+    ln -s .specify/gates/hooks.local.d hl
+    ln -s docs/internal.md ext.md
+    ln -s c2 c1
+    ln -s gdir c2
+    ln -s l2 l1
+    ln -s l1 l2
+    ln -s .specify/gates/policy.json x.sample
+    ln -s src/a.ts ok.ts
+    ln -s .. sub/up
+)
+sl_payload() { jq -nc --arg f "$1" --arg d "$SL" '{cwd:$d,tool_input:{file_path:$f}}'; }
+SL_POLICIES=('{ "hooks": {}, "protected_files": { "extra": [] } }'
+    '{ "hooks": {}, "protected_files": { "extra": [".specify/memory/constitution.md", ".specify/gates/policy.json", "docs/internal.md"] } }')
+for pol in "${SL_POLICIES[@]}"; do
+    printf '%s' "$pol" >"$SL/.specify/gates/policy.json"
+    ln -f "$SL/.specify/gates/policy.json" "$SL/hard.json"
+    for f in gdir/policy.json pol.json "$SL/pol.json" gdir/hooks.local.d/validate-bash/x.sh sp/gates/baseline.json \
+        hl/x.sh c1/policy.json x.sample sub/up/.specify/gates/policy.json sp/gates/../gates/policy.json hard.json; do
+        check "Write/Edit through a link refused [$pol]: $f" 2 bash -c "printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$SL' '$HOOKS/protect-files.sh'" _ "$(sl_payload "$f")"
+        check "Write/Edit through a link refused without jq [$pol]: $f" 2 bash -c "printf '%s' \"\$1\" | PATH='$NOJQ' CLAUDE_PROJECT_DIR='$SL' '$HOOKS/protect-files.sh'" _ "$(sl_payload "$f")"
+    done
+    for f in sp/memory/constitution.md con.md l1 l1/x; do
+        askcheck "Write/Edit through a link asks [$pol]: $f" "$(sl_payload "$f")" protect-files.sh CLAUDE_PROJECT_DIR="$SL"
+        askcheck "Write/Edit through a link asks without jq [$pol]: $f" "$(sl_payload "$f")" protect-files.sh PATH="$NOJQ" CLAUDE_PROJECT_DIR="$SL"
+    done
+    check "a link to an ordinary file stays editable [$pol]" 0 bash -c "out=\$(printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$SL' '$HOOKS/protect-files.sh') && [[ -z \"\$out\" ]]" _ "$(sl_payload ok.ts)"
+done
+check "an extra entry is matched through a file link" 2 bash -c "printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$SL' '$HOOKS/protect-files.sh'" _ "$(sl_payload ext.md)"
+rm -f "$SL/hard.json"
+
+sl_vb() { jq -nc --arg c "$1" --arg d "$SL" '{cwd:$d,tool_input:{command:$c}}'; }
+# shellcheck disable=SC2016  # literal command text under test
+for c in 'ln -s ".spec"ify g2' "ln -s '.specify/gates' g3" 'ln -s gdir/policy.json p2' 'ln -sf sp/memory m2' \
+    'ln -s . root2' 'ln -s .. up2' 'sudo ln -s c1 g4' 'ln -s "$D" x' 'cd /tmp && ln -s "'"$SL"'/.spec"ify g5' \
+    'ln -s ../.spe""cify sub/s2' 'ln .specify/gates/policy.json hard2'; do
+    askcheck "ln to a protected path asks: $c" "$(sl_vb "$c")" validate-bash.sh CLAUDE_PROJECT_DIR="$SL"
+    askcheck "ln to a protected path asks without jq: $c" "$(sl_vb "$c")" validate-bash.sh PATH="$NOJQ" CLAUDE_PROJECT_DIR="$SL"
+done
+for c in 'ln -s src/a.ts b.ts' 'ln -s ../elsewhere/lib lib' 'git commit -m "explain the ln usage"' 'ls -l gdir'; do
+    check "ln elsewhere allowed: $c" 0 bash -c "out=\$(printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$SL' '$HOOKS/validate-bash.sh') && [[ -z \"\$out\" ]]" _ "$(sl_vb "$c")"
+done
 
 # ===========================================================================
 # Part M: command variants the agent hooks used to miss (#170)

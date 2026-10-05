@@ -152,6 +152,13 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   `grep -n rm <protected path>` and a commit message naming a protected
   path no longer ask. The docs now say that the Stop hook lets the stop
   right after a refusal through (`stop_hook_active`).
+- **Symlinks inside the project no longer bypass the file hook** (#193).
+  `protect-files` compared only the path as written, so a link such as
+  `gdir -> .specify/gates` or `pol.json -> policy.json` made a protected
+  file editable. Every rule now also judges the fully resolved real path
+  (file and parents, with and without jq), hard links to protected files
+  are recognized, and `validate-bash` asks for an `ln` that links to or
+  through a protected path.
 - **A Write or Edit to the constitution asks instead of being refused**
   (#200). `/speckit-constitution` and `/speckit.gates.constitution` write
   `.specify/memory/constitution.md` as one of their steps, and the file

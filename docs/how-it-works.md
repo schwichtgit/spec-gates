@@ -37,11 +37,16 @@ spec-gates uses four of them:
   Write or Edit to `.specify/memory/constitution.md` asks instead, under
   any policy (an `extra` entry naming it included): the constitution
   commands write it as one of their steps, so you approve that write once.
-  It resolves `.`, `..` and `//`
-  in the path first and matches ignoring case, since macOS filesystems are
-  case-insensitive by default. An `extra` entry also matches under
-  another spelling of the project root (`/tmp` and `/private/tmp`, a
-  symlinked checkout), compared by real path.
+  It resolves `.`, `..` and `//` in the path first and matches ignoring
+  case, since macOS filesystems are case-insensitive by default. Every
+  rule, built-in or `extra`, also judges the fully resolved real path,
+  with every symlink in the file and its parents followed, so a link
+  inside the project (`gdir -> .specify/gates`, `pol.json -> policy.json`)
+  or another spelling of the project root (`/tmp` and `/private/tmp`, a
+  symlinked checkout) reaches the same verdict. A hard link to
+  `policy.json`, the constitution, a contract artifact or a project rule is
+  recognized as that file. A path whose links it cannot resolve (a loop)
+  asks.
 - `PreToolUse(Bash)` → `validate-bash.sh`: refuses destructive commands
   (`rm` of root, home or a path outside the temp directories, force push,
   hard reset, `chmod 777`, piping a download into a shell, discarding the
@@ -88,7 +93,8 @@ such as `secret` or `token` (a test like `test_no_secret_leak.py` is not a
 credential), when a Bash command appears to modify a protected path
 (`rm`, `mv`, `sed -i`, a redirect, `tee`, `find -delete`, `git rm`, also
 as `/bin/rm`, `\rm`, `xargs rm`, inside `sh -c` or `eval`, or an
-interpreter one-liner such as `python3 -c`, naming one, its parent
+interpreter one-liner such as `python3 -c`, or an `ln` whose target or
+link resolves to, contains or lies under one, naming one, its parent
 directory, a brace or backslash spelling of it, or a path relative to a
 `cd` into one; telling
 a modification from a read by the command text is a heuristic, so it asks

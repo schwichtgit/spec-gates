@@ -739,6 +739,91 @@ while IFS= read -r _pp; do
     fi
 done < <(protected_prefixes)
 
+# Links (#193): protect-files judges a Write/Edit by its real path, so a
+# link that reaches a protected path, or one spelled past the text match
+# above (`ln -s ".spec"ify g`), asks. Each ln argument is unquoted and
+# resolved from the cwd and from the link's directory; it asks when it is,
+# contains or lies under a protected path, or cannot be resolved ($VAR,
+# `cmd`, a glob, ~user).
+# ln_real <absolute path>: every symlink resolved, as protect-files does.
+ln_real() {
+    local todo="$1" out="" comp link hops=0
+    while [[ -n "$todo" ]]; do
+        while [[ "$todo" == /* ]]; do todo="${todo#/}"; done
+        [[ -n "$todo" ]] || break
+        if [[ "$todo" == */* ]]; then comp="${todo%%/*}"; todo="${todo#*/}"; else comp="$todo"; todo=""; fi
+        case "$comp" in
+            . | '') continue ;;
+            ..) out="${out%/*}"; continue ;;
+        esac
+        if [[ -L "$out/$comp" ]]; then
+            hops=$((hops + 1))
+            [[ "$hops" -le 40 ]] && link="$(readlink "$out/$comp" 2>/dev/null)" && [[ -n "$link" ]] || return 1
+            [[ "$link" == /* ]] && out=""
+            todo="$link${todo:+/$todo}"
+        else
+            out="$out/$comp"
+        fi
+    done
+    printf '%s' "${out:-/}"
+}
+# One line per ln command: its operands, unquoted (options dropped). ln
+# counts as the command word, after a wrapper (sudo, env, xargs, ...) or
+# an environment assignment, or as the start of an `sh -c` / eval string.
+LN_SEGS="$(printf '%s\n' "$COMMAND" | tr ';&|()' '\n' | awk '
+    { out = ""; on = 0; prev = ""
+      for (i = 1; i <= NF; i++) {
+          t = $i; gsub(/["'"'"'\\]/, "", t)
+          if (!on) {
+              n = split(t, p, "/")
+              if (p[n] == "ln" && (prev == "" || prev ~ /^(sudo|env|command|exec|xargs|nohup|time|nice|builtin|-c|eval)$/ || prev ~ /^[A-Za-z_][A-Za-z0-9_]*=/)) on = 1
+              else if (t != "") prev = t
+              continue
+          }
+          if (t ~ /^-/ || t == "") continue
+          out = out (out == "" ? "" : " ") t
+      }
+      if (on && out != "") print out }')"
+if [[ -n "$LN_SEGS" ]]; then
+    _lroot="${LREAL:-$LROOT}"
+    _lprot=()
+    while IFS= read -r _pp; do
+        [[ -n "$_pp" ]] && _lprot+=("$(ln_real "$_lroot/$_pp" || printf '%s' "$_lroot/$_pp")")
+    done < <(protected_prefixes)
+    shopt -s nocasematch
+    while IFS= read -r _seg; do
+        read -r -a _largs <<<"$_seg"
+        _last="${_largs[${#_largs[@]} - 1]}"
+        [[ "$_last" == /* ]] || _last="$CWD/$_last"
+        _bases=("$CWD" "${_last%/*}")
+        [[ -d "$_last" ]] && _bases+=("$_last")
+        for _a in "${_largs[@]}"; do
+            [[ "$_a" == \~/* ]] && _a="$HOME/${_a#\~/}"
+            case "$_a" in
+                *'$'* | *'`'* | *'*'* | *'?'* | *'['* | '~'*)
+                    defer_ask "cannot resolve the ln argument $_a; confirm it links to no protected path"
+                    continue
+                    ;;
+            esac
+            for _b in "${_bases[@]}"; do
+                _r="$_a"
+                [[ "$_r" == /* ]] || _r="$_b/$_r"
+                if ! _r="$(ln_real "$_r")"; then
+                    defer_ask "cannot resolve the symlinks in the ln argument $_a; confirm it links to no protected path"
+                    continue
+                fi
+                for _p in "${_lprot[@]}"; do
+                    if [[ "$_r" == / || "$_r" == "$_p" || "$_p" == "$_r/"* || "$_r" == "$_p/"* ]]; then
+                        defer_ask "this ln command links to or through the protected path ${_p#"$_lroot"/}; a human makes that link"
+                        break 3
+                    fi
+                done
+            done
+        done
+    done <<<"$LN_SEGS"
+    shopt -u nocasematch
+fi
+
 # Secret files (#130): protect-files refuses Write/Edit of these; a command
 # that names one (`cat .env`, `cp id_rsa x`) asks, since reading it puts
 # the secret in the transcript. Same names and allowlist as protect-files.
