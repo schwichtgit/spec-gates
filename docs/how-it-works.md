@@ -96,7 +96,8 @@ as `/bin/rm`, `\rm`, `xargs rm`, inside `sh -c` or `eval`, or an
 interpreter one-liner such as `python3 -c`, or an `ln` whose target or
 link resolves to, contains or lies under one, naming one, its parent
 directory, a brace or backslash spelling of it, or a path relative to a
-`cd` into one; telling
+`cd` into one or to the session's working directory (the hook input
+`cwd`, which Claude Code keeps between calls); telling
 a modification from a read by the command text is a heuristic, so it asks
 rather than blocks; a read-only command such as `grep -n rm <path>` and
 the literal message of a `git commit -m` do not count as a change), when a Bash command names a secret file the file hook

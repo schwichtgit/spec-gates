@@ -1685,6 +1685,30 @@ echo '
     askcheck "asks: $c" "$(vv_payload "$c")" validate-bash.sh CLAUDE_PROJECT_DIR="$VV"
 done
 
+echo ""
+echo "=== validate-bash: relative protected paths resolve against cwd (#191) ==="
+VC="$WORKDIR/vb191"
+mkdir -p "$VC/.specify/gates/hooks.local.d" "$VC/.specify/memory" "$VC/docs" "$VC/src"
+printf '%s' '{ "hooks": {}, "protected_files": { "extra": ["docs/locked.md"] } }' >"$VC/.specify/gates/policy.json"
+vc_payload() { jq -nc --arg c "$2" --arg d "$VC$1" '{cwd:$d,tool_input:{command:$c}}'; }
+# <cwd under the project>|<command>
+for cc in '/.specify/gates|rm policy.json' '/.specify/gates|echo {} > policy.json' \
+    '/.specify/memory|sed -i "" s/a/b/ constitution.md' '/docs|rm locked.md' '/docs|rm ./locked.md' \
+    '/.specify|rm -rf gates' '/.specify|cd gates && rm policy.json' '/.specify/gates/hooks.local.d|rm 10.sh'; do
+    d="${cc%%|*}" c="${cc#*|}"
+    askcheck "change relative to cwd $d asks: $c" "$(vc_payload "$d" "$c")" validate-bash.sh CLAUDE_PROJECT_DIR="$VC"
+    askcheck "change relative to cwd $d asks without jq: $c" "$(vc_payload "$d" "$c")" validate-bash.sh PATH="$NOJQ" CLAUDE_PROJECT_DIR="$VC"
+done
+VCR="$(cd "$VC" && pwd -P)"
+ln -sfn "$VCR" "$WORKDIR/vb191-link"
+askcheck "cwd under another spelling of the root asks" "$(jq -nc --arg d "$WORKDIR/vb191-link/docs" '{cwd:$d,tool_input:{command:"rm locked.md"}}')" \
+    validate-bash.sh CLAUDE_PROJECT_DIR="$VCR"
+for cc in '/.specify/gates|cat policy.json' '/.specify/gates|rm notes.txt' '/docs|rm other.md' '/src|rm policy.json' \
+    '|rm policy.json' '/.specify|rm -rf gates-old'; do
+    d="${cc%%|*}" c="${cc#*|}"
+    check "relative to cwd ${d:-/} allowed: $c" 0 bash -c "out=\$(printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$VC' '$HOOKS/validate-bash.sh') && [[ -z \"\$out\" ]]" _ "$(vc_payload "$d" "$c")"
+done
+
 # --- Summary ---
 echo ""
 echo "$PASS of $TOTAL tests passed."

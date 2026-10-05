@@ -478,8 +478,9 @@ fi
 # malformed or fails validation) a command that changes anything asks
 # (#121, #165). A path counts as named when it appears in the command, when one
 # of its parent directories appears as a whole argument (`rm -rf
-# .specify/gates`), or when the command first changes into it or a parent
-# (`cd .specify/gates && ...`, `git -C`). Matching ignores case, after
+# .specify/gates`), when the command first changes into it or a parent
+# (`cd .specify/gates && ...`, `git -C`), or relative to the input cwd
+# (#191). Matching ignores case, after
 # `./`, `//`, `/./`, "$PWD/" and the project root are normalized away
 # (#130).
 POLICY="$LROOT/.specify/gates/policy.json"
@@ -704,36 +705,79 @@ ere_escape() { printf '%s' "$1" | sed 's/[][\.*^$+?(){}|/]/\\&/g'; }
 TOKEN_START='(^|[[:space:]"'"'"'=<>;&|(`])'
 # shellcheck disable=SC2016
 TOKEN_END='(["'"'"'[:space:];&|)`]|$)'
-while IFS= read -r _pp; do
-    [[ -n "$_pp" ]] || continue
-    _pp="$(tr '[:upper:]' '[:lower:]' <<<"$_pp")"
-    _pre="$(ere_escape "$_pp")"
-    _named=0
-    _entered=0
-    grep -qF -- "$_pp" <<<"$NCMD" && _named=1
-    _dir="$_pp"
+# The session's working directory relative to the project root, lowercased
+# (#191): Claude Code keeps the Bash directory between calls and sends it
+# as cwd, so after `cd .specify/gates` a later `rm policy.json` names the
+# policy. Empty at the root or outside the project.
+CWD_REL=""
+_creal="$(cd "$CWD" 2>/dev/null && pwd -P)" || _creal=""
+for _c in "${CWD%/}" "$_creal"; do
+    for _r in "$LROOT" "$LREAL"; do
+        [[ -n "$_c" && -n "$_r" && "$_c" == "$_r"/* ]] || continue
+        CWD_REL="$(tr '[:upper:]' '[:lower:]' <<<"${_c#"$_r"/}" | sed -E -e 's#//+#/#g' -e 's#(^|/)(\./)+#\1#g' -e 's#/\.?$##')"
+        break 2
+    done
+done
+# pp_spelled <spelling> <anchored>: set _named, _entered and _redirect when
+# NCMD names <spelling> (or a parent of it) in a change, changes into it or
+# redirects to it. An anchored spelling, one relative to cwd, counts only
+# at the start of an argument.
+pp_spelled() {
+    local sp="$1" anch="$2" pre dir e head
+    pre="$(ere_escape "$sp")"
+    head=""
+    [[ "$anch" -eq 1 ]] && head="$TOKEN_START"
+    if [[ "$anch" -eq 0 ]]; then
+        grep -qF -- "$sp" <<<"$NCMD" && _named=1
+    else
+        grep -qE -- "$head$pre(/|$TOKEN_END)" <<<"$NCMD" && _named=1
+    fi
+    dir="$sp"
     while :; do
-        _e="$(ere_escape "$_dir")"
-        if grep -qE "(^|[;&|(\`[:space:]])(cd|pushd)[[:space:]]+[\"']?$_e/?[\"']?$TOKEN_END|[[:space:]]-c[[:space:]]+[\"']?$_e/?[\"']?$TOKEN_END" <<<"$NCMD"; then
+        e="$(ere_escape "$dir")"
+        if grep -qE "(^|[;&|(\`[:space:]])(cd|pushd)[[:space:]]+[\"']?$e/?[\"']?$TOKEN_END|[[:space:]]-c[[:space:]]+[\"']?$e/?[\"']?$TOKEN_END" <<<"$NCMD"; then
             _entered=1
         fi
         # A parent directory counts only as a whole argument (or with a
         # glob under it) in the same command as the change, so `ls .specify
         # && rm build/x` stays allowed.
-        if [[ "$_dir" != "$_pp" && "$MUTATES" -eq 1 ]] \
-            && PAT="$TOKEN_START$_e(/[^[:space:];&|]*[*?[][^[:space:];&|]*)?/?$TOKEN_END" \
+        if [[ "$dir" != "$sp" && "$MUTATES" -eq 1 ]] \
+            && PAT="$TOKEN_START$e(/[^[:space:];&|]*[*?[][^[:space:];&|]*)?/?$TOKEN_END" \
                 MUT="$MUTATE_VERB|$MUTATE_EDIT|$MUTATE_FIND|$MUTATE_INTERP" awk '
                     { n = split($0, part, /&&|\|\||;|&/)
                       for (k = 1; k <= n; k++) if (part[k] ~ ENVIRON["PAT"] && part[k] ~ ENVIRON["MUT"]) hit = 1 }
                     END { exit !hit }' <<<"$PCMD"; then
             _named=1
         fi
-        [[ "$_dir" == */* ]] || break
-        _dir="${_dir%/*}"
+        [[ "$dir" == */* ]] || break
+        dir="${dir%/*}"
     done
+    # Redirects read the command with commit-message text blanked (#195).
+    if [[ "$anch" -eq 0 ]]; then
+        grep -qE ">>?[[:space:]]*[\"']?[^[:space:];&|]*$pre" <<<"$BCMD" && _redirect=1
+    else
+        grep -qE ">>?[[:space:]]*[\"']?$pre(/|$TOKEN_END)" <<<"$BCMD" && _redirect=1
+    fi
+    return 0
+}
+while IFS= read -r _pp; do
+    [[ -n "$_pp" ]] || continue
+    _pp="$(tr '[:upper:]' '[:lower:]' <<<"$_pp")"
+    _named=0
+    _entered=0
+    _redirect=0
+    pp_spelled "$_pp" 0
+    if [[ -n "$CWD_REL" ]]; then
+        if [[ "$CWD_REL" == "$_pp" || "$CWD_REL" == "$_pp"/* ]]; then
+            # The session is inside the protected directory.
+            _entered=1
+        elif [[ "$_pp" == "$CWD_REL"/* ]]; then
+            pp_spelled "${_pp#"$CWD_REL"/}" 1
+        fi
+    fi
     if { [[ "$_named" -eq 1 && "$MUTATES" -eq 1 ]]; } \
         || { [[ "$_entered" -eq 1 ]] && [[ "$MUTATES" -eq 1 || "$WRITE_REDIRECT" -eq 1 ]]; } \
-        || grep -qE ">>?[[:space:]]*[\"']?[^[:space:];&|]*$_pre" <<<"$BCMD"; then
+        || [[ "$_redirect" -eq 1 ]]; then
         defer_ask "this command appears to modify the protected path $_pp; a human or a reviewed change makes that edit"
         break
     fi

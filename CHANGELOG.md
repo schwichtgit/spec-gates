@@ -165,6 +165,13 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   hook refused that write with no way through. It now asks, under any
   policy; `policy.json`, `hooks.local.d` and the contract artifacts stay
   refused.
+- **validate-bash resolves relative protected paths against `cwd`**
+  (#191). Claude Code keeps the Bash working directory between calls, so
+  after `cd .specify/gates` a later `rm policy.json` changed the policy
+  without an ask (jq and raw mode alike). The hook now reads protected
+  paths relative to the input `cwd` too, also under another spelling of
+  the project root, and asks for any change made from inside a protected
+  directory.
 - **An unknown `--accept` feature is refused before any gate runs**
   (#179). `verify.sh --accept <name>` with a name that is not a feature
   ran the lint and quality gates first and refused only at the spec gate,
