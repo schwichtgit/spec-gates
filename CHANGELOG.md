@@ -187,6 +187,16 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   base revision and run them against the PR checkout through the new
   `GATES_RUNTIME_DIR`, so a PR that replaces `pr-check.sh` is still
   judged by the base's copy. Re-project the CI template to pick this up.
+- **Accept blocks can no longer switch off the git boundary** (#164). The
+  read-only check saw only the working tree, so a block could set
+  `core.hooksPath`, rewrite a hook, commit, tag or write gitignored files
+  and still pass. It now also covers git config, the hooks directory,
+  `HEAD` and refs, and ignored files, naming what changed. The block's
+  process group is stopped after every block, and a block that leaves a
+  process running fails. `GATES_SPEC_EXEC` no longer drops the spec gate
+  silently: it is reported as `skipped` with the reason, and validate-bash
+  asks before a command that sets it. New `spec.snapshot_exclude` exempts
+  untracked or ignored paths another process writes during the run.
 - **The git hooks refuse a branch whose runtime was never projected**
   (#159). In a clone that tracks `policy.json` but gitignores the runtime,
   commit-msg took the missing `.runtime-version` for a pre-0.3.4 runtime

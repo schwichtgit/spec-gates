@@ -114,9 +114,11 @@ Enforcement follows the feature's own completion claim, read from
 - **`**Status**: Complete`** — the claim is enforced. Any unchecked
   `- [ ]` task or failing accept block fails the run, naming the feature,
   the task or criterion, and the cause (exit code, `timeout after <N>s`,
-  or a working-tree mutation — blocks are read-only by contract and never
-  auto-reverted). Outside a git work tree blocks fail closed, since there
-  is nothing to check mutations against.
+  or a mutation — blocks are read-only by contract and never
+  auto-reverted). The read-only check covers the working tree, git config,
+  the git hooks, `HEAD` and refs, and gitignored files; a block that
+  leaves a process running fails too. Outside a git work tree blocks fail
+  closed, since there is nothing to check mutations against.
 
 Results land in the attestation record (a `spec` gate entry plus per-run
 counts and per-feature outcomes), a `spec` canary proves the gate still
@@ -125,8 +127,12 @@ task is checked but the Status flip is missing. The optional policy
 section, with its defaults:
 
 ```json
-"spec": { "enabled": true, "severity": "error", "include": ["*"], "exclude": [], "timeout_s": 30 }
+"spec": { "enabled": true, "severity": "error", "include": ["*"], "exclude": [], "timeout_s": 30, "snapshot_exclude": [] }
 ```
+
+`snapshot_exclude` takes path globs of untracked or gitignored files the
+read-only check skips, for a cache another process writes while blocks
+run.
 
 ## Policy as a versioned contract
 

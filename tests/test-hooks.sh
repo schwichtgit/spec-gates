@@ -1238,6 +1238,12 @@ for c in 'git commit --no-verify -m "feat: x"' 'git commit -n -m "feat: x"' 'git
     askcheck "hook bypass asks: $c" "$(vb_payload "$c")" validate-bash.sh CLAUDE_PROJECT_DIR="$VB"
 done
 vb_allows "a plain commit is allowed" 'git commit -m "feat: x"'
+# #164: the spec gate's recursion guard, set by a caller, skips accept blocks.
+for c in 'GATES_SPEC_EXEC=1 git commit -m "feat: x"' 'env GATES_SPEC_EXEC=1 bash .specify/gates/verify.sh' \
+    'export GATES_SPEC_EXEC=1; git commit -m "feat: x"' 'GATES_SPEC_EXEC=1; export GATES_SPEC_EXEC'; do
+    askcheck "setting the spec recursion guard asks: $c" "$(vb_payload "$c")" validate-bash.sh CLAUDE_PROJECT_DIR="$VB"
+done
+vb_allows "clearing the spec recursion guard is allowed" 'env -u GATES_SPEC_EXEC bash tests/run.sh'
 mkdir -p "$VB/.specify/gates/lib" "$VB/.specify/gates/hooks.local.d/validate-bash"
 cp "$REPO_ROOT/extension/runtime/lib/local-hooks.sh" "$VB/.specify/gates/lib/"
 printf '%s\n' 'if grep -q "vendor/"; then echo "vendor/ is generated" >&2; exit 1; fi' \

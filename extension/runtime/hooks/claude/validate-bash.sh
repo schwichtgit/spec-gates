@@ -443,6 +443,12 @@ HOOKS="$(awk '/^HOOKS / { sub(/^HOOKS /, ""); print; exit }' <<<"$GIT_SCAN")"
 if [[ -n "$HOOKS" ]]; then
     defer_ask "this command bypasses the git hooks ($HOOKS), so the commit checks would not run; confirm it"
 fi
+# The spec gate's recursion guard: any verify.sh run that inherits it, a
+# commit's hook included, skips the accept blocks (#164). Unsetting it
+# (env -u) is fine; setting or exporting it asks.
+if grep -qE '(^|[^A-Za-z0-9_])GATES_SPEC_EXEC\+?=|export[[:space:]]+([^;&|]*[[:space:]])?GATES_SPEC_EXEC([[:space:];&|]|$)' <<<"$COMMAND"; then
+    defer_ask "this command sets GATES_SPEC_EXEC, so any verify.sh it runs skips the spec gate (accept blocks); confirm it"
+fi
 
 if [[ -n "$BLOCKED" ]]; then
     echo "BLOCKED: $BLOCKED" >&2
