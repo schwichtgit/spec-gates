@@ -447,6 +447,12 @@ run_secret_canary() {
     git -C "$d" config user.name "gates-canary"
     cp "$hook" "$d/.git/hooks/pre-commit" || setup_fail "install pre-commit"
     chmod +x "$d/.git/hooks/pre-commit"
+    # The scan's rules are a library (issue #212); without it the hook
+    # skips the scan on a repository that never adopted gates.
+    if [[ -f "$CANARY_DIR/lib/secrets.sh" ]]; then
+        { mkdir -p "$d/.specify/gates/lib" && cp "$CANARY_DIR/lib/secrets.sh" "$d/.specify/gates/lib/"; } \
+            || setup_fail "secret lib"
+    fi
     # AKIA + 16 chars, assembled so this script never contains a key-shaped
     # literal itself.
     printf 'AKIA%s\n' "ABCDEFGHIJKLMNOP" >"$d/leak.txt"

@@ -234,6 +234,43 @@ for c in "${ALLOW_CMDS[@]}"; do
     payload="$(jq -nc --arg c "$c" '{session_id:"s",cwd:"/Users/x/proj",transcript_path:"/Users/x/t.jsonl",tool_input:{command:$c,description:"d"}}')"
     check "raw mode allows: $c" 0 bash -c "printf '%s' \"\$1\" | PATH='$NOJQ' '$HOOKS/validate-bash.sh'" _ "$payload"
 done
+# The rm guard reads only real rm invocations (#218, #205): a quoted
+# heredoc body, a literal commit message or gh body, and a redirect target
+# are not rm arguments. A heredoc fed to a shell or interpreter, an
+# unquoted one, a substitution and a real rm stay blocked. Both modes.
+# shellcheck disable=SC2016  # literal backticks and $(...) are the command text
+RM_ALLOW=(
+    $'cat > notes.md <<\'EOF2\'\n- `rm -rf /tmp/<dir>` and `echo brainstorm /` pass; root as a later\nEOF2'
+    $'cat <<"EOF" > a.md\nrm -rf /etc\nEOF'
+    $'cat <<-\'EOF\' > a.md\n\trm -rf /\n\tEOF\necho done'
+    $'cat > notes.md <<\'EOF\'\nrm -rf / here\nEOF\ngit add . && git commit -m \'docs: notes\''
+    'echo '\''see `rm -f x` and `ls /`'\'''
+    'grep -n rm .specify/gates/policy.json > /dev/null'
+    'rm -f build/x 2>/dev/null'
+    'rm -f build/x > /dev/null 2>&1'
+    'git commit -m '\''docs: note that `rm -rf /` is blocked'\'''
+    $'git commit -m "$(cat <<\'EOF\'\nfix: block rm -rf / harder\nEOF\n)"'
+    'gh pr create --title x --body '\''mentions rm -rf /etc in prose'\'''
+    'gh pr create --title x --body="rm -rf / is blocked"'
+)
+# shellcheck disable=SC2016
+RM_BLOCK=(
+    'sudo rm -rf /' "sh -c 'rm -rf /'" 'bash -c "rm -rf /etc"' 'echo `rm -rf /`'
+    'echo $(rm -rf /etc)' 'rm -rf /etc 2>/dev/null' 'rm -rf / > /dev/null'
+    'git commit -m "$(rm -rf /)"' 'gh pr create --body "$(rm -rf /etc)"'
+    $'bash <<EOF\nrm -rf /\nEOF' $'bash <<\'EOF\'\nrm -rf /\nEOF'
+    $'cat <<\'EOF\' | sh\nrm -rf /etc\nEOF' $'cat > s.sh <<\'EOF\'\nrm -rf /\nEOF\nbash s.sh'
+    $'python3 - <<\'EOF\'\nimport os; os.system(\'rm -rf /\')\nEOF'
+    $'cat <<EOF > a.md\nrm -rf /etc\nEOF' $'cat <<\'EOF\' > a.md\nrm -rf /etc\nEON'
+    $'cat <<\'EOF\' > a.md\nx\nEOF\nrm -rf /' $'cat <<\'EOF\' > a.sh\nrm -rf /etc\nEOF\n. ./a.sh'
+)
+for c in "${RM_ALLOW[@]}" "${RM_BLOCK[@]}"; do
+    want=2
+    for a in "${RM_ALLOW[@]}"; do [[ "$a" == "$c" ]] && want=0; done
+    payload="$(jq -nc --arg c "$c" '{tool_input:{command:$c}}')"
+    check "rm guard jq mode ($want): ${c//$'\n'/ / }" "$want" bash -c "printf '%s' \"\$1\" | '$HOOKS/validate-bash.sh'" _ "$payload"
+    check "rm guard raw mode ($want): ${c//$'\n'/ / }" "$want" bash -c "printf '%s' \"\$1\" | PATH='$NOJQ' '$HOOKS/validate-bash.sh'" _ "$payload"
+done
 check "raw mode allow names doctor" 0 bash -c "printf '%s' '{\"tool_input\":{\"command\":\"ls\"}}' | PATH='$NOJQ' '$HOOKS/validate-bash.sh' 2>&1 >/dev/null | grep -q 'speckit.gates.doctor'"
 check "raw mode: empty command allowed" 0 bash -c "printf '%s' '{\"tool_input\":{\"command\":\"\"}}' | PATH='$NOJQ' '$HOOKS/validate-bash.sh'"
 askcheck "raw mode: \\u escape in the command asks" '{"tool_input":{"command":"\u0072m -rf /"}}' validate-bash.sh PATH="$NOJQ"
@@ -425,13 +462,32 @@ git -C "$GF" reset -q --hard "$RN_BASE" >/dev/null 2>&1
 
 # Forbidden-file allowlist: template/example files are committable even when
 # the base name looks sensitive; real secret files still blocked.
-FF="$WORKDIR/forbidden.sh"
-sed -n '/^check_forbidden_files() {/,/^}/p' "$GITHOOKS/pre-commit" >"$FF"
-check "forbidden: .env.example allowed" 0 bash -c "source '$FF'; check_forbidden_files .env.example"
-check "forbidden: config.sample allowed" 0 bash -c "source '$FF'; check_forbidden_files config.sample"
-check "forbidden: .env.template allowed" 0 bash -c "source '$FF'; check_forbidden_files .env.template"
-check "forbidden: .env blocked" 1 bash -c "source '$FF'; check_forbidden_files .env"
-check "forbidden: .env.local blocked" 1 bash -c "source '$FF'; check_forbidden_files .env.local"
+FF="$REPO_ROOT/extension/runtime/lib/secrets.sh"
+check "forbidden: .env.example allowed" 1 bash -c "source '$FF'; gates_forbidden_path .env.example"
+check "forbidden: config.sample allowed" 1 bash -c "source '$FF'; gates_forbidden_path config.sample"
+check "forbidden: .env.template allowed" 1 bash -c "source '$FF'; gates_forbidden_path .env.template"
+check "forbidden: .env blocked" 0 bash -c "source '$FF'; gates_forbidden_path .env"
+check "forbidden: .env.local blocked" 0 bash -c "source '$FF'; gates_forbidden_path .env.local"
+
+# lib/secrets.sh is required (issue #212). An adopted branch on a runtime
+# from 0.4.0 on refuses without it; one on an older runtime (hooks copied
+# into .git/hooks run on every branch) commits with a warning; a branch
+# that never adopted gates is checked in the never-projected section.
+SL="$WORKDIR/nosecrets"
+mkdir -p "$SL"
+git -C "$SL" init -q -b feat/x
+git -C "$SL" config user.email t@example.com
+git -C "$SL" config user.name tester
+project_runtime "$SL" "true"
+rm -f "$SL/.specify/gates/lib/secrets.sh"
+( cd "$SL" && git add -A && git commit -q --no-verify -m "chore: adopt gates" ) >/dev/null 2>&1
+cp "$GITHOOKS/pre-commit" "$SL/.git/hooks/pre-commit"
+chmod +x "$SL/.git/hooks/pre-commit"
+check "secrets lib: an adopted runtime without it refuses" 0 \
+    bash -c "cd '$SL' && echo a >a.txt && git add a.txt && ! git commit -q -m 'feat: a' 2>'$WORKDIR/sl.err' && grep -q 'pre-commit refused .*missing: lib/secrets.sh' '$WORKDIR/sl.err'"
+echo "0.3.6" >"$SL/.specify/gates/.runtime-version"
+check "secrets lib: a 0.3.x runtime commits, scan skipped with a warning" 0 \
+    bash -c "cd '$SL' && git commit -q -m 'feat: a' 2>'$WORKDIR/sl.err' && grep -q 'secret and forbidden-file scan skipped' '$WORKDIR/sl.err'"
 
 # ===========================================================================
 # Part D: agent-boundary protect-files consumes protected_files.extra
@@ -651,7 +707,9 @@ check "never-projected: no 'unversioned' leniency" 1 \
 cp "$GITHOOKS/pre-commit" "$NP/.git/hooks/"
 chmod +x "$NP/.git/hooks/pre-commit"
 check "never-projected: a branch from before adoption still commits" 0 \
-    bash -c "cd '$NP' && echo x >x.txt && git add x.txt && git commit -q -m 'feat: x'"
+    bash -c "cd '$NP' && echo x >x.txt && git add x.txt && git commit -q -m 'feat: x' 2>'$WORKDIR/np.err'"
+check "never-projected: the skipped secret scan is announced" 0 \
+    grep -q "gates not adopted); secret and forbidden-file scan skipped" "$WORKDIR/np.err"
 
 # ===========================================================================
 # Part E2c: hook stubs (issue #59). .git/hooks holds the stub, which runs

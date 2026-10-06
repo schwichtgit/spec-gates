@@ -33,7 +33,8 @@ stage('Quality Gates') {
             // not a dirty tree.
             sh 'bash .specify/gates/canary.sh'
             // PR title (CHANGE_TITLE; Jenkins exposes no description) and
-            // Protected-Change declarations across origin/CHANGE_TARGET..HEAD.
+            // Protected-Change declarations across origin/CHANGE_TARGET..HEAD,
+            // and the pre-commit secret and forbidden-file scan over each commit.
             // Needs a full-history checkout; skips itself outside PR builds.
             // In a PR build it runs the BASE revision's pr-check.sh and lib
             // against the PR checkout (GATES_RUNTIME_DIR), so a PR cannot

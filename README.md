@@ -530,8 +530,11 @@ CI) apply the same rules, from `lib/message.sh`:
 `git cherry-pick`, `git rebase`, `git am` and `git revert` (also with
 `--continue` or `--skip`) create commits without running any commit hook,
 so `pre-commit` and `commit-msg` never see them and only CI checks the
-result. The agent's Bash hook asks before each of them, as it does for
-`--no-verify`.
+result: `pr-check.sh` scans every commit in the pull request for secrets
+and forbidden files with the `pre-commit` rules, and checks
+protected-change trailers and the PR text; it does not re-check each
+commit message. The agent's Bash hook asks before each of them, as it
+does for `--no-verify`.
 
 **Agent attribution.** Claude Code adds a `Co-Authored-By: Claude …`
 trailer to commits and a "Generated with Claude Code" line to PRs by

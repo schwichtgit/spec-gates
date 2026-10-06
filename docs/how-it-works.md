@@ -48,7 +48,9 @@ spec-gates uses four of them:
   recognized as that file. A path whose links it cannot resolve (a loop)
   asks.
 - `PreToolUse(Bash)` → `validate-bash.sh`: refuses destructive commands
-  (`rm` of root, home or a path outside the temp directories, force push
+  (`rm` of root, home or a path outside the temp directories, read from
+  the command without its data: quoted heredoc bodies not fed to a shell,
+  literal commit messages and `gh` bodies, redirect targets; force push
   with `-f`, `--force`, `--force-with-lease`, `--mirror` or a `+ref`
   refspec, hard reset, `chmod 777`, piping a download into a shell,
   discarding the whole working tree with `git checkout`, `git restore` or
@@ -177,7 +179,14 @@ neither the refusal of commits to `main` nor the secret scan nor the
 message rules see them. The same holds for `--continue` and `--skip`,
 which replay further commits (only a `cherry-pick` stopped on a conflict
 runs the hooks for that one commit). Their result is checked only at the CI
-boundary. The agent's Bash hook asks before each of them, as it does for
+boundary, where `pr-check.sh` repeats these `pre-commit` and `commit-msg`
+checks over the pull request's commits: the secret and forbidden-file scan
+(the same rules, from `lib/secrets.sh`, over the files each commit adds or
+changes) and the protected-change trailers, plus the message rules for the
+PR title and description (the commit on a squash merge). It does not
+repeat the commit-message rules for each commit, nor the refusal of
+commits to `main`, which branch protection covers on the server. The
+agent's Bash hook asks before each of them, as it does for
 `--no-verify`; `--abort`, `--quit`, `--edit-todo` and
 `--show-current-patch` create no commit and are allowed.
 
@@ -363,6 +372,17 @@ branch does not re-check the base's own changes. A declaration in the descriptio
 squash merge keeps the description and drops the commit trailers. GitHub
 re-runs it when a PR is `edited`; GitLab starts no pipeline on an MR edit,
 so a fresh pipeline is needed after one.
+
+It also runs the `pre-commit` secret and forbidden-file scan, with the
+same rules (`lib/secrets.sh`), over every commit in the range, so commits
+that never ran `pre-commit` (`git cherry-pick`, `rebase`, `am`, `revert`,
+`--no-verify`) are scanned before merge. Each commit is scanned for the
+files it adds or changes (a rename under its new name), in its own copy,
+and a finding is reported under the commit's hash and subject. A secret
+added and removed again within the range still fails: it is in the history
+the branch pushed and would merge, so rotate it and rewrite the branch. A
+merge commit is scanned for the paths whose result differs from every
+parent, so merging the base in does not re-scan the base's files.
 
 A base policy that is not valid (broken JSON, wrong shape) stops the check
 with exit 2 and names the problem, as `verify.sh` refuses it; it never
