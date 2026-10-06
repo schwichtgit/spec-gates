@@ -87,6 +87,185 @@ LROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 
 BLOCKED=""
 
+# Text that changes no file (#195): the literal message of a `git commit
+# -m` (also a quoted "$(cat <<'EOF' ...)" heredoc) and the literal body,
+# title or notes of a `gh` command are blanked in BCMD (and in RMCMD for
+# the rm guard below), and PCMD also drops the segments of read-only commands (grep, cat, ls, ...),
+# so `grep -n rm <protected path>` and a commit message that names one do
+# not ask. A path named in either still counts (NCMD) when another segment
+# changes files; a redirect is read from BCMD, so `grep x > <protected
+# path>` still asks. A command whose quoting the tokenizer cannot follow
+# exactly, or that also runs a shell, eval or xargs, is left as it is.
+inert_awk() {
+    cat <<'AWK'
+    # mode=b: the command with literal commit messages (and gh bodies,
+    # titles, notes) blanked; mode=p:
+    # also without its read-only segments. Anything whose quoting this
+    # cannot follow exactly (an unbalanced quote, $'...', ${...}, a
+    # command substitution other than the quoted heredoc, a heredoc, a
+    # comment) and a command that feeds a shell, eval or xargs print the
+    # command unchanged.
+    function base(w) { sub(/.*\//, "", w); return w }
+    function endword(   o) {
+        if (!inw) return
+        o = rw
+        if (redir) redir = 0
+        else if (cmd == "") {
+            if (wt !~ /^[A-Za-z_][A-Za-z0-9_]*=/) { cmd = base(wt); if (cmd == ".") guard = 1 }
+        } else if (cmd == "git" && sub_ == "") {
+            if (pend) pend = 0
+            else if (wt ~ /^(-C|-c|--git-dir|--work-tree|--namespace)$/) pend = 1
+            else if (wt !~ /^-/) sub_ = wt
+        } else if (sub_ == "commit" && wlit) {
+            if (prev ~ /^-[a-zA-Z]*m$/ || prev == "--message") o = "''"
+            else if (wt ~ /^--message=/) o = "--message=''"
+        } else if (cmd == "gh" && wlit) {
+            if (prev ~ /^(-b|--body|-t|--title|--notes)$/) o = "''"
+            else if (wt ~ /^--(body|title|notes)=/) { o = wt; sub(/=.*/, "=''", o) }
+        }
+        if (base(wt) ~ /^(sh|bash|zsh|dash|ksh|fish|eval|xargs|source|parallel)$/) guard = 1
+        seg = seg o; prev = wt
+        inw = 0; rw = ""; wt = ""; wlit = 1
+    }
+    function endseg() {
+        endword()
+        bout = bout seg
+        if (cmd !~ /^(grep|egrep|fgrep|cat|head|tail|wc|ls|stat|diff|cmp|echo|printf|type|which|cd|pushd|popd|true)$/)
+            pout = pout seg
+        seg = ""; cmd = ""; sub_ = ""; pend = 0; prev = ""; redir = 0
+    }
+    function emit(c) { seg = seg c }
+    # A "$(cat <<'X' ... X)" heredoc at position p of s: its end, or 0.
+    # An unquoted delimiter counts only when the body expands nothing.
+    function heredoc(p,    r, d, q, e, body, k) {
+        r = substr(s, p)
+        if (!match(r, /^\$\([ \t]*cat[ \t]*<<-?[ \t]*/)) return 0
+        r = substr(r, RLENGTH + 1); e = RLENGTH
+        q = 0
+        if (match(r, /^'[A-Za-z0-9_]+'/) || match(r, /^"[A-Za-z0-9_]+"/)) { d = substr(r, 2, RLENGTH - 2); q = 1 }
+        else if (match(r, /^\\[A-Za-z0-9_]+/)) { d = substr(r, 2, RLENGTH - 1); q = 1 }
+        else if (match(r, /^[A-Za-z0-9_]+/)) d = substr(r, 1, RLENGTH)
+        else return 0
+        e += RLENGTH; r = substr(r, RLENGTH + 1)
+        if (!match(r, /^[ \t]*\n/)) return 0
+        e += RLENGTH; r = substr(r, RLENGTH + 1)
+        body = "\n" r
+        k = index(body, "\n" d "\n")
+        if (k == 0) return 0
+        if (!q && substr(body, 1, k) ~ /[$`\\]/) return 0
+        r = substr(body, k + length(d) + 2)
+        if (!match(r, /^[ \t\n]*\)/)) return 0
+        return p + e + k + length(d) + RLENGTH - 1
+    }
+    { s = s (NR > 1 ? "\n" : "") $0 }
+    END {
+        n = length(s); i = 1; wlit = 1
+        while (i <= n) {
+            c = substr(s, i, 1)
+            if (c == "'") {
+                j = index(substr(s, i + 1), "'")
+                if (j == 0) { bail = 1; break }
+                rw = rw substr(s, i, j + 1); wt = wt substr(s, i + 1, j - 1); inw = 1
+                i += j + 1; continue
+            }
+            if (c == "\"") {
+                inw = 1; rw = rw c; i++
+                while (i <= n && substr(s, i, 1) != "\"") {
+                    c = substr(s, i, 1)
+                    if (c == "$" && substr(s, i + 1, 1) == "(") {
+                        e = heredoc(i)
+                        if (!e) { bail = 1; break }
+                        rw = rw substr(s, i, e - i + 1); wt = wt "x"; i = e + 1; continue
+                    }
+                    if (c == "`" || (c == "$" && substr(s, i + 1, 1) == "{")) { bail = 1; break }
+                    if (c == "$" || c == "\\") wlit = 0
+                    if (c == "\\") { rw = rw substr(s, i, 2); wt = wt substr(s, i + 1, 1); i += 2; continue }
+                    rw = rw c; wt = wt c; i++
+                }
+                if (bail || i > n) { bail = 1; break }
+                rw = rw "\""; i++; continue
+            }
+            if (c == "\\") { rw = rw substr(s, i, 2); wt = wt substr(s, i + 1, 1); wlit = 0; inw = 1; i += 2; continue }
+            if (c == " " || c == "\t") { endword(); emit(c); i++; continue }
+            if (c == "`" || (c == "#" && !inw) || (c == "$" && substr(s, i + 1, 1) ~ /[('{]/) \
+                || (c == "<" && substr(s, i + 1, 1) ~ /[(<]/) || (c == ">" && substr(s, i + 1, 1) == "(")) {
+                bail = 1; break
+            }
+            if (c == "\n" || c == ";" || c == "&" || c == "|" || c == "(" || c == ")") {
+                endseg(); bout = bout c; pout = pout c; i++; continue
+            }
+            if (c == "<" || c == ">") { endword(); emit(c); redir = 1; i++; continue }
+            if (c == "$") wlit = 0
+            rw = rw c; wt = wt c; inw = 1; i++
+        }
+        if (!bail) endseg()
+        if (bail || guard) print s
+        else if (mode == "p") print pout
+        else print bout
+    }
+AWK
+}
+INERT_AWK="$(inert_awk)"
+
+# The command without the bodies of its quoted heredocs (<<'X', <<"X",
+# <<\X), which are data: `cat > notes.md <<'EOF'` may quote an rm example
+# (#218). Bodies stay when any word outside them names a shell or an
+# interpreter that could run them (bash <<'EOF', cat <<'EOF' | sh, a
+# script written and then run with bash), and everything stays when the
+# quoting or a terminator line cannot be followed exactly.
+quoted_heredoc_awk() {
+    cat <<'AWK'
+    # One pass over the lines; a body is the lines after the line that
+    # holds its operator, up to the terminator line.
+    { ln[++n] = $0 }
+    END {
+        q = ""; nb = ""; k = 1
+        while (k <= n) {
+            s = ln[k]; m = length(s); np = 0; i = 1
+            while (i <= m) {
+                c = substr(s, i, 1)
+                if (q == "'") { if (c == "'") q = ""; i++; continue }
+                if (c == "\\") { i += 2; continue }
+                if (q == "\"") { if (c == "\"") q = ""; i++; continue }
+                if (c == "'" || c == "\"") { q = c; i++; continue }
+                if (c == "<" && substr(s, i + 1, 1) == "<" && substr(s, i + 2, 1) != "<" && substr(s, i - 1, 1) != "<") {
+                    r = substr(s, i + 2); t = 0
+                    if (substr(r, 1, 1) == "-") { t = 1; r = substr(r, 2) }
+                    match(r, /^[ \t]*/); r = substr(r, RLENGTH + 1)
+                    if (match(r, /^'[^']+'/) || match(r, /^"[^"]+"/)) { d = substr(r, 2, RLENGTH - 2); hq = 1 }
+                    else if (match(r, /^\\[A-Za-z0-9_.-]+/)) { d = substr(r, 2, RLENGTH - 1); hq = 1 }
+                    else if (match(r, /^[A-Za-z0-9_.-]+/)) { d = substr(r, 1, RLENGTH); hq = 0 }
+                    else { i += 2; continue }
+                    np++; pd[np] = d; pq[np] = hq; pt[np] = t
+                    i += 2; continue
+                }
+                i++
+            }
+            nb = nb s "\n"; k++
+            for (h = 1; h <= np; h++) {
+                b = k
+                while (k <= n) {
+                    t = ln[k]; if (pt[h]) sub(/^\t+/, "", t)
+                    if (t == pd[h]) break
+                    k++
+                }
+                if (k > n) { all = 1; break }
+                if (pq[h]) for (j = b; j < k; j++) drop[j] = 1
+                nb = nb ln[k] "\n"; k++
+            }
+            if (all) break
+        }
+        if (q != "" || nb ~ /(^|[\n;&|(`])[ \t]*\.[ \t]/) all = 1
+        m = all ? 0 : split(nb, w, /[^A-Za-z0-9_.\/-]+/)
+        for (j = 1; j <= m; j++) {
+            x = w[j]; sub(/.*\//, "", x)
+            if (x ~ /^(sh|bash|zsh|dash|ksh|ash|mksh|fish|eval|exec|xargs|source|parallel|ssh|su|python[0-9.]*|perl|ruby|node|deno|bun|php|osascript)$/) all = 1
+        }
+        for (j = 1; j <= n; j++) if (all || !drop[j]) print ln[j]
+    }
+AWK
+}
+
 # Destructive filesystem operations (#68). `rm` must be a whole word (a path
 # prefix such as /bin/rm is fine), so "brainstorm /" does not match. Two
 # rules over each rm command segment:
@@ -94,17 +273,35 @@ BLOCKED=""
 #   2. any other absolute path -- blocked unless under a temp root (/tmp,
 #      /private/tmp, /var/folders, /private/var/folders, $TMPDIR), so
 #      `rm -rf /tmp/build` is fine while `rm -rf /var/data` is not.
+# Both read RMCMD, the command without its data (#218, #205): quoted
+# heredoc bodies, literal commit messages and gh bodies are left out, a
+# backtick ends a segment, and a redirect target (`grep -n rm x >
+# /dev/null`, `rm -f x 2>/dev/null`) is not an rm argument.
 # POSIX classes only: \b and \s differ between GNU grep (Linux/CI) and BSD
 # grep (macOS).
+RMCMD="$(printf '%s\n' "$COMMAND" | awk "$(quoted_heredoc_awk)" | awk -v mode=b "$INERT_AWK")"
 # shellcheck disable=SC2016
 RM_TARGET='(/|/\*|~|~/|~/\*|\$HOME|\$HOME/|\$HOME/\*|\$\{HOME\}|\$\{HOME\}/|"\$HOME"|"\$HOME/")'
-if grep -qE '(^|[^[:alnum:]_.-])rm[[:space:]]+([^;&|]*[[:space:]])?'"$RM_TARGET"'([[:space:]]|[;&|)]|$)' <<<"$COMMAND"; then
+# shellcheck disable=SC2016  # the backtick is a literal segment end
+if grep -qE '(^|[^[:alnum:]_.-])rm[[:space:]]+([^;&|`]*[[:space:]])?'"$RM_TARGET"'([[:space:]]|[;&|)`]|$)' <<<"$RMCMD"; then
     BLOCKED="Destructive rm command targeting root, home, or wildcard"
 fi
 if [[ -z "$BLOCKED" ]]; then
     while IFS= read -r _seg; do
+        _skip=0
         # shellcheck disable=SC2086  # deliberate word split of the arguments
         for _arg in ${_seg#*rm}; do
+            if [[ "$_skip" -eq 1 ]]; then
+                _skip=0
+                continue
+            fi
+            case "$_arg" in
+                '>' | '>>' | '>|' | '&>' | '&>>' | '<' | '<<<' | [0-9]'>' | [0-9]'>>' | [0-9]'<')
+                    _skip=1
+                    continue
+                    ;;
+                '>'* | '<'* | '&>'* | [0-9]'>'* | [0-9]'<'*) continue ;;
+            esac
             _arg="${_arg#[\"\']}"
             _arg="${_arg%[\"\']}"
             # The quoted $TMPDIR patterns are literal on purpose: they match
@@ -116,7 +313,7 @@ if [[ -z "$BLOCKED" ]]; then
                 /*) BLOCKED="Destructive rm command on an absolute path outside the temp directories ($_arg)" ;;
             esac
         done
-    done < <(echo "$COMMAND" | grep -oE '(^|[^[:alnum:]_.-])rm[[:space:]]+[^;&|]*' || true)
+    done < <(grep -oE '(^|[^[:alnum:]_.-])rm[[:space:]]+[^;&|`]*' <<<"$RMCMD" || true)
 fi
 
 # Force push
@@ -704,120 +901,6 @@ normalize() { printf '%s\n' "$1" | awk -v root="$LROOT" -v rroot="${LREAL:-$LROO
           print }' \
     | tr '[:upper:]' '[:lower:]'; }
 NCMD="$(normalize "$COMMAND")"
-# Text that changes no file (#195): the literal message of a `git commit
-# -m` (also a quoted "$(cat <<'EOF' ...)" heredoc) is blanked in BCMD, and
-# PCMD also drops the segments of read-only commands (grep, cat, ls, ...),
-# so `grep -n rm <protected path>` and a commit message that names one do
-# not ask. A path named in either still counts (NCMD) when another segment
-# changes files; a redirect is read from BCMD, so `grep x > <protected
-# path>` still asks. A command whose quoting the tokenizer cannot follow
-# exactly, or that also runs a shell, eval or xargs, is left as it is.
-inert_awk() {
-    cat <<'AWK'
-    # mode=b: the command with literal commit messages blanked; mode=p:
-    # also without its read-only segments. Anything whose quoting this
-    # cannot follow exactly (an unbalanced quote, $'...', ${...}, a
-    # command substitution other than the quoted heredoc, a heredoc, a
-    # comment) and a command that feeds a shell, eval or xargs print the
-    # command unchanged.
-    function base(w) { sub(/.*\//, "", w); return w }
-    function endword(   o) {
-        if (!inw) return
-        o = rw
-        if (redir) redir = 0
-        else if (cmd == "") {
-            if (wt !~ /^[A-Za-z_][A-Za-z0-9_]*=/) { cmd = base(wt); if (cmd == ".") guard = 1 }
-        } else if (cmd == "git" && sub_ == "") {
-            if (pend) pend = 0
-            else if (wt ~ /^(-C|-c|--git-dir|--work-tree|--namespace)$/) pend = 1
-            else if (wt !~ /^-/) sub_ = wt
-        } else if (sub_ == "commit" && wlit) {
-            if (prev ~ /^-[a-zA-Z]*m$/ || prev == "--message") o = "''"
-            else if (wt ~ /^--message=/) o = "--message=''"
-        }
-        if (base(wt) ~ /^(sh|bash|zsh|dash|ksh|fish|eval|xargs|source|parallel)$/) guard = 1
-        seg = seg o; prev = wt
-        inw = 0; rw = ""; wt = ""; wlit = 1
-    }
-    function endseg() {
-        endword()
-        bout = bout seg
-        if (cmd !~ /^(grep|egrep|fgrep|cat|head|tail|wc|ls|stat|diff|cmp|echo|printf|type|which|cd|pushd|popd|true)$/)
-            pout = pout seg
-        seg = ""; cmd = ""; sub_ = ""; pend = 0; prev = ""; redir = 0
-    }
-    function emit(c) { seg = seg c }
-    # A "$(cat <<'X' ... X)" heredoc at position p of s: its end, or 0.
-    # An unquoted delimiter counts only when the body expands nothing.
-    function heredoc(p,    r, d, q, e, body, k) {
-        r = substr(s, p)
-        if (!match(r, /^\$\([ \t]*cat[ \t]*<<-?[ \t]*/)) return 0
-        r = substr(r, RLENGTH + 1); e = RLENGTH
-        q = 0
-        if (match(r, /^'[A-Za-z0-9_]+'/) || match(r, /^"[A-Za-z0-9_]+"/)) { d = substr(r, 2, RLENGTH - 2); q = 1 }
-        else if (match(r, /^\\[A-Za-z0-9_]+/)) { d = substr(r, 2, RLENGTH - 1); q = 1 }
-        else if (match(r, /^[A-Za-z0-9_]+/)) d = substr(r, 1, RLENGTH)
-        else return 0
-        e += RLENGTH; r = substr(r, RLENGTH + 1)
-        if (!match(r, /^[ \t]*\n/)) return 0
-        e += RLENGTH; r = substr(r, RLENGTH + 1)
-        body = "\n" r
-        k = index(body, "\n" d "\n")
-        if (k == 0) return 0
-        if (!q && substr(body, 1, k) ~ /[$`\\]/) return 0
-        r = substr(body, k + length(d) + 2)
-        if (!match(r, /^[ \t\n]*\)/)) return 0
-        return p + e + k + length(d) + RLENGTH - 1
-    }
-    { s = s (NR > 1 ? "\n" : "") $0 }
-    END {
-        n = length(s); i = 1; wlit = 1
-        while (i <= n) {
-            c = substr(s, i, 1)
-            if (c == "'") {
-                j = index(substr(s, i + 1), "'")
-                if (j == 0) { bail = 1; break }
-                rw = rw substr(s, i, j + 1); wt = wt substr(s, i + 1, j - 1); inw = 1
-                i += j + 1; continue
-            }
-            if (c == "\"") {
-                inw = 1; rw = rw c; i++
-                while (i <= n && substr(s, i, 1) != "\"") {
-                    c = substr(s, i, 1)
-                    if (c == "$" && substr(s, i + 1, 1) == "(") {
-                        e = heredoc(i)
-                        if (!e) { bail = 1; break }
-                        rw = rw substr(s, i, e - i + 1); wt = wt "x"; i = e + 1; continue
-                    }
-                    if (c == "`" || (c == "$" && substr(s, i + 1, 1) == "{")) { bail = 1; break }
-                    if (c == "$" || c == "\\") wlit = 0
-                    if (c == "\\") { rw = rw substr(s, i, 2); wt = wt substr(s, i + 1, 1); i += 2; continue }
-                    rw = rw c; wt = wt c; i++
-                }
-                if (bail || i > n) { bail = 1; break }
-                rw = rw "\""; i++; continue
-            }
-            if (c == "\\") { rw = rw substr(s, i, 2); wt = wt substr(s, i + 1, 1); wlit = 0; inw = 1; i += 2; continue }
-            if (c == " " || c == "\t") { endword(); emit(c); i++; continue }
-            if (c == "`" || (c == "#" && !inw) || (c == "$" && substr(s, i + 1, 1) ~ /[('{]/) \
-                || (c == "<" && substr(s, i + 1, 1) ~ /[(<]/) || (c == ">" && substr(s, i + 1, 1) == "(")) {
-                bail = 1; break
-            }
-            if (c == "\n" || c == ";" || c == "&" || c == "|" || c == "(" || c == ")") {
-                endseg(); bout = bout c; pout = pout c; i++; continue
-            }
-            if (c == "<" || c == ">") { endword(); emit(c); redir = 1; i++; continue }
-            if (c == "$") wlit = 0
-            rw = rw c; wt = wt c; inw = 1; i++
-        }
-        if (!bail) endseg()
-        if (bail || guard) print s
-        else if (mode == "p") print pout
-        else print bout
-    }
-AWK
-}
-INERT_AWK="$(inert_awk)"
 BCMD="$(normalize "$(printf '%s\n' "$COMMAND" | awk -v mode=b "$INERT_AWK")")"
 PCMD="$(normalize "$(printf '%s\n' "$COMMAND" | awk -v mode=p "$INERT_AWK")")"
 # A write redirect other than to /dev/null, /dev/std* or a file descriptor.

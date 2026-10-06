@@ -116,6 +116,16 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   `protected_files.extra` in protect-files (an entry such as
   `**/secrets/*.json` did not protect a file at the repository root from
   the agent) now match as documented.
+- **The rm guard ignores Markdown in a quoted heredoc** (#218).
+  `cat > notes.md <<'EOF'` with an rm example in its body was refused,
+  and a slash before the closing backtick of inline code was read as the
+  root path.
+  A quoted heredoc body, a literal `git commit -m` message and a literal
+  `gh` `--body`, `--title` or `--notes` value are now data, and a backtick
+  ends an rm segment. A heredoc fed to a shell or interpreter still counts.
+- **`grep -n rm <path> > /dev/null` is no longer refused** (#205). A
+  redirect target is not an rm argument, so `/dev/null` after `>` or `2>`
+  no longer reads as an absolute rm target.
 - **`verify.sh` without `--boundary` warns instead of refusing** (#216).
   A 0.3.6 caller such as `"gates": "bash .specify/gates/verify.sh"` broke
   on upgrade. It now runs as in 0.3.6 (every gate, boundary

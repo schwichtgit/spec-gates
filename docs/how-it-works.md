@@ -48,7 +48,9 @@ spec-gates uses four of them:
   recognized as that file. A path whose links it cannot resolve (a loop)
   asks.
 - `PreToolUse(Bash)` → `validate-bash.sh`: refuses destructive commands
-  (`rm` of root, home or a path outside the temp directories, force push
+  (`rm` of root, home or a path outside the temp directories, read from
+  the command without its data: quoted heredoc bodies not fed to a shell,
+  literal commit messages and `gh` bodies, redirect targets; force push
   with `-f`, `--force`, `--force-with-lease`, `--mirror` or a `+ref`
   refspec, hard reset, `chmod 777`, piping a download into a shell,
   discarding the whole working tree with `git checkout`, `git restore` or

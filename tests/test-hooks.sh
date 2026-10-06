@@ -234,6 +234,43 @@ for c in "${ALLOW_CMDS[@]}"; do
     payload="$(jq -nc --arg c "$c" '{session_id:"s",cwd:"/Users/x/proj",transcript_path:"/Users/x/t.jsonl",tool_input:{command:$c,description:"d"}}')"
     check "raw mode allows: $c" 0 bash -c "printf '%s' \"\$1\" | PATH='$NOJQ' '$HOOKS/validate-bash.sh'" _ "$payload"
 done
+# The rm guard reads only real rm invocations (#218, #205): a quoted
+# heredoc body, a literal commit message or gh body, and a redirect target
+# are not rm arguments. A heredoc fed to a shell or interpreter, an
+# unquoted one, a substitution and a real rm stay blocked. Both modes.
+# shellcheck disable=SC2016  # literal backticks and $(...) are the command text
+RM_ALLOW=(
+    $'cat > notes.md <<\'EOF2\'\n- `rm -rf /tmp/<dir>` and `echo brainstorm /` pass; root as a later\nEOF2'
+    $'cat <<"EOF" > a.md\nrm -rf /etc\nEOF'
+    $'cat <<-\'EOF\' > a.md\n\trm -rf /\n\tEOF\necho done'
+    $'cat > notes.md <<\'EOF\'\nrm -rf / here\nEOF\ngit add . && git commit -m \'docs: notes\''
+    'echo '\''see `rm -f x` and `ls /`'\'''
+    'grep -n rm .specify/gates/policy.json > /dev/null'
+    'rm -f build/x 2>/dev/null'
+    'rm -f build/x > /dev/null 2>&1'
+    'git commit -m '\''docs: note that `rm -rf /` is blocked'\'''
+    $'git commit -m "$(cat <<\'EOF\'\nfix: block rm -rf / harder\nEOF\n)"'
+    'gh pr create --title x --body '\''mentions rm -rf /etc in prose'\'''
+    'gh pr create --title x --body="rm -rf / is blocked"'
+)
+# shellcheck disable=SC2016
+RM_BLOCK=(
+    'sudo rm -rf /' "sh -c 'rm -rf /'" 'bash -c "rm -rf /etc"' 'echo `rm -rf /`'
+    'echo $(rm -rf /etc)' 'rm -rf /etc 2>/dev/null' 'rm -rf / > /dev/null'
+    'git commit -m "$(rm -rf /)"' 'gh pr create --body "$(rm -rf /etc)"'
+    $'bash <<EOF\nrm -rf /\nEOF' $'bash <<\'EOF\'\nrm -rf /\nEOF'
+    $'cat <<\'EOF\' | sh\nrm -rf /etc\nEOF' $'cat > s.sh <<\'EOF\'\nrm -rf /\nEOF\nbash s.sh'
+    $'python3 - <<\'EOF\'\nimport os; os.system(\'rm -rf /\')\nEOF'
+    $'cat <<EOF > a.md\nrm -rf /etc\nEOF' $'cat <<\'EOF\' > a.md\nrm -rf /etc\nEON'
+    $'cat <<\'EOF\' > a.md\nx\nEOF\nrm -rf /' $'cat <<\'EOF\' > a.md\nx\nEOF\n. a.md; rm -rf /etc'
+)
+for c in "${RM_ALLOW[@]}" "${RM_BLOCK[@]}"; do
+    want=2
+    for a in "${RM_ALLOW[@]}"; do [[ "$a" == "$c" ]] && want=0; done
+    payload="$(jq -nc --arg c "$c" '{tool_input:{command:$c}}')"
+    check "rm guard jq mode ($want): ${c//$'\n'/ / }" "$want" bash -c "printf '%s' \"\$1\" | '$HOOKS/validate-bash.sh'" _ "$payload"
+    check "rm guard raw mode ($want): ${c//$'\n'/ / }" "$want" bash -c "printf '%s' \"\$1\" | PATH='$NOJQ' '$HOOKS/validate-bash.sh'" _ "$payload"
+done
 check "raw mode allow names doctor" 0 bash -c "printf '%s' '{\"tool_input\":{\"command\":\"ls\"}}' | PATH='$NOJQ' '$HOOKS/validate-bash.sh' 2>&1 >/dev/null | grep -q 'speckit.gates.doctor'"
 check "raw mode: empty command allowed" 0 bash -c "printf '%s' '{\"tool_input\":{\"command\":\"\"}}' | PATH='$NOJQ' '$HOOKS/validate-bash.sh'"
 askcheck "raw mode: \\u escape in the command asks" '{"tool_input":{"command":"\u0072m -rf /"}}' validate-bash.sh PATH="$NOJQ"
