@@ -356,6 +356,24 @@ rc_is "a fresh install lists no settings" 0 "$D" --skip-canary
 ok "no notice on a fresh install" bash -c "! grep -q 'new policy settings' <<<\"\$1\"" _ "$OUT"
 
 echo ""
+echo "=== callers without --boundary (#216) ==="
+fixture
+printf '{\n  "scripts": {\n    "gates": "bash .specify/gates/verify.sh",\n    "gates:ci": "bash .specify/gates/verify.sh --boundary ci"\n  }\n}\n' >"$D/package.json"
+printf 'gates:\n\tbash .specify/gates/verify.sh \\\n\t  --boundary git\nold:\n\tbash .specify/gates/verify.sh --json\n' >"$D/Makefile"
+rc_is "dry run with callers that omit --boundary" 0 "$D" --dry-run --skip-canary
+ok "the notice is printed" grep -q 'these callers run verify.sh without --boundary' <<<"$OUT"
+ok "it names the package.json script" grep -qx 'project:   package.json:3' <<<"$OUT"
+ok "it names the Makefile recipe" grep -qx 'project:   Makefile:5' <<<"$OUT"
+ok "it names the fix" grep -qF 'add --boundary agent|git|ci to each' <<<"$OUT"
+ok "a script with --boundary is not named" bash -c "! grep -q 'package.json:4' <<<\"\$1\"" _ "$OUT"
+ok "a continued --boundary is not named" bash -c "! grep -q 'Makefile:2' <<<\"\$1\"" _ "$OUT"
+rc_is "the full run prints it too" 0 "$D" --skip-canary
+ok "full run: notice printed" grep -qx 'project:   package.json:3' <<<"$OUT"
+fixture
+rc_is "no callers, no notice" 0 "$D" --skip-canary
+ok "no notice without callers" bash -c "! grep -q 'without --boundary' <<<\"\$1\"" _ "$OUT"
+
+echo ""
 echo "=== lint scope (#73) ==="
 fixture
 rc_is "no prettier in the repo: nothing reported" 0 "$D" --skip-canary

@@ -546,6 +546,14 @@ if declare -f gates_ci_missing >/dev/null 2>&1 && [[ -d "$PROJECT_ROOT/.specify/
             echo "${REC}no CI pipeline runs verify.sh --boundary ci — project one with /speckit.gates.ci"
         fi
     fi
+    # Callers written for 0.3.6 run verify.sh without --boundary (#216): it
+    # still runs them, with a deprecation warning, so a nudge, not a gap.
+    if declare -f gates_verify_unbounded >/dev/null 2>&1; then
+        while IFS= read -r caller; do
+            [[ -n "$caller" ]] \
+                && echo "${REC}$caller runs verify.sh without --boundary (deprecated; a later release may refuse it) — add --boundary agent|git|ci"
+        done <<<"$(gates_verify_unbounded "$PROJECT_ROOT")"
+    fi
 fi
 
 # Execute bits on projected scripts (issue #34): zip installs extract without

@@ -308,12 +308,29 @@ usage_err "a repeated --boundary" '--boundary given more than once' --boundary c
 usage_err "--accept without a value" '--accept needs a feature name or all' --boundary ci --accept
 usage_err "--accept with an empty value" '--accept needs a feature name or all' --boundary ci --accept ""
 ATT_BEFORE="$(cat "$DE/.specify/gates/attestations.jsonl" 2>/dev/null | wc -l | tr -d ' ')"
-usage_err "no --boundary" '--boundary is required' --json
-usage_err "no arguments" '--boundary is required'
-expect "no --boundary: the refusal object says unspecified" \
-    "$(CLAUDE_PROJECT_DIR="$DE" bash "$DE/.specify/gates/verify.sh" --json 2>/dev/null | jq -r '.result + " " + .boundary')" "refused unspecified"
-expect "no --boundary: no attestation written" \
-    "$(cat "$DE/.specify/gates/attestations.jsonl" 2>/dev/null | wc -l | tr -d ' ')" "$ATT_BEFORE"
+# No --boundary warns and runs as 0.3.6 did (#216): every gate, boundary
+# "unspecified", the gates' exit code; stdout stays one JSON object.
+rc=0
+NB_OUT="$(CLAUDE_PROJECT_DIR="$DE" bash "$DE/.specify/gates/verify.sh" --json 2>"$WORKDIR/nb.err")" || rc=$?
+expect "no --boundary: runs the gates (exit 0)" "$rc" 0
+expect "no --boundary: stdout is one JSON object" \
+    "$(printf '%s\n' "$NB_OUT" | wc -l | tr -d ' '):$(jq -e . <<<"$NB_OUT" >/dev/null 2>&1 && echo json)" "1:json"
+expect "no --boundary: result object says unspecified, with gates" \
+    "$(jq -r '"\(.boundary) \(has("result")) \(.gates | length > 0)"' <<<"$NB_OUT")" "unspecified false true"
+expect "no --boundary: one stderr deprecation warning naming the fix" \
+    "$(grep -c 'without --boundary is deprecated.*Pass --boundary agent|git|ci' "$WORKDIR/nb.err")" 1
+expect "no --boundary: no usage line" "$(grep -c 'usage: verify.sh' "$WORKDIR/nb.err")" 0
+expect "no --boundary: the attestation records unspecified" \
+    "$(($(wc -l <"$DE/.specify/gates/attestations.jsonl" | tr -d ' ') - ATT_BEFORE)):$(tail -n 1 "$DE/.specify/gates/attestations.jsonl" | jq -r .boundary)" "1:unspecified"
+rc=0
+NB_TEXT="$(CLAUDE_PROJECT_DIR="$DE" bash "$DE/.specify/gates/verify.sh" 2>&1)" || rc=$?
+expect "no arguments: runs the gates (exit 0)" "$rc" 0
+expect "no arguments: text report says boundary=unspecified" \
+    "$(grep -c '^gates: boundary=unspecified ' <<<"$NB_TEXT")" 1
+# A failing gate still fails the unspecified run.
+rc=0
+CLAUDE_PROJECT_DIR="$DF" bash "$DF/.specify/gates/verify.sh" >/dev/null 2>&1 || rc=$?
+expect "no --boundary: a failing gate exits 2" "$rc" 2
 for b in agent git ci; do
     expect "--boundary $b accepted" "$(CLAUDE_PROJECT_DIR="$DE" bash "$DE/.specify/gates/verify.sh" --boundary "$b" >/dev/null 2>&1 && echo 0 || echo $?)" 0
 done

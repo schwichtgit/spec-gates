@@ -109,6 +109,13 @@ add` forms at the agent boundary. `project.sh` lists new settings like
 
 ### Fixed
 
+- **`verify.sh` without `--boundary` warns instead of refusing** (#216).
+  A 0.3.6 caller such as `"gates": "bash .specify/gates/verify.sh"` broke
+  on upgrade. It now runs as in 0.3.6 (every gate, boundary
+  `unspecified`) with a stderr deprecation warning naming
+  `--boundary agent|git|ci`; `GATES_POLICY_FILE` is ignored for such a
+  run. `project.sh` and doctor name callers in `package.json`, Taskfiles
+  and Makefiles that omit `--boundary`.
 - **A project rule's timeout covers what the rule started** (#189). A
   rule that exited after starting a background child (`(sleep 25) &`,
   `nohup … &`) made the hook wait for the child, past the timeout or
@@ -194,9 +201,8 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   `commit-msg`; validate-bash allowed all four. It now asks before each
   (also `--continue` and `--skip`), naming the CI boundary as the only
   check, and the docs list all four.
-- **Small gates findings from RC3** (#199). `verify.sh` without
-  `--boundary`, or with `--accept ""`, is a usage error (exit 1) instead of
-  a full run. `--dry-run` lists the `parity` gate. prettier checks a
+- **Small gates findings from RC3** (#199). `verify.sh --accept ""` is a
+  usage error (exit 1) instead of a full run. `--dry-run` lists the `parity` gate. prettier checks a
   tracked file even when `.gitignore` lists it. In `spec.snapshot_exclude`,
   `cache/` now covers the directory like `cache/**`, and a pattern of only
   `*`, `?` and `/` makes the policy invalid. `constitution.sh align` no

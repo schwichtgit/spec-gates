@@ -889,6 +889,35 @@ run_doctor "$U" >/dev/null
 has "a --no-agent-hooks projection is checked as one" "$U" "[ok]  projection matches the installed extension"
 fx_cleanup "$U"
 
+# #216: callers that run verify.sh without --boundary get a [rec]; the
+# ones that pass it, comments and a continued --boundary do not.
+echo ""
+echo "=== callers without --boundary (#216) ==="
+U="$(fx_project)"
+(cd "$U" && GATES_TEST=1 bash .specify/extensions/gates/runtime/project.sh --skip-canary >/dev/null 2>&1)
+cat >"$U/package.json" <<'EOF'
+{
+  "scripts": {
+    "gates": "bash .specify/gates/verify.sh",
+    "gates:ci": "bash .specify/gates/verify.sh --boundary ci",
+    "both": "bash .specify/gates/verify.sh --json && bash .specify/gates/verify.sh --boundary ci"
+  }
+}
+EOF
+printf 'gates:\n\tbash .specify/gates/verify.sh \\\n\t  --boundary ci\n# bash .specify/gates/verify.sh\nold:\n\t./.specify/gates/verify.sh --json\n' >"$U/Makefile"
+printf 'tasks:\n  gates:\n    cmds:\n      - bash .specify/gates/verify.sh --boundary agent\n      - bash .specify/gates/verify.sh\n' >"$U/Taskfile.yml"
+run_doctor "$U" >/dev/null
+has "package.json script without --boundary -> rec" "$U" "[rec] package.json:3 runs verify.sh without --boundary"
+has "a chained call without --boundary -> rec" "$U" "[rec] package.json:5 runs verify.sh without --boundary"
+has "the rec names the fix" "$U" "add --boundary agent|git|ci"
+has "Makefile recipe without --boundary -> rec" "$U" "[rec] Makefile:6 runs verify.sh without --boundary"
+has "Taskfile command without --boundary -> rec" "$U" "[rec] Taskfile.yml:5 runs verify.sh without --boundary"
+lacks "a script with --boundary is not named" "$U" "package.json:4 runs"
+lacks "a continued --boundary is not named" "$U" "Makefile:2 runs"
+lacks "a comment is not named" "$U" "Makefile:4 runs"
+lacks "a Taskfile command with --boundary is not named" "$U" "Taskfile.yml:4 runs"
+fx_cleanup "$U"
+
 echo ""
 echo "=== constitution outside Core Principles (#82) ==="
 DK="$WORKDIR/const82"

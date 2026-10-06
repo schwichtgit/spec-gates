@@ -377,7 +377,9 @@ one transaction: if the `add` fails, the projected runtime keeps working,
 and `bash .specify/gates/project.sh --check` prints the command that
 finishes the upgrade. A runtime projected by 0.3.x has no
 `.specify/gates/project.sh`; there, re-run the `specify extension add`
-command, then step 5.
+command, then step 5. Scripts that run `verify.sh` without `--boundary`
+still work, with a deprecation warning; step 5 and doctor name them, so
+add `--boundary agent|git|ci` to each.
 
 **No cosign on this machine** (a locked-down workstation, say): the
 checksum check is still required, and the signature can be checked
