@@ -25,6 +25,14 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   The README Upgrade section says how the new `pre-merge-commit` stub
   behaves on a branch still on 0.3.x (it runs that branch's `pre-commit`
   hook) and that rolling back means removing that stub.
+- **A parent directory in `.prettierignore` counts** (#217). `project.sh`
+  reported `.specify/gates/`, `.specify/extensions/` and
+  `.claude/hooks/gates/` as not excluded when `.prettierignore` already
+  had `.specify/` and `.claude/`, and `--add-lint-ignores` appended
+  redundant lines. An entry for the path or a parent directory (with `/`,
+  `/*` or `/**`) now covers it. The README Upgrade step 3 says to run
+  `specify extension remove` and `add` as two commands and to check the
+  remove output first.
 
 ## 0.4.0 — 2026-10-06
 

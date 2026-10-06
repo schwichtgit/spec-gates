@@ -358,7 +358,9 @@ cosign verify-blob --bundle "$D/gates-$V.zip.sigstore.json" \
   --certificate-identity-regexp '^https://github.com/schwichtgit/spec-gates/.github/workflows/release.yml@' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com "$D/gates-$V.zip"
 
-# 3. Swap the installed extension (policy.json stays).
+# 3. Swap the installed extension (policy.json stays). Run these as two
+#    commands: read the remove output first, and run add only if it
+#    reports the extension removed without an error.
 specify extension remove gates --keep-config --force
 specify extension add gates --from "$U/gates-$V.zip"
 
@@ -373,7 +375,8 @@ bash .specify/extensions/gates/runtime/project.sh
 `specify extension add --from` checks neither the checksum nor the
 signature, and it downloads the zip itself, so steps 2 and 4 are what tie
 the installed files to a verified release. Step 3 is two commands, not
-one transaction: if the `add` fails, the projected runtime keeps working,
+one transaction, so do not chain them: check that `remove` succeeded
+before running `add`. If the `add` fails, the projected runtime keeps working,
 and `bash .specify/gates/project.sh --check` prints the command that
 finishes the upgrade. A runtime projected by 0.3.x has no
 `.specify/gates/project.sh`; there, re-run the `specify extension add`

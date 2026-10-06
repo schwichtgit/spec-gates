@@ -393,6 +393,20 @@ ok "nothing reported once ignored" bash -c "! grep -q prettierignore <<<\"\$1\""
 before="$(cksum <"$D/.prettierignore")"
 rc_is "--add-lint-ignores again changes nothing" 0 "$D" --skip-canary --add-lint-ignores
 ok ".prettierignore unchanged on the second add" test "$before" = "$(cksum <"$D/.prettierignore")"
+# A parent directory entry excludes the vendored paths too (#217).
+printf '.specify/\n.claude/\n' >"$D/.prettierignore"
+rc_is "parent directory entries: quiet" 0 "$D" --skip-canary
+ok "parent entries cover all three paths" bash -c "! grep -q prettierignore <<<\"\$1\"" _ "$OUT"
+before="$(cksum <"$D/.prettierignore")"
+rc_is "--add-lint-ignores under parent entries" 0 "$D" --skip-canary --add-lint-ignores
+ok "no redundant lines under parent entries" test "$before" = "$(cksum <"$D/.prettierignore")"
+printf '.specify/**\n/.claude/hooks\n' >"$D/.prettierignore"
+rc_is "glob and rooted parent entries: quiet" 0 "$D" --skip-canary
+ok ".specify/** and /.claude/hooks cover the paths" bash -c "! grep -q prettierignore <<<\"\$1\"" _ "$OUT"
+printf '.specify/memory/\nxspecify/\n.claude/\n' >"$D/.prettierignore"
+rc_is "a sibling or look-alike entry is no parent" 0 "$D" --skip-canary
+ok "uncovered .specify paths still named" bash -c "grep -q '^project:   .specify/gates/\$' <<<\"\$1\" && grep -q '^project:   .specify/extensions/\$' <<<\"\$1\"" _ "$OUT"
+ok "the covered .claude path is not named" bash -c "! grep -q '^project:   .claude/hooks/gates/\$' <<<\"\$1\"" _ "$OUT"
 
 echo ""
 echo "=== git probe in the proof (#74) ==="

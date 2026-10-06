@@ -901,7 +901,8 @@ extension ships a nested markdownlint config at its own root
 and in a repository that uses prettier `project.sh` reports the missing
 `.prettierignore` entries for `.specify/gates/`, `.specify/extensions/`
 and `.claude/hooks/gates/`, appending them only with `--add-lint-ignores`,
-since that file is the consumer's. A packaging test asserts the shipped
+since that file is the consumer's. An entry for a parent directory
+(`.specify/`, `.claude/**`) counts as covering the paths under it. A packaging test asserts the shipped
 tree stays clean under default tooling.
 
 ## Threat model honesty

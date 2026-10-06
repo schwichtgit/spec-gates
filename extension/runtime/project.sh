@@ -369,9 +369,20 @@ uses_prettier() {
 }
 if uses_prettier; then
     for lp in .specify/gates/ .specify/extensions/ .claude/hooks/gates/; do
-        if [[ ! -f "$PIGN" ]] || ! grep -qxE "/?${lp%/}(/|/\*\*)?" "$PIGN"; then
-            LINT_MISSING="$(addline "$LINT_MISSING" "$lp")"
+        # An entry for the path or any parent directory (.specify/,
+        # .claude/**) excludes it too (#217).
+        lcov=0 lpre=""
+        if [[ -f "$PIGN" ]]; then
+            IFS=/ read -r -a lparts <<<"${lp%/}"
+            for lpart in "${lparts[@]}"; do
+                lpre="${lpre:+$lpre/}$lpart"
+                if grep -qxE "/?${lpre//./\\.}(/|/\*|/\*\*)?" "$PIGN"; then
+                    lcov=1
+                    break
+                fi
+            done
         fi
+        [[ "$lcov" -eq 1 ]] || LINT_MISSING="$(addline "$LINT_MISSING" "$lp")"
     done
 fi
 
