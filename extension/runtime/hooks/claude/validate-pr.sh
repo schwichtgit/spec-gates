@@ -42,7 +42,26 @@ if ! grep -qE "$PR_RE" <<<"$COMMAND"; then
     exit 0 # the match was outside the command (e.g. in a description)
 fi
 
+# Without python3 the parser below cannot run, so the hook cannot read a PR
+# command and refuses it. It first rules out text that cannot be one, so a
+# commit message naming `gh pr create` or a `gh api` call on another
+# endpoint still runs. What counts as a possible PR command is wider than
+# what the parser accepts: gh/glab at a command start (line start, after a
+# separator, a quote, eval or a shell keyword, past assignments, wrappers
+# and their flags), and `gh api` only when the command names pulls.
+might_be_pr() { # <command>
+    local start pre
+    start="(^|[;&|(){}\`'\"!]|(^|[[:space:]])(then|do|else|elif|if|while|until|eval))[[:space:]]*"
+    pre='(([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*|-[^[:space:]]*|sudo|env|command|exec|nohup|time|nice|xargs)[[:space:]]+)*([^[:space:]]*/)?'
+    grep -qE "$start$pre(gh${REPO_OPT}[[:space:]]+pr[[:space:]]+(create|new|edit)|glab${REPO_OPT}[[:space:]]+mr[[:space:]]+(create|new|update))" <<<"$1" \
+        && return 0
+    grep -qE "$start${pre}gh[[:space:]]+api([[:space:]]|$)" <<<"$1" || return 1
+    # Quotes and backslashes removed: 'pu''lls' is still a pulls endpoint.
+    grep -q pulls <<<"$(tr -d "'\"\\\\\n" <<<"$1")"
+}
+
 if ! python3 -c 'import json, re' >/dev/null 2>&1; then
+    might_be_pr "$COMMAND" || exit 0
     refuse "ERROR: python3 with the json module not found -- the PR hook cannot parse the command." \
         "  Install python3 with the json module (check: python3 -c \"import json\")."
 fi

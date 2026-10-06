@@ -109,6 +109,12 @@ add` forms at the agent boundary. `project.sh` lists new settings like
 
 ### Fixed
 
+- **Without python3 the PR hook refuses only possible PR commands**
+  (T050 container matrix). It refused every command whose text named a PR
+  command, so `git commit -m "fix: handle gh pr create"` and any `gh api`
+  call were blocked. It now lets through a command where `gh`/`glab` is
+  not at a command start, and a `gh api` call that names no pulls
+  endpoint; every PR command form is still refused.
 - **A pattern after a leading `**/` matches top-level paths** (#220).
   The shared glob matcher compared the rest of a `**/` pattern as a
   literal, so `**/*.md` missed `README.md` and `**/.claude/mind.*` missed

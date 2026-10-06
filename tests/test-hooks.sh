@@ -174,6 +174,24 @@ PRCMD='{"tool_input":{"command":"gh pr create --title \"feat: x\" --body \"Adds 
 check "PR hook: no jq -> PR command refused" 2 bash -c "printf '%s' '$PRCMD' | PATH='$NOJQ' '$HOOKS/validate-pr.sh'"
 check "PR hook: no jq -> non-PR command still allowed" 0 bash -c "printf '%s' '{\"tool_input\":{\"command\":\"ls -la\"}}' | PATH='$NOJQ' '$HOOKS/validate-pr.sh'"
 check "PR hook: no python3 -> PR command refused" 2 bash -c "printf '%s' '$PRCMD' | PATH='$NOPY' '$HOOKS/validate-pr.sh'"
+# Without python3 only text that cannot be a PR command passes (T050
+# container matrix): every PR command form stays refused.
+vpn() { # <name> <expect> <command>
+    check "$1" "$2" bash -c "jq -nc --arg c \"\$1\" '{tool_input:{command:\$c}}' | PATH='$NOPY' CLAUDE_PROJECT_DIR='$RT' '$HOOKS/validate-pr.sh'" _ "$3"
+}
+# shellcheck disable=SC2016  # literal command text under test
+for c in "gh pr create -t 'feat: x' -b y" "cd x && gh pr create -t 'feat: x' -b y" 'FOO=1 gh pr edit 5' \
+    'sudo -E gh pr new' '/usr/local/bin/gh pr create' "sh -c 'gh pr create -t x'" 'bash -lc "gh pr edit 5"' \
+    'echo "$(gh pr create -t x)"' 'x=`gh pr create -t x`' $'echo x\ngh pr create -t x' 'if true; then gh pr create; fi' \
+    'eval gh pr create' '{ gh pr create; }' 'xargs gh pr create' 'env -i gh pr edit 5' 'gh -R o/r pr new' \
+    'glab --repo g/p mr update 3' 'gh api repos/o/r/pulls -f title=x' "gh api repos/o/r/pu''lls -f title=x" \
+    'gh api -X PATCH repos/o/r/pulls/5 -f body=x'; do
+    vpn "PR hook: no python3 -> still refused: $c" 2 "$c"
+done
+for c in 'git commit -m "fix: handle gh pr create"' 'gh api repos/o/r/issues -f title=anything' \
+    'echo see gh pr create docs' 'gh api user'; do
+    vpn "PR hook: no python3 -> not a PR command, allowed: $c" 0 "$c"
+done
 check "PR hook: missing runtime lib -> PR command refused" 2 bash -c "printf '%s' '$PRCMD' | CLAUDE_PROJECT_DIR='$WORKDIR/no-runtime-here' '$HOOKS/validate-pr.sh'"
 check "PR hook: clean PR still allowed with full tooling" "$PR_OK" bash -c "printf '%s' '$PRCMD' | '$HOOKS/validate-pr.sh'"
 if [[ "$PR_OK" -ne 0 ]]; then
