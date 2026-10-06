@@ -8,7 +8,26 @@ never touches `.specify/gates/policy.json`. New policy keys take the
 defaults stated here until you set them. Releases before 0.3.3 are
 described in their [GitHub release notes](https://github.com/schwichtgit/spec-gates/releases).
 
-## [Unreleased]
+## 0.4.0 — 2026-10-06
+
+### Upgrading
+
+- Upgrade with the README "Upgrade" steps; they end with one
+  `project.sh` run. Commit `.specify/gates/.projected.sha256` and
+  `.specify/gates/project.sh` with the upgrade, as `project.sh` lists.
+- A 0.3.x projection has no manifest yet: the first `project.sh` run
+  compares each file against what the 0.3.x releases shipped, so only
+  real local edits stop it (exit 3). Resolve each with
+  `--keep-local <path>` or `--take-upstream <path>`.
+- A 0.3.x projection has no `.specify/gates/project.sh`; if
+  `specify extension add` failed half-way, re-run it, then `project.sh`.
+- With husky, lefthook or the pre-commit framework, run
+  `project.sh --wire-manager` (gates writes only to that manager's own
+  config) and check `doctor.sh --probe-git`.
+- `verify.sh` without `--boundary` still runs, with a deprecation
+  warning; `project.sh` and doctor name the scripts that call it so.
+- The release is signed with sigstore (cosign); without cosign on the
+  machine, verify the signature elsewhere and compare the sha256 here.
 
 ### Added
 
