@@ -463,6 +463,68 @@ RUN_SCRIPT=.specify/gates/pr-check.sh
 RUN_SHELL=(bash)
 
 echo ""
+echo "=== a multi-commit range reports exactly as before (#221) ==="
+# pr-check reads the range in a few passes and builds the protected list
+# once per distinct set of policy blobs. The report must stay the same:
+# a policy change mid-range that protects a new path, an empty commit, a
+# merge with a protected path equal to one parent (not flagged) and one
+# that differs from both (flagged), a declaration naming an untouched
+# path, and a description declaration checked against the whole range.
+(
+    cd "$W"
+    c221() { git add -A && git commit -q --allow-empty -m "$@"; }
+    git checkout -q -b r221 "$BASE"
+    echo a >a.txt && c221 "feat: add a"
+    c221 "chore: empty"
+    echo r1 >>c.md && c221 "docs: amend c"
+    printf '%s\n' '{ "hooks": {}, "protected_files": { "extra": ["c.md", "d.md"] } }' >.specify/gates/policy.json
+    c221 "chore: protect d" -m $'Protected-Change: .specify/gates/policy.json\nApproved-By: Reviewer'
+    echo d >d.md && c221 "docs: add d"
+    git checkout -q -b r221-side
+    echo side >>d.md && echo side >>c.md && c221 "docs: side d and c" \
+        -m $'Protected-Change: d.md\nProtected-Change: c.md\nApproved-By: Reviewer'
+    git checkout -q r221
+    echo x >x.txt && c221 "feat: add x" -m $'Protected-Change: nothing.md\nApproved-By: Reviewer'
+    echo r2 >>c.md && c221 "docs: amend c again" -m $'Protected-Change: c.md\nApproved-By: Reviewer'
+    git merge -q --no-ff -m "chore: merge side" r221-side || true
+    echo merged >c.md && c221 "chore: merge side"
+) >/dev/null 2>&1
+expect "the merge resolved c.md by hand" \
+    "$(git -C "$W" rev-list --count --merges "$BASE..r221")" 1
+run GATES_COMMIT_RANGE="$BASE..r221" GATES_PR_TITLE="feat: x" \
+    GATES_PR_BODY=$'Range.\n\nProtected-Change: a.txt\nProtected-Change: zz.md' >/dev/null
+sed -E -e 's/^commit [0-9a-f]+ /commit H /' -e "s/$BASE/BASE/" "$WORKDIR/out.txt" >"$WORKDIR/out221.txt"
+cat >"$WORKDIR/want221.txt" <<'EOF'
+pr-check: PR/MR title and description pass the message rules
+commit H docs: amend c:
+  ERROR: protected file changed without a declaration: c.md
+    Add the trailer:  Protected-Change: c.md
+  ERROR: protected change without an approver (add the trailer:  Approved-By: <name>).
+commit H docs: add d:
+  ERROR: protected file changed without a declaration: d.md
+    Add the trailer:  Protected-Change: d.md
+  ERROR: protected change without an approver (add the trailer:  Approved-By: <name>).
+commit H feat: add x:
+  ERROR: Protected-Change names a path this change does not touch: nothing.md
+commit H chore: merge side:
+  ERROR: protected file changed without a declaration: c.md
+    Add the trailer:  Protected-Change: c.md
+  ERROR: protected change without an approver (add the trailer:  Approved-By: <name>).
+pull/merge request description:
+  ERROR: Protected-Change names a path this change does not touch: zz.md
+pr-check: BASE..r221 -- 9 commit(s) checked, 6 touching protected paths, 8 violation(s)
+pr-check: BASE..r221 -- 9 commit(s) scanned for secrets and forbidden files, none found
+EOF
+TOTAL=$((TOTAL + 1))
+if diff -u "$WORKDIR/want221.txt" "$WORKDIR/out221.txt"; then
+    echo "PASS: the multi-commit report is unchanged"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL: the multi-commit report changed (diff above)"
+    FAIL=$((FAIL + 1))
+fi
+
+echo ""
 echo "=== secrets and forbidden files over the range (#212) ==="
 # Commits made by cherry-pick, rebase, am or revert (or with --no-verify)
 # never ran pre-commit; pr-check scans each commit in the range with the

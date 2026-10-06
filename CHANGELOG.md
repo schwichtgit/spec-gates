@@ -42,6 +42,12 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   `.git/info/refs`, the ref list for dumb transports, and the `.git/info/`
   check failed the block on it. That file is no longer compared;
   attributes, exclude, sparse-checkout and any other info file still are.
+- **pr-check's protected-change check scales with the range** (#221). It
+  started a dozen processes per commit and matched every changed path
+  against the protected list; a 200-commit range of 300 files each took
+  about 75 s. It now reads the range in a few git passes, builds the
+  protected list once per distinct policy, and matches each distinct path
+  once. The report is unchanged.
 
 ## 0.4.0 — 2026-10-06
 
