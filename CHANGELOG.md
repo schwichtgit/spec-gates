@@ -55,6 +55,10 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   asks, since the endpoint may be a pulls endpoint. pr-check names the
   missing fetcher (curl or python3's urllib) instead of asking for
   `GATES_GITLAB_TOKEN` when no fetcher exists.
+- **`sort -o` and `rg --pre` count as changes** (#205). validate-bash
+  asks when `sort -o` writes a protected path, and when `rg --pre <cmd>`
+  names one or runs inside the project, where its command reaches every
+  file rg searches.
 
 ## 0.4.0 — 2026-10-06
 

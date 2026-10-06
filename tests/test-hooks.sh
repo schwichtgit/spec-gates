@@ -1715,6 +1715,25 @@ for c in 'ln -s src/a.ts b.ts' 'ln -s ../elsewhere/lib lib' 'git commit -m "expl
     check "ln elsewhere allowed: $c" 0 bash -c "out=\$(printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$SL' '$HOOKS/validate-bash.sh') && [[ -z \"\$out\" ]]" _ "$(sl_vb "$c")"
 done
 
+echo ""
+echo "=== validate-bash: sort -o and rg --pre on protected paths (#205) ==="
+# shellcheck disable=SC2016  # literal command text under test
+for c in 'sort -o .specify/gates/policy.json x.txt' 'sort -uo .specify/gates/policy.json x.txt' \
+    'sort --output=.specify/memory/constitution.md x.txt' 'cd .specify/gates && sort -o policy.json a' \
+    "rg --pre 'sed -i s/a/b/' x .specify/gates" 'rg --pre=./conv.sh x' 'rg -n --pre cat x src'; do
+    askcheck "sort -o or rg --pre that may change a protected path asks: $c" "$(vb_payload "$c")" validate-bash.sh CLAUDE_PROJECT_DIR="$VB"
+done
+askcheck "rg --pre naming a protected path asks from outside the project" \
+    "$(jq -nc --arg c "rg --pre cat x $VB/.specify/gates/policy.json" '{cwd:"/tmp",tool_input:{command:$c}}')" \
+    validate-bash.sh CLAUDE_PROJECT_DIR="$VB"
+for c in 'sort -o sorted.txt a.txt' 'rg x .specify/gates/policy.json' \
+    'rg --pre-glob "*.gz" x src' 'sort -n a.txt'; do
+    vb_allows "sort or rg that changes no protected path allowed: $c" "$c"
+done
+check "rg --pre outside the project, naming no protected path, allowed" 0 bash -c \
+    "out=\$(printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$VB' '$HOOKS/validate-bash.sh') && [[ -z \"\$out\" ]]" _ \
+    "$(jq -nc '{cwd:"/tmp",tool_input:{command:"rg --pre cat x /tmp/logs"}}')"
+
 # ===========================================================================
 # Part M: command variants the agent hooks used to miss (#170)
 # ===========================================================================

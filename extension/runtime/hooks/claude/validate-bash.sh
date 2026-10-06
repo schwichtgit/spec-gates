@@ -873,6 +873,9 @@ MUTATE_VERB="$VERB_START"'(rm|rmdir|unlink|shred|mv|cp|ln|install|truncate|tee|c
 MUTATE_EDIT="$VERB_START"'(sed|perl)[[:space:]]+([^;&|]*[[:space:]])?(-[a-zA-Z]*i|--in-place)|'"$VERB_START"'git[[:space:]]+(rm|mv|checkout|restore|reset|clean|stash)([[:space:]]|$)'
 MUTATE_FIND="$VERB_START"'find[[:space:]]([^;&|]*[[:space:]])?-(delete|exec|execdir|ok|okdir)([[:space:]]|$)'
 MUTATE_INTERP="$VERB_START"'(python[0-9.]*|perl|ruby|node|deno|bun)[[:space:]]+([^;&|]*[[:space:]])?-[a-zA-Z]*[ce]([[:space:]]|$)'
+# `sort -o <file>` writes the file; `rg --pre <cmd>` runs <cmd> on every
+# file it searches (#205).
+MUTATE_TOOL="$VERB_START"'sort[[:space:]]+([^;&|]*[[:space:]])?(-[a-zA-Z]*o|--output)|'"$VERB_START"'rg[[:space:]]+([^;&|]*[[:space:]])?--pre([=[:space:]]|$)'
 # The command with path spellings normalized, lowercased. The project root
 # is stripped as given and as its real path (/tmp vs /private/tmp, a
 # symlinked checkout; #165).
@@ -908,7 +911,7 @@ WRITE_REDIRECT=1
 grep -q '>' <<<"$(sed -E -e 's#[0-9]*>>?[[:space:]]*/dev/(null|stdout|stderr|tty)##g' \
     -e 's#[0-9]*>&[0-9-]+##g' -e 's#&>>?[[:space:]]*/dev/null##g' <<<"$BCMD")" || WRITE_REDIRECT=0
 MUTATES=0
-if grep -qE "$MUTATE_VERB|$MUTATE_EDIT|$MUTATE_FIND|$MUTATE_INTERP" <<<"$PCMD"; then
+if grep -qE "$MUTATE_VERB|$MUTATE_EDIT|$MUTATE_FIND|$MUTATE_INTERP|$MUTATE_TOOL" <<<"$PCMD"; then
     MUTATES=1
 fi
 if [[ "$EXTRA_UNREAD" -eq 1 ]] && [[ "$MUTATES" -eq 1 || "$WRITE_REDIRECT" -eq 1 ]]; then
@@ -932,6 +935,12 @@ for _c in "${CWD%/}" "$_creal"; do
         break 2
     done
 done
+# rg searches the working directory when no path is named, so a --pre
+# command run inside the project may reach any protected file (#205).
+if grep -qE "$VERB_START"'rg[[:space:]]+([^;&|]*[[:space:]])?--pre([=[:space:]]|$)' <<<"$PCMD" \
+    && [[ -n "$CWD_REL" || "${CWD%/}" == "$LROOT" || ( -n "$LREAL" && "$_creal" == "$LREAL" ) ]]; then
+    defer_ask "rg --pre runs its command on every file it searches, protected ones included; confirm the command changes no file"
+fi
 # The texts the paths are matched in (#194): NCMD, NCMD with its quotes
 # removed as the shell does ("pol""icy.json", pol''icy.json), and that with
 # the command's own simple assignments expanded (f=.specify/gates; rm
@@ -986,7 +995,7 @@ pp_spelled() {
         # && rm build/x` stays allowed.
         if [[ "$dir" != "$sp" && "$MUTATES" -eq 1 ]] \
             && PAT="$TOKEN_START$e(/[^[:space:];&|]*[*?[][^[:space:];&|]*)?/?$TOKEN_END" \
-                MUT="$MUTATE_VERB|$MUTATE_EDIT|$MUTATE_FIND|$MUTATE_INTERP" awk '
+                MUT="$MUTATE_VERB|$MUTATE_EDIT|$MUTATE_FIND|$MUTATE_INTERP|$MUTATE_TOOL" awk '
                     { n = split($0, part, /&&|\|\||;|&/)
                       for (k = 1; k <= n; k++) if (part[k] ~ ENVIRON["PAT"] && part[k] ~ ENVIRON["MUT"]) hit = 1 }
                     END { exit !hit }' <<<"$PCMD"; then

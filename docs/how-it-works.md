@@ -99,7 +99,9 @@ permission mode. The hooks ask when a file name merely contains a word
 such as `secret` or `token` (a test like `test_no_secret_leak.py` is not a
 credential), when a Bash command appears to modify a protected path
 (`rm`, `mv`, `sed -i` or `--in-place`, a redirect (also `>|`), an
-`--out`/`--output` option, `tee`, `find -delete`, `git rm`, also as
+`--out`/`--output` option, `tee`, `find -delete`, `git rm`, `sort -o`,
+`rg --pre` (which also asks anywhere inside the project, since its
+command runs on every file rg searches), also as
 `/bin/rm`, `\rm`, `xargs rm`, inside `sh -c` or `eval`, or an
 interpreter one-liner such as `python3 -c`, or an `ln` whose target or
 link resolves to, contains or lies under one, naming one, its parent
