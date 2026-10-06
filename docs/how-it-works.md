@@ -104,7 +104,10 @@ credential), when a Bash command appears to modify a protected path
 command runs on every file rg searches), also as
 `/bin/rm`, `\rm`, `xargs rm`, inside `sh -c` or `eval`, or an
 interpreter one-liner such as `python3 -c`, or an `ln` whose target or
-link resolves to, contains or lies under one, naming one, its parent
+link resolves to, contains or lies under one, or a redirect or changed
+argument that reaches one through a link that already exists
+(`echo x > pol.json` with `pol.json -> .specify/gates/policy.json`),
+naming one, its parent
 directory, a brace, backslash or split-quote spelling of it, a variable
 the same command assigns, a variable or substitution it cannot resolve
 in front of the file name, a glob `extra` entry such as `**/*.lock.md`,
@@ -124,7 +127,9 @@ cannot evaluate. A project rule in `hooks.local.d` runs before any of
 these questions, so its refusal wins. They never
 silently allow. Without jq, or for input that is not valid JSON, they read
 the field in a raw mode that keeps every built-in block rule and still
-checks `policy.json`, the constitution and the project's rules; an
+checks `policy.json`, the constitution and the project's rules. It reads
+`protected_files.extra` when it is a list of plain strings, on one line
+or many, and matches it as the jq path does; an
 internal error, an undecodable, missing or repeated field, or a
 `protected_files.extra` it cannot read asks. A malformed or invalid
 `policy.json` cannot say what it protects either, so with jq the Write/Edit

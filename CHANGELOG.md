@@ -59,6 +59,13 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   asks when `sort -o` writes a protected path, and when `rg --pre <cmd>`
   names one or runs inside the project, where its command reaches every
   file rg searches.
+- **validate-bash follows existing links; raw mode reads a multi-line
+  `extra`** (#211). With `pol.json -> .specify/gates/policy.json` in
+  place, `echo x > pol.json` and `rm gdir/policy.json` were allowed; a
+  redirect or change target is now resolved first, as protect-files
+  does. Without jq, protect-files asked on every Write because it could
+  not read the multi-line `protected_files.extra` that `policy-infer.sh`
+  writes; it now reads it and asks only when it cannot.
 
 ## 0.4.0 — 2026-10-06
 

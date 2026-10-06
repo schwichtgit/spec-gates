@@ -1098,9 +1098,14 @@ fi
 # resolved from the cwd and from the link's directory; it asks when it is,
 # contains or lies under a protected path, or cannot be resolved ($VAR,
 # `cmd`, a glob, ~user).
-# ln_real <absolute path>: every symlink resolved, as protect-files does.
-ln_real() {
-    local todo="$1" out="" comp link hops=0
+# ln_resolve <absolute path>: every symlink resolved, as protect-files
+# does, into LN_OUT; LN_VIA is 1 when a link was followed. No subshell, so
+# the caller sees both. ln_real prints the path.
+ln_resolve() { # <path> [<real directory a relative path starts from>]
+    local todo="$1" out="${2:-}" comp link hops=0
+    [[ "$todo" != /* ]] || out=""
+    LN_VIA=0
+    LN_OUT=""
     while [[ -n "$todo" ]]; do
         while [[ "$todo" == /* ]]; do todo="${todo#/}"; done
         [[ -n "$todo" ]] || break
@@ -1110,6 +1115,7 @@ ln_real() {
             ..) out="${out%/*}"; continue ;;
         esac
         if [[ -L "$out/$comp" ]]; then
+            LN_VIA=1
             hops=$((hops + 1))
             [[ "$hops" -le 40 ]] && link="$(readlink "$out/$comp" 2>/dev/null)" && [[ -n "$link" ]] || return 1
             [[ "$link" == /* ]] && out=""
@@ -1118,7 +1124,20 @@ ln_real() {
             out="$out/$comp"
         fi
     done
-    printf '%s' "${out:-/}"
+    LN_OUT="${out:-/}"
+}
+ln_real() { ln_resolve "$1" && printf '%s' "$LN_OUT"; }
+# lprot_init: _lprot, the protected paths with their own links resolved,
+# read once and only when a check needs it.
+_lroot="${LREAL:-$LROOT}"
+_lprot=()
+_lprot_done=0
+lprot_init() {
+    [[ "$_lprot_done" -eq 0 ]] || return 0
+    _lprot_done=1
+    while IFS= read -r _pp; do
+        [[ -n "$_pp" ]] && _lprot+=("$(ln_real "$_lroot/$_pp" || printf '%s' "$_lroot/$_pp")")
+    done < <(protected_prefixes)
 }
 # One line per ln command: its operands, unquoted (options dropped). ln
 # counts as the command word, after a wrapper (sudo, env, xargs, ...) or
@@ -1138,11 +1157,7 @@ LN_SEGS="$(printf '%s\n' "$COMMAND" | tr ';&|()' '\n' | awk '
       }
       if (on && out != "") print out }')"
 if [[ -n "$LN_SEGS" ]]; then
-    _lroot="${LREAL:-$LROOT}"
-    _lprot=()
-    while IFS= read -r _pp; do
-        [[ -n "$_pp" ]] && _lprot+=("$(ln_real "$_lroot/$_pp" || printf '%s' "$_lroot/$_pp")")
-    done < <(protected_prefixes)
+    lprot_init
     shopt -s nocasematch
     while IFS= read -r _seg; do
         read -r -a _largs <<<"$_seg"
@@ -1174,6 +1189,46 @@ if [[ -n "$LN_SEGS" ]]; then
             done
         done
     done <<<"$LN_SEGS"
+    shopt -u nocasematch
+fi
+
+# Links that already exist (#211): with pol.json -> policy.json or gdir ->
+# .specify/gates in place, `echo x > pol.json` and `rm gdir/policy.json`
+# name no protected path. Each redirect target, and for a command that
+# changes files each argument, is resolved from the cwd in its original
+# case; one that reaches a protected path through a link asks. Quoted
+# heredoc bodies are data and are left out; a word with a variable,
+# substitution or glob is the business of the checks above.
+if [[ "$MUTATES" -eq 1 || "$WRITE_REDIRECT" -eq 1 ]]; then
+    _ocmd="$(printf '%s\n' "$COMMAND" | awk "$(quoted_heredoc_awk)" | awk -v mode=b "$INERT_AWK")"
+    _lwords="$({ grep -oE "${WRITE_TO}[^[:space:];&|]+" <<<"$_ocmd" || true; } | sed -E "s/^$WRITE_TO//")"
+    if [[ "$MUTATES" -eq 1 ]]; then
+        _lwords="$_lwords"$'\n'"$(tr '<>|;&()=,`' '          ' <<<"$_ocmd" | tr -s ' \t' '\n')"
+    fi
+    shopt -s nocasematch
+    while IFS= read -r _a; do
+        _a="${_a//[\"\']/}"
+        case "$_a" in
+            '' | -* | *'$'* | *'`'* | *'*'* | *'?'* | *'['* | '~'* | /dev/*) continue ;;
+        esac
+        _lw="$_a"
+        # From the cwd's real path ($_creal), so only the word's own
+        # components are walked; a cwd inside a link is CWD_REL's case.
+        [[ "$_a" == /* || -n "$_creal" ]] || _a="$CWD/$_a"
+        if ! ln_resolve "$_a" "$_creal"; then
+            defer_ask "cannot resolve the symlinks in $_lw; confirm this command changes no protected path"
+            break
+        fi
+        [[ "$LN_VIA" -eq 1 ]] || continue
+        lprot_init
+        for _p in "${_lprot[@]}"; do
+            if [[ "$LN_OUT" == "$_p" || "$LN_OUT" == "$_p/"* ]] \
+                || { [[ "$MUTATES" -eq 1 ]] && [[ "$LN_OUT" == / || "$_p" == "$LN_OUT/"* ]]; }; then
+                defer_ask "this command appears to modify the protected path ${_p#"$_lroot"/} through the link $_lw; a human or a reviewed change makes that edit"
+                break 2
+            fi
+        done
+    done < <(awk 'NF && !seen[$0]++' <<<"$_lwords")
     shopt -u nocasematch
 fi
 

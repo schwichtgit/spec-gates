@@ -294,6 +294,21 @@ if [[ -z "$BLOCKED" && -z "$CONSTASK" && -f "$REAL_PATH" ]]; then
     fi
 fi
 
+# raw_extra <policy>: protected_files.extra without jq, one entry per line,
+# the same reader as validate-bash's: a flat array of plain strings, on one
+# line or many (#211). Returns 2 when the policy declares an extra this
+# cannot read (escapes, values that are not strings, another layout).
+raw_extra() {
+    local flat body
+    flat="$(tr '\n' ' ' <"$1")"
+    grep -qE '"extra"[[:space:]]*:' <<<"$flat" || return 0
+    body="$(sed -nE 's/.*"protected_files"[[:space:]]*:[[:space:]]*\{[^{}]*"extra"[[:space:]]*:[[:space:]]*\[([^]]*)\].*/=\1/p' <<<"$flat")"
+    [[ -n "$body" ]] || return 2
+    body="${body#=}"
+    grep -qE '^[[:space:]]*("[^"\\]*"[[:space:]]*(,[[:space:]]*"[^"\\]*"[[:space:]]*)*)?$' <<<"$body" || return 2
+    { grep -oE '"[^"\\]*"' <<<"$body" || true; } | sed -e 's/^"//' -e 's/"$//'
+}
+
 # Policy-declared extra protected paths (protected_files.extra). Matched against
 # both the project-relative path and the basename so exact entries and globs
 # (e.g. ".specify/memory/constitution.md", "docs/**") both work.
@@ -301,12 +316,20 @@ ASK=""
 if [[ -z "$BLOCKED" && -z "$CONSTASK" ]]; then
     POLICY_LIB="$PROJECT_ROOT/.specify/gates/lib/policy.sh"
     POLICY_FILE="$PROJECT_ROOT/.specify/gates/policy.json"
+    EXTRA=""
     if [[ -n "$DEGRADED" ]]; then
-        # The policy reader needs jq. With entries declared, the edit may be
-        # protected and nothing here can tell: ask rather than guess.
-        if [[ -f "$POLICY_FILE" ]] \
-            && grep -qE '"extra"[[:space:]]*:[[:space:]]*\[[[:space:]]*"' <<<"$(tr '\n' ' ' <"$POLICY_FILE")"; then
-            ASK="policy protected_files.extra cannot be checked ($DEGRADED); confirm $FILE_PATH is not protected"
+        # Without jq the entries come from raw_extra, matched with the
+        # library's glob matcher (plain bash). What it cannot read asks.
+        if [[ -f "$POLICY_FILE" ]]; then
+            rc=0
+            EXTRA="$(raw_extra "$POLICY_FILE")" || rc=$?
+            # shellcheck source=/dev/null disable=SC1090
+            if [[ "$rc" -ne 0 ]]; then
+                ASK="policy protected_files.extra cannot be read ($DEGRADED); confirm $FILE_PATH is not protected"
+            elif [[ -n "$EXTRA" ]] && { [[ ! -f "$POLICY_LIB" ]] || ! "$BASH" -n "$POLICY_LIB" 2>/dev/null \
+                || ! source "$POLICY_LIB" 2>/dev/null || ! command -v gates_glob_match >/dev/null 2>&1; }; then
+                ASK="policy protected_files.extra cannot be checked: the gates policy library failed to load; confirm $FILE_PATH is not protected"
+            fi
         fi
     elif [[ -f "$POLICY_LIB" ]]; then
         # shellcheck source=/dev/null disable=SC1091
@@ -324,6 +347,9 @@ if [[ -z "$BLOCKED" && -z "$CONSTASK" ]]; then
         if [[ -f "$_pf" ]] && ! gates_validate_policy "$_pf" >/dev/null 2>&1; then
             ask "$_pf is invalid (verify.sh refuses it), so protected_files.extra cannot be checked; run /speckit.gates.doctor"
         fi
+        EXTRA="$(gates_policy_section_list protected_files extra)"
+    fi
+    if [[ -n "$EXTRA" && -z "$ASK" ]]; then
         REL="$FILE_PATH"
         # A case-insensitive match (nocasematch), so the cut is by length.
         [[ "$FILE_PATH" == "$PROJECT_ROOT/"* ]] && REL="${FILE_PATH:$((${#PROJECT_ROOT} + 1))}"
@@ -345,7 +371,7 @@ if [[ -z "$BLOCKED" && -z "$CONSTASK" ]]; then
                 BLOCKED="Protected by policy (protected_files.extra: $entry)"
                 break
             fi
-        done < <(gates_policy_section_list protected_files extra)
+        done <<<"$EXTRA"
     fi
 fi
 

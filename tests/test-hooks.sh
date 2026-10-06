@@ -306,8 +306,22 @@ check "raw mode allows .env.example" 0 bash -c "printf '%s' '{\"tool_input\":{\"
 check "raw mode allows a plain file (no policy)" 0 bash -c "printf '%s' '{\"tool_input\":{\"file_path\":\"src/a.ts\"}}' | PATH='$NOJQ' CLAUDE_PROJECT_DIR='$WORKDIR/none' '$HOOKS/protect-files.sh'"
 PX="$WORKDIR/protect-nojq"
 project_runtime "$PX" "true"
+# The multi-line layout policy-infer.sh writes is read without jq (#211):
+# a path it lists is refused, any other is allowed, not asked.
+printf '{\n  "hooks": {},\n  "protected_files": {\n    "extra": [\n      "docs/internal.md",\n      "spec/**"\n    ]\n  }\n}\n' \
+    >"$PX/.specify/gates/policy.json"
+for f in README.md src/a.ts; do
+    check "raw mode: a path a multi-line extra does not list is allowed: $f" 0 bash -c "out=\$(printf '%s' \"\$1\" | PATH='$NOJQ' CLAUDE_PROJECT_DIR='$PX' '$HOOKS/protect-files.sh') && [[ -z \"\$out\" ]]" _ "{\"tool_input\":{\"file_path\":\"$f\"}}"
+done
+for f in docs/internal.md spec/a/b.md "$PX/docs/internal.md"; do
+    check "raw mode: a path a multi-line extra lists is refused: $f" 2 bash -c "printf '%s' \"\$1\" | PATH='$NOJQ' CLAUDE_PROJECT_DIR='$PX' '$HOOKS/protect-files.sh'" _ "{\"tool_input\":{\"file_path\":\"$f\"}}"
+done
+check "raw mode validate-bash: a change to a multi-line extra path asks" 0 bash -c "printf '%s' \"\$1\" | PATH='$NOJQ' CLAUDE_PROJECT_DIR='$PX' '$HOOKS/validate-bash.sh' | grep -q 'docs/internal.md'" _ '{"tool_input":{"command":"rm docs/internal.md"}}'
+check "raw mode validate-bash: a change elsewhere allowed with a multi-line extra" 0 bash -c "out=\$(printf '%s' \"\$1\" | PATH='$NOJQ' CLAUDE_PROJECT_DIR='$PX' '$HOOKS/validate-bash.sh') && [[ -z \"\$out\" ]]" _ '{"tool_input":{"command":"rm src/a.ts"}}'
+# An extra the raw reader cannot read (an escape) still asks.
+printf '%s' '{ "hooks": {}, "protected_files": { "extra": ["docs\\u002einternal.md"] } }' >"$PX/.specify/gates/policy.json"
+askcheck "raw mode: an extra the raw reader cannot read asks" '{"tool_input":{"file_path":"src/a.ts"}}' protect-files.sh PATH="$NOJQ" CLAUDE_PROJECT_DIR="$PX"
 printf '%s' '{ "hooks": {}, "protected_files": { "extra": ["docs/internal.md"] } }' >"$PX/.specify/gates/policy.json"
-askcheck "raw mode: declared protected_files.extra asks" '{"tool_input":{"file_path":"src/a.ts"}}' protect-files.sh PATH="$NOJQ" CLAUDE_PROJECT_DIR="$PX"
 check "raw mode: built-in rule still blocks with extra declared" 2 bash -c "printf '%s' '{\"tool_input\":{\"file_path\":\".env\"}}' | PATH='$NOJQ' CLAUDE_PROJECT_DIR='$PX' '$HOOKS/protect-files.sh'"
 askcheck "raw mode: \\u escape in the path asks" '{"tool_input":{"file_path":"\u002eenv"}}' protect-files.sh PATH="$NOJQ" CLAUDE_PROJECT_DIR="$PX"
 # Two file_path keys: the sed match takes the last, Claude Code may act on
@@ -1714,6 +1728,17 @@ done
 for c in 'ln -s src/a.ts b.ts' 'ln -s ../elsewhere/lib lib' 'git commit -m "explain the ln usage"' 'ls -l gdir'; do
     check "ln elsewhere allowed: $c" 0 bash -c "out=\$(printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$SL' '$HOOKS/validate-bash.sh') && [[ -z \"\$out\" ]]" _ "$(sl_vb "$c")"
 done
+# Links that already exist (#211): the redirect or mutation target is
+# resolved before it is matched.
+for c in 'echo x > pol.json' 'printf x >>con.md' 'rm gdir/policy.json' 'rm -rf sp' 'sed -i s/a/b/ pol.json' \
+    'cp /tmp/x gdir/baseline.json' 'echo x > "c1/policy.json"' 'mv a.txt hl/x.sh'; do
+    askcheck "a change through an existing link asks: $c" "$(sl_vb "$c")" validate-bash.sh CLAUDE_PROJECT_DIR="$SL"
+    askcheck "a change through an existing link asks without jq: $c" "$(sl_vb "$c")" validate-bash.sh PATH="$NOJQ" CLAUDE_PROJECT_DIR="$SL"
+done
+for c in 'cat pol.json' 'echo x > ok.ts' 'rm ok.ts' 'echo x > new.txt' 'wc -l gdir/policy.json > /tmp/n.txt'; do
+    check "a link to an ordinary file, or a read, allowed: $c" 0 bash -c "out=\$(printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$SL' '$HOOKS/validate-bash.sh') && [[ -z \"\$out\" ]]" _ "$(sl_vb "$c")"
+done
+askcheck "a link loop in a change target asks" "$(sl_vb 'rm l1/x')" validate-bash.sh CLAUDE_PROJECT_DIR="$SL"
 
 echo ""
 echo "=== validate-bash: sort -o and rg --pre on protected paths (#205) ==="
