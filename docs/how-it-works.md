@@ -219,22 +219,37 @@ certainly still valid; otherwise it prints it.
 | --------------------------------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | husky (`core.hooksPath` under `.husky/`)                  | a line in `.husky/<hook>`                         | The script is created if missing, executable (husky 8, `core.hooksPath=.husky`, has git run it directly); your existing lines stay first. Under husky 8 an existing script without the execute bit fails the git check. A script with a top-level `exit` is left alone and the line printed, to go before the `exit`.     |
 | lefthook                                                  | a `<hook>:` block in `lefthook.yml`               | Appended only when that hook has no block yet; otherwise printed for you to merge. A `lefthook.toml`, `.json` or `.jsonc` (also under `.config/`) is never edited: the entry is printed in its format. Run `lefthook install` if git does not run lefthook for that hook yet; until then the hook is reported as pending. |
-| pre-commit framework                                      | a `repo: local` item in `.pre-commit-config.yaml` | Appended only when `repos:` is the last top-level key and a block list (not `repos: []`); otherwise printed. Needs pre-commit 3.2+; run `pre-commit install --hook-type <hook>` for `commit-msg` and `pre-merge-commit`.                                                                                                  |
+| pre-commit framework                                      | a `repo: local` item in `.pre-commit-config.yaml` | Appended only when `repos:` is the last top-level key and a block list (not `repos: []`); otherwise printed. Needs pre-commit 3.2+; run `pre-commit install --hook-type <hook>` for `commit-msg` and `pre-merge-commit`. Installed after projection, it runs the gates stub as `<hook>.legacy` (below).                   |
 | anything else (another `core.hooksPath`, a custom script) | nothing is written                                | `project.sh` prints the call-through line to add, before any `exit`.                                                                                                                                                                                                                                                      |
 
 **Proving the hooks run.** A hook that exists is not a hook git runs. The
 projected hooks answer `GATES_PROBE=1` with a marker before reading any
-policy, so a probe works with every rule off and can only refuse. Doctor
-and `project.sh` run the stub that way and fail when the marker does not
-come back. A hook another tool owns is read, not run, because running it
+policy, so a probe works with every rule off, and then refuse (exit 1).
+Doctor and `project.sh` run the stub that way and fail unless the marker
+comes back and the hook git runs exits non-zero: git refuses a commit
+exactly when that status is non-zero, so the probe proves a refusal
+reaches git, not only that the hook was reached. It runs the hook file
+rather than a real `git commit`, which would commit whenever the chain is
+broken. A hook another tool owns is read, not run, because running it
 would also run that tool's steps (husky's default `pre-commit` is
 `npm test`, under `sh -e`); the check looks for the gates call-through in
 the tool's file, on a line that can run (not commented out, not after a
 top-level `exit`, `exec <command>` or one-line `if ...; then exit`), and
-`--probe-git` runs the full chain on request. Only the configuration of
-the manager that runs the hook is read, and only where it runs the
-call-through for that hook: in lefthook, a job under the hook's own key
-without `skip:`/`only:`; in the pre-commit framework, an item whose
+`--probe-git` runs the full chain on request. The call-through counts
+only in a form the check can prove refuses the commit: the gates hook as a
+whole command (optionally behind `exec` and `bash`/`sh`, its path led by
+`./`, `$(...)/` or `$VAR/`), with plain arguments, an optional
+`|| exit`, and at most a trailing comment. `|| true`, `&`, a pipe, `;`, a
+leading `true ||`, `echo` or `:`, or a call inside a shell comment does
+not count; neither does an indented line, which sits in a block. In a
+script git runs directly (not husky, which runs its scripts under
+`sh -e`), the call must also end the script on failure: under `set -e`,
+behind `exec`, followed by `|| exit`, or as the last command. Only the
+configuration of the manager that runs the hook is read, and only where
+it runs the call-through for that hook: in lefthook, a job under the
+hook's own key without `skip:`/`only:`, not named (by tag or name) in the
+hook's `exclude_tags:`, whose `run:` is the call in that form; in the
+pre-commit framework, an item whose `entry:` is the gates hook and whose
 `stages:` (or `default_stages:`) include the hook, an item without either
 counting for `pre-commit` only. Other conditional exits in a script, and
 lefthook's `lefthook-local` overrides or remote configs, are not read
@@ -255,6 +270,30 @@ run`), so no other job runs and nothing is rewritten. A hook a manager's
 config calls but whose install command has not run yet is reported by
 `project.sh` as pending that command; doctor fails on it, naming the
 command, since a commit runs no gates check until then.
+
+**The pre-commit framework and `.legacy`.** `pre-commit install` (with or
+without `--hook-type <hook>`) does not overwrite a hook it finds: it moves
+it to `.git/hooks/<hook>.legacy` and, on every call, runs that file first
+(when it is executable), then its own items, and fails the hook when
+either fails. Installed after projection, it moves the gates stub there.
+The stub runs the gates `<hook>` under that name, so gates keeps running
+and doctor reports "runs the gates stub it moved to `<hook>.legacy`".
+`project.sh` refreshes an older stub found there (older stubs refused
+every commit under the moved name) and asks for no config entry while the
+moved stub runs. Two install orders work:
+
+- `project.sh`, then `pre-commit install --hook-type <hook>` for each of
+  `pre-commit`, `pre-merge-commit` and `commit-msg`: gates runs through
+  `<hook>.legacy`. `pre-commit install -f` (`--overwrite`) deletes the
+  `.legacy` files, and gates with them, unless the config calls gates.
+- `pre-commit install` first, then `project.sh --wire-manager` (or
+  `--wire-manager` after the first order): the gates items go into
+  `.pre-commit-config.yaml`. With a `.legacy` stub still present gates
+  runs twice per commit; `project.sh` and doctor say so, and
+  `pre-commit install -f --hook-type <hook>` removes the stub.
+
+Doctor fails an older stub at `<hook>.legacy` and names the fix
+(re-run `project.sh`).
 
 **Protected files** get different treatment at the two local boundaries.
 The agent may never edit them, except the constitution, whose Write/Edit
@@ -793,7 +832,9 @@ ran is the CI run's own log: `verify.sh` prints a
 Spec Kit's `extension remove` and `extension add` are two commands, not a
 transaction. If the `add` fails, the projected copy of `project.sh`
 (`.specify/gates/project.sh --check`) reports the half-done upgrade and the
-command that finishes it, and doctor fails until it is done. A
+command that finishes it, and doctor fails until it is done. A 0.3.x
+projection has no projected `project.sh`: re-run the `add`, then the
+installed `project.sh`. A
 `specify extension add --dev` install renders the gates skills as symlinks
 that exist only on the author's machine; doctor fails on symlinked,
 dangling or missing skills. `doctor --installed-only`, run from the

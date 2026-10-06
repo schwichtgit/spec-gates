@@ -668,6 +668,12 @@ rc=0
 CLAUDE_PROJECT_DIR="$U" bash "$U/.specify/gates/doctor.sh" --ci >"$U/out.txt" 2>&1 || rc=$?
 has "--ci: a held deletion fails" "$U" "[MISSING] held file is missing: .claude/hooks/gates/protect-files.sh"
 expect "doctor --ci exits 1 on a held deletion" "$rc" "1"
+# A held file emptied to 0 bytes is the same disablement (#203).
+: >"$U/.claude/hooks/gates/protect-files.sh"
+rc="$(run_doctor "$U")"
+has "a held empty file fails" "$U" "[MISSING] held file is empty: .claude/hooks/gates/protect-files.sh"
+lacks "the empty file is not reported as kept" "$U" "held: .claude/hooks/gates/protect-files.sh"
+expect "doctor exits 1 on a held empty file" "$rc" "1"
 mv "$U/pf.sh.bak" "$U/.claude/hooks/gates/protect-files.sh"
 rm -f "$U/.specify/gates/.upgrade-holds"
 mkdir -p "$U/.github/workflows"
@@ -988,6 +994,26 @@ printf '#!/bin/sh\nif [ -n "$SKIP" ]; then\n  exit 0\nfi\nbash .specify/gates/ho
 run_doctor "$GPD" >/dev/null
 has "an exit inside a block does not hide the call-through" "$GPD" "[ok]  commit-msg (static)"
 has "a hook that calls the gates hook is reported as delegating" "$GPD" "[ok]  commit-msg installed, executable, delegates to the gates runtime"
+# A plain script exits with its last command's status (#202): a call-through
+# followed by more commands, without set -e, cannot refuse the commit. The
+# probe proves it from the exit status of the hook git runs, not from the
+# marker alone.
+# shellcheck disable=SC2016  # the hook bodies are written literally
+printf '#!/bin/sh\nbash .specify/gates/hooks/commit-msg "$@"\necho done\n' >"$GPD/.git/hooks/commit-msg"
+run_doctor "$GPD" >/dev/null
+has "a call-through whose status a later command replaces fails (static)" "$GPD" "[MISSING] commit-msg (static): git runs .git/hooks/commit-msg, owned by another tool, and it calls .specify/gates/hooks/commit-msg as"
+CLAUDE_PROJECT_DIR="$GPD" bash "$GPD/.specify/gates/doctor.sh" --probe-git >"$GPD/out.txt" 2>&1 || true
+has "--probe-git: a refusal that does not reach git fails" "$GPD" "[MISSING] commit-msg (probe): git runs .git/hooks/commit-msg and it reaches the gates commit-msg hook, but it exits 0 although the gates hook refused"
+# shellcheck disable=SC2016
+printf '#!/bin/sh\nbash .specify/gates/hooks/commit-msg "$@" || true\n' >"$GPD/.git/hooks/commit-msg"
+CLAUDE_PROJECT_DIR="$GPD" bash "$GPD/.specify/gates/doctor.sh" --probe-git >"$GPD/out.txt" 2>&1 || true
+has "--probe-git: a refusal masked by || true fails" "$GPD" "[MISSING] commit-msg (probe): git runs .git/hooks/commit-msg and it reaches the gates commit-msg hook, but it exits 0"
+# shellcheck disable=SC2016
+printf '#!/bin/sh\nset -e\nbash .specify/gates/hooks/commit-msg "$@"\necho done\n' >"$GPD/.git/hooks/commit-msg"
+run_doctor "$GPD" >/dev/null
+has "a call-through under set -e passes (static)" "$GPD" "[ok]  commit-msg (static)"
+CLAUDE_PROJECT_DIR="$GPD" bash "$GPD/.specify/gates/doctor.sh" --probe-git >"$GPD/out.txt" 2>&1 || true
+has "--probe-git: a refusal that reaches git passes" "$GPD" "[ok]  commit-msg probe: the hook git runs reaches the gates commit-msg hook, and its refusal reaches git"
 # husky layout: generated shims in .husky/_, the call-through in .husky/<hook>.
 mkdir -p "$GPD/.husky/_"
 printf '#!/bin/sh\ntouch ran.txt\nexit 1\n' >"$GPD/.husky/_/commit-msg"
@@ -1023,6 +1049,23 @@ done
 printf 'exec 2>&1\nbash .specify/gates/hooks/commit-msg "$@"\n' >"$GPD/.husky/commit-msg"
 run_doctor "$GPD" >/dev/null
 has "husky: exec with only a redirection does not end the scan" "$GPD" "[ok]  commit-msg (static)"
+# A call-through counts only as a whole command whose status reaches git
+# (#202): masked, backgrounded or never-run forms fail, and say so.
+# shellcheck disable=SC2016  # the husky scripts are written literally
+for body in 'bash .specify/gates/hooks/commit-msg "$@" || true\n' \
+    'bash .specify/gates/hooks/commit-msg "$@" &\n' \
+    'true || bash .specify/gates/hooks/commit-msg "$@"\n' \
+    'echo bash .specify/gates/hooks/commit-msg\n' \
+    ': bash .specify/gates/hooks/commit-msg\n'; do
+    # shellcheck disable=SC2059  # the body carries the newline escapes
+    printf "$body" >"$GPD/.husky/commit-msg"
+    run_doctor "$GPD" >/dev/null
+    has "husky: a call-through that cannot refuse fails (static)" "$GPD" "[MISSING] commit-msg (static): git runs .husky/commit-msg, owned by husky, and .husky/commit-msg calls .specify/gates/hooks/commit-msg only as"
+done
+# shellcheck disable=SC2016
+printf 'bash .specify/gates/hooks/commit-msg "$@" || exit $?\n' >"$GPD/.husky/commit-msg"
+run_doctor "$GPD" >/dev/null
+has "husky: a call-through followed by || exit passes (static)" "$GPD" "[ok]  commit-msg (static)"
 # Only the config of the manager that runs the hook counts (#167): husky
 # owns commit-msg, so a stale .pre-commit-config.yaml calling gates does not.
 printf 'npm test\n' >"$GPD/.husky/commit-msg"
@@ -1062,6 +1105,24 @@ printf "pre-commit:\n  commands:\n    spec-gates:\n      run: \"bash .specify/ga
 run_doctor "$GMW" >/dev/null
 has "lefthook: the entry gates writes passes" "$GMW" "[ok]  pre-commit (static)"
 expect "lefthook: doctor did not run the hooks" "$([[ -e "$GMW/ran.txt" ]] && echo ran || echo not-run)" "not-run"
+# A run: that is not the gates hook as a whole command does not count
+# (#202): the call in a shell comment, or its status masked.
+for run in 'echo hi # bash .specify/gates/hooks/pre-commit {files}' \
+    'bash .specify/gates/hooks/pre-commit || true # {files}'; do
+    # shellcheck disable=SC2059
+    printf "pre-commit:\n  commands:\n    spec-gates:\n      run: \"$run\"\n      files: echo lefthook.yml\n$lh_ok" >"$GMW/lefthook.yml"
+    run_doctor "$GMW" >/dev/null
+    has "lefthook: a run: that cannot refuse fails" "$GMW" "[MISSING] pre-commit (static): git runs .git/hooks/pre-commit, owned by lefthook, and lefthook.yml calls .specify/gates/hooks/pre-commit in job 'spec-gates', but its run: is not the gates hook as a whole command"
+done
+# The hook's exclude_tags: drops a job it names by tag (or by name).
+# shellcheck disable=SC2059
+printf "pre-commit:\n  exclude_tags: [gates]\n  commands:\n    spec-gates:\n      tags: [gates]\n      run: \"bash .specify/gates/hooks/pre-commit # {files}\"\n      files: echo lefthook.yml\n$lh_ok" >"$GMW/lefthook.yml"
+run_doctor "$GMW" >/dev/null
+has "lefthook: a job excluded by tag fails" "$GMW" "or the hook's exclude_tags: names the job or its tags"
+# shellcheck disable=SC2059
+printf "pre-commit:\n  exclude_tags: [lint]\n  commands:\n    spec-gates:\n      tags: [gates]\n      run: \"bash .specify/gates/hooks/pre-commit # {files}\"\n      files: echo lefthook.yml\n$lh_ok" >"$GMW/lefthook.yml"
+run_doctor "$GMW" >/dev/null
+has "lefthook: exclude_tags naming another tag passes" "$GMW" "[ok]  pre-commit (static)"
 # Wired in the config, but `lefthook install` never ran: no gates check
 # runs on commit, so doctor fails and names the command.
 rm -f "$GMW/.git/hooks/pre-commit"
@@ -1078,7 +1139,42 @@ has "pre-commit: an item staged for another hook fails" "$GMW" "[MISSING] commit
 printf 'repos:\n- repo: local\n  hooks:\n  - id: g\n    entry: bash .specify/gates/hooks/commit-msg\n    language: system\n    stages: [commit-msg]\n' >"$GMW/.pre-commit-config.yaml"
 run_doctor "$GMW" >/dev/null
 has "pre-commit: an item staged for the hook passes" "$GMW" "[ok]  commit-msg (static)"
+# The entry must be the gates hook itself (#202), not a command naming it.
+printf 'repos:\n- repo: local\n  hooks:\n  - id: g\n    entry: echo bash .specify/gates/hooks/commit-msg\n    language: system\n    stages: [commit-msg]\n' >"$GMW/.pre-commit-config.yaml"
+run_doctor "$GMW" >/dev/null
+has "pre-commit: an entry that only names the gates hook fails" "$GMW" "[MISSING] commit-msg (static): git runs .git/hooks/commit-msg, owned by pre-commit, and .pre-commit-config.yaml calls .specify/gates/hooks/commit-msg, but the item's entry: is not the gates hook itself"
 fx_cleanup "$GMW"
+
+echo ""
+echo "=== the pre-commit framework's migration mode (#201) ==="
+# `pre-commit install` after projection moves each stub to <hook>.legacy
+# and runs it first on every call, failing the hook when it fails.
+PCL="$(fx_project)"
+(cd "$PCL" && GATES_TEST=1 bash .specify/extensions/gates/runtime/project.sh --skip-canary >/dev/null 2>&1)
+(cd "$PCL" && git add -A && git commit -q --no-verify -m "chore: adopt gates") >/dev/null 2>&1
+for h in pre-commit pre-merge-commit commit-msg; do
+    mv "$PCL/.git/hooks/$h" "$PCL/.git/hooks/$h.legacy"
+    fx_precommit_hook "$PCL/.git/hooks" "$h"
+done
+rc="$(run_doctor "$PCL")"
+expect "migration mode: doctor passes while .legacy runs gates" "$rc" "0"
+has "migration mode: the moved stub is named" "$PCL" "[ok]  commit-msg is the pre-commit framework's hook and runs the gates stub it moved to commit-msg.legacy"
+has "migration mode: the static check passes" "$PCL" "[ok]  pre-commit (static): another tool owns the hook and calls the gates pre-commit hook"
+CLAUDE_PROJECT_DIR="$PCL" bash "$PCL/.specify/gates/doctor.sh" --probe-git >"$PCL/out.txt" 2>&1 || true
+has "migration mode: --probe-git reaches gates through pre-commit.legacy" "$PCL" "[ok]  pre-commit probe: the hook git runs reaches the gates pre-commit hook"
+has "migration mode: --probe-git reaches gates through commit-msg.legacy" "$PCL" "[ok]  commit-msg probe: the hook git runs reaches the gates commit-msg hook"
+# A stub from before the fix refuses every commit under the moved name.
+# shellcheck disable=SC2016  # the stub's line, matched literally
+grep -v '^name="${name%\.legacy}"' "$PCL/.specify/extensions/gates/runtime/hooks/git/stub.sh" >"$PCL/.git/hooks/commit-msg.legacy"
+rc="$(run_doctor "$PCL")"
+expect "migration mode: an older moved stub fails doctor" "$rc" "1"
+has "migration mode: the older stub is named with the fix" "$PCL" "[MISSING] commit-msg (static): git runs .git/hooks/commit-msg, owned by pre-commit, which first runs .git/hooks/commit-msg.legacy: an older gates stub that refuses every commit under that name (fix: re-run project.sh to refresh it)"
+# Both the moved stub and a config item: gates runs twice.
+cp "$PCL/.specify/extensions/gates/runtime/hooks/git/stub.sh" "$PCL/.git/hooks/commit-msg.legacy"
+printf 'repos:\n- repo: local\n  hooks:\n  - id: g\n    entry: bash .specify/gates/hooks/commit-msg\n    language: system\n    stages: [commit-msg]\n' >"$PCL/.pre-commit-config.yaml"
+run_doctor "$PCL" >/dev/null
+has "migration mode: a double run is named" "$PCL" "[rec] commit-msg runs gates twice"
+fx_cleanup "$PCL"
 
 DOR="$(fx_project)"
 OUT_IO="$(cd "$DOR" && CLAUDE_PROJECT_DIR="$DOR" bash .specify/extensions/gates/runtime/doctor.sh --installed-only 2>&1)" && rc=0 || rc=$?
@@ -1106,6 +1202,13 @@ OUT_IO="$(CLAUDE_PROJECT_DIR="$DOR" bash "$DOR/.specify/gates/doctor.sh" --insta
 expect "--installed-only on a removed extension exits 1" "$rc" "1"
 run_doctor "$DOR" >/dev/null
 has "the full run names the half-done upgrade" "$DOR" "[MISSING] the gates extension was removed but not added back"
+# 0.3.x never projected project.sh, so `project.sh --check` would exit
+# 127 there: doctor names the add command instead (#203).
+has "without a projected project.sh, the add command is named" "$DOR" "finish it: specify extension add gates --from"
+lacks "without a projected project.sh, no project.sh --check advice" "$DOR" "project.sh --check prints"
+cp "$REPO_ROOT/extension/runtime/project.sh" "$DOR/.specify/gates/"
+run_doctor "$DOR" >/dev/null
+has "with a projected project.sh, --check is the advice" "$DOR" "bash .specify/gates/project.sh --check prints the finishing command"
 fx_cleanup "$DOR"
 
 echo ""
@@ -1174,6 +1277,49 @@ expect "no git, cmp or SHA-256 tool: doctor fails" "$rc" 1
 has "no git: install hint" "$DNT" "[MISSING] git — not installed"
 has "no cmp: named" "$DNT" "[MISSING] cmp — not installed"
 has "no SHA-256 tool: named" "$DNT" "[MISSING] sha256sum or shasum — neither is installed"
+
+echo ""
+echo "=== options: unknown ones refused, any order (#203) ==="
+DFL="$WORKDIR/flags"
+project "$DFL" '{ "hooks": {} }' no
+# A stand-in canary suite that shows what it was given.
+printf '#!/bin/bash\necho "canary-args:$*"\nexit 7\n' >"$DFL/.specify/gates/canary.sh"
+doc_flags() { # <args...> -> exit code; output in $DFL/out.txt
+    local rc=0
+    CLAUDE_PROJECT_DIR="$DFL" bash "$DFL/.specify/gates/doctor.sh" "$@" >"$DFL/out.txt" 2>&1 || rc=$?
+    echo "$rc"
+}
+for bad in --canry --probe-gti -x; do
+    expect "$bad: usage error" "$(doc_flags "$bad")" "2"
+    has "$bad: named as an unknown option" "$DFL" "doctor: unknown option: $bad"
+    lacks "$bad: no checks ran" "$DFL" "=== spec-gates doctor"
+done
+expect "an unknown option after a known one: usage error" "$(doc_flags --ci --bogus)" "2"
+expect "--canary first: the canary suite runs" "$(doc_flags --canary)" "7"
+expect "--canary after canary options: the canary suite runs" "$(doc_flags --only bash --canary)" "7"
+has "--canary passes canary.sh its options" "$DFL" "canary-args:--only bash"
+expect "--ci --canary --probe-git: refused, not a plain run" "$(doc_flags --ci --canary --probe-git)" "2"
+has "the refusal names the doctor options" "$DFL" "it takes none of: --ci --probe-git"
+lacks "and runs no canary" "$DFL" "canary-args:"
+doc_flags --ci --probe-git >/dev/null
+has "--ci --probe-git: --ci honoured" "$DFL" "git boundary not checked (--ci"
+doc_flags --probe-git --ci >/dev/null
+has "--probe-git --ci: --ci honoured" "$DFL" "git boundary not checked (--ci"
+
+echo ""
+echo "=== git refuses the repository: dubious ownership (#203) ==="
+DDB="$(fx_project)"
+(cd "$DDB" && GATES_TEST=1 bash .specify/extensions/gates/runtime/project.sh --skip-canary >/dev/null 2>&1)
+if ! (cd "$DDB" && GIT_TEST_ASSUME_DIFFERENT_OWNER=1 git rev-parse --git-dir >/dev/null 2>&1); then
+    rc=0
+    (cd "$DDB" && GIT_TEST_ASSUME_DIFFERENT_OWNER=1 CLAUDE_PROJECT_DIR="$DDB" bash .specify/gates/doctor.sh) >"$DDB/out.txt" 2>&1 || rc=$?
+    has "dubious ownership: the cause is named" "$DDB" "[MISSING] git boundary not checked: git refuses this repository (dubious ownership"
+    has "dubious ownership: the fix is printed" "$DDB" "git config --global --add safe.directory '$DDB'"
+    expect "dubious ownership: doctor exits 1" "$rc" "1"
+else
+    echo "SKIP: this git ignores GIT_TEST_ASSUME_DIFFERENT_OWNER"
+fi
+fx_cleanup "$DDB"
 echo ""
 [[ "$SKIPPED" -gt 0 ]] && echo "$SKIPPED healthy-fixture case(s) skipped: this host lacks tools doctor requires."
 echo "$PASS of $TOTAL tests passed."

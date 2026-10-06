@@ -16,7 +16,8 @@ the checking; this command runs it, shows the output, and explains it.
   integration. The full check on such an install fails and says the
   runtime is not projected.
 - `--probe-git`: also run git hooks another tool owns (husky, lefthook, the
-  pre-commit framework) to prove the chain reaches gates. Their own steps
+  pre-commit framework) to prove a gates refusal reaches git (the gates
+  hook refuses in probe mode; the hook git runs must exit non-zero). Their own steps
   run too (husky's default `pre-commit` is `npm test`; under lefthook only
   the gates job runs), so ask the user first.
 - `--ci`: for a CI job. A CI checkout has no git hook stubs (they live in
@@ -24,6 +25,11 @@ the checking; this command runs it, shows the output, and explains it.
   projection as not current. `--ci` leaves out the git hook wiring and
   the git boundary section and runs every other check.
 - `--canary`: run the canary suite instead (`canary.sh`; same exit code).
+  Every other argument goes to `canary.sh` (`--json`, `--only <ids>`);
+  doctor's own options cannot be combined with it.
+
+Options go in any order. An unknown option is a usage error (exit 2) and
+nothing is checked.
 
 ## Steps
 
@@ -95,7 +101,8 @@ the checking; this command runs it, shows the output, and explains it.
      the tool that runs the hook reads (`.husky/<hook>`, the lefthook
      config, `.pre-commit-config.yaml`), where it runs for that hook (the
      hook's own lefthook key, not skipped; a pre-commit item staged for
-     it). A hook that is installed but not executable fails, and so does
+     it), as a whole command whose failure refuses the commit (not behind
+     `|| true`, `&`, `echo` or a comment). A hook that is installed but not executable fails, and so does
      one a manager's config calls but git does not run yet (the line names
      the install command); one never wired gets a recommendation.
    - **Policy contract** (only with `extends`): pin, snapshot and effective
@@ -120,7 +127,8 @@ raw output. State whether enforcement is fully active at each boundary
 
 ## Exit codes
 
-`0` = healthy, `1` = at least one `[MISSING]` item. When doctor's output is
+`0` = healthy, `1` = at least one `[MISSING]` item, `2` = usage error
+(an unknown option). When doctor's output is
 piped through an early-closing consumer (`head`, `grep -q`), the shell may
 report exit `141` (SIGPIPE): standard pipe behavior, not a doctor verdict;
 run it unpiped for the meaningful exit code.

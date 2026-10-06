@@ -117,6 +117,28 @@ ok "no git, --no-git-hooks: --check exits 0" test "$rc" -eq 0
 rm -rf "$NOGIT"
 
 echo ""
+echo "=== git refuses the repository: dubious ownership (#203) ==="
+# GIT_TEST_ASSUME_DIFFERENT_OWNER makes git treat the repository as owned
+# by another user, exactly as it would for a checkout another uid made.
+fixture
+if ! (cd "$D" && GIT_TEST_ASSUME_DIFFERENT_OWNER=1 git rev-parse --git-dir >/dev/null 2>&1); then
+    rc_is "projected before git refuses it" 0 "$D" --skip-canary
+    rc=0
+    OUT="$(cd "$D" && GIT_TEST_ASSUME_DIFFERENT_OWNER=1 bash "$P" --skip-canary 2>&1)" || rc=$?
+    ok "dubious ownership: the run exits 1" test "$rc" -eq 1
+    ok "dubious ownership: the cause is named" grep -q 'git refuses this repository: dubious ownership' <<<"$OUT"
+    ok "dubious ownership: the safe.directory fix is printed" grep -qF "git config --global --add safe.directory '$D'" <<<"$OUT"
+    ok "dubious ownership: not reported as a missing work tree" bash -c "! grep -q 'not a git work tree' <<<\"\$1\"" _ "$OUT"
+    rc=0
+    OUT="$(cd "$D" && GIT_TEST_ASSUME_DIFFERENT_OWNER=1 bash "$P" --check 2>&1)" || rc=$?
+    ok "dubious ownership: --check exits 1" test "$rc" -eq 1
+    ok "dubious ownership: --check names the cause" grep -q 'dubious ownership' <<<"$OUT"
+    rc_is "git accepting it again: --check passes" 0 "$D" --check
+else
+    echo "SKIP: this git ignores GIT_TEST_ASSUME_DIFFERENT_OWNER"
+fi
+
+echo ""
 echo "=== vendored modes ==="
 # The fixture has the modes Spec Kit's extraction produces: every *.sh
 # executable, the two extension-less git hooks not. Projection may fix
@@ -220,6 +242,18 @@ rc_is "--check fails on a held deletion" 1 "$D" --check
 rc_is "--take-upstream restores a held deletion" 0 "$D" --skip-canary --take-upstream .claude/hooks/gates/protect-files.sh --take-upstream .specify/gates/lib/attest.sh
 ok "the library is back" cmp -s "$D/.specify/extensions/gates/runtime/lib/attest.sh" "$D/.specify/gates/lib/attest.sh"
 ok "and both holds are released" bash -c "! grep -qE 'protect-files|attest' '$D/.specify/gates/.upgrade-holds'"
+# A file emptied to 0 bytes turns its check off like a deletion (#203).
+: >"$D/.claude/hooks/gates/protect-files.sh"
+rc_is "an emptied agent hook cannot be held" 2 "$D" --skip-canary --keep-local .claude/hooks/gates/protect-files.sh
+ok "the refusal says the file is empty" grep -q 'it is missing or empty' <<<"$OUT"
+ok "the emptied hook is not recorded as held" bash -c "! grep -qxF .claude/hooks/gates/protect-files.sh '$D/.specify/gates/.upgrade-holds'"
+rc_is "--take-upstream restores the emptied hook" 0 "$D" --skip-canary --take-upstream .claude/hooks/gates/protect-files.sh
+printf '.specify/gates/lib/attest.sh\n' >>"$D/.specify/gates/.upgrade-holds"
+: >"$D/.specify/gates/lib/attest.sh"
+rc_is "an existing hold on an emptied file fails the run" 1 "$D" --skip-canary
+ok "it names the emptied file" bash -c "grep -q 'held files that do not exist or are empty' <<<\"\$1\" && grep -q '^project:   .specify/gates/lib/attest.sh\$' <<<\"\$1\"" _ "$OUT"
+rc_is "--check fails on an emptied held file" 1 "$D" --check
+rc_is "--take-upstream restores the emptied held file" 0 "$D" --skip-canary --take-upstream .specify/gates/lib/attest.sh
 chmod -x "$D/.specify/gates/verify.sh"
 rc_is "a lost execute bit is planned" 0 "$D" --skip-canary --dry-run
 ok "the plan names the file" grep -q 'restore the execute bit on .specify/gates/verify.sh' <<<"$OUT"
@@ -267,8 +301,13 @@ fixture
 rc_is "initial projection" 0 "$D" --skip-canary
 rc_is "--keep-local on an unedited file holds it" 0 "$D" --skip-canary --keep-local .specify/gates/doctor.sh
 ok "hold recorded" grep -qxF .specify/gates/doctor.sh "$D/.specify/gates/.upgrade-holds"
-rc_is "a hold equal to upstream is reported stale" 0 "$D" --skip-canary
-ok "stale hold named" bash -c "grep -A1 'stale holds' <<<\"\$1\" | grep -q '.specify/gates/doctor.sh'" _ "$OUT"
+# Doctor fails on a stale hold, so project.sh does too (#203).
+rc_is "a hold equal to upstream is stale and fails the run" 1 "$D" --skip-canary
+ok "stale hold named" bash -c "grep -A1 'FAILED: stale holds' <<<\"\$1\" | grep -q '.specify/gates/doctor.sh'" _ "$OUT"
+rc_is "--check fails on a stale hold" 1 "$D" --check
+ok "--check names the stale hold" grep -q 'FAILED: stale holds' <<<"$OUT"
+sed -i.bak '/^\.specify\/gates\/doctor\.sh$/d' "$D/.specify/gates/.upgrade-holds" && rm -f "$D/.specify/gates/.upgrade-holds.bak"
+rc_is "with the stale hold removed, --check passes" 0 "$D" --check
 rc_is "--keep-local on a missing file is refused" 2 "$D" --skip-canary --keep-local .specify/gates/nope.sh
 mkdir -p "$D/.github/workflows"
 printf 'on: push\njobs:\n  g:\n    steps:\n      - run: bash .specify/gates/verify.sh --boundary ci\n      - run: bash .specify/gates/canary.sh\n' \
@@ -382,6 +421,15 @@ ok "husky: nothing written into .git/hooks" bash -c "! ls '$D/.git/hooks' | grep
 ok "husky: the hooks were checked statically, not run" test ! -e "$D/ran.txt"
 rc_is "husky: a second run changes nothing" 0 "$D" --skip-canary --wire-manager
 ok "husky: still one call-through line" test "$(grep -cF '.specify/gates/hooks/pre-commit' "$D/.husky/pre-commit")" -eq 1
+# A call-through whose status is masked is not wiring (#202): the entry is
+# still planned, and --wire-manager appends the whole command.
+# shellcheck disable=SC2016  # the husky script is written literally
+printf 'npm test\nbash .specify/gates/hooks/pre-commit "$@" || true\n' >"$D/.husky/pre-commit"
+rc_is "husky: a masked call-through -> exit 1" 1 "$D" --skip-canary
+ok "husky: the masked call-through is planned again" grep -q 'pre-commit: add to .husky/pre-commit' <<<"$OUT"
+rc_is "husky: --wire-manager wires past the masked line" 0 "$D" --skip-canary --wire-manager
+# shellcheck disable=SC2016  # the expected line is literal
+ok "husky: the whole command was appended" test "$(tail -n 1 "$D/.husky/pre-commit")" = 'bash "$(git rev-parse --show-toplevel)/.specify/gates/hooks/pre-commit" "$@"'
 
 # husky 8 layout (#159): core.hooksPath=.husky, so git runs .husky/<hook>
 # itself and skips one without the execute bit. A created script is
@@ -417,6 +465,10 @@ ok "lefthook: tells the user to run lefthook install" grep -q 'now run `lefthook
 ok "lefthook: no failed probe before lefthook install" bash -c "! grep -q 'FAILED: git' <<<\"\$1\"" _ "$OUT"
 # shellcheck disable=SC2016  # literal message text
 ok "lefthook: each hook is pending the install command" test "$(grep -c 'pending: lefthook.yml calls the gates .* hook, but git runs no .* hook until you run `lefthook install`' <<<"$OUT")" -eq 3
+# --check agrees with the full run (#203).
+rc_is "lefthook: --check fails while the install is pending" 1 "$D" --check
+# shellcheck disable=SC2016  # literal message text
+ok "lefthook: --check names each pending hook" test "$(grep -c 'pending: lefthook.yml calls the gates .* hook, but git runs no .* hook until you run `lefthook install`' <<<"$OUT")" -eq 3
 OUT="$(cd "$D" && CLAUDE_PROJECT_DIR="$D" bash .specify/gates/doctor.sh 2>&1)" || true
 # shellcheck disable=SC2016  # literal message text
 ok "doctor: still flags the hook until lefthook install" grep -q 'pre-merge-commit not installed — lefthook.yml calls the gates hook, but git runs no pre-merge-commit hook until you run `lefthook install`' <<<"$OUT"
@@ -471,6 +523,16 @@ fixture
 printf 'colors = false\n' >"$D/lefthook.toml"
 rc_is "lefthook (toml): planned without the flag -> exit 1" 1 "$D" --skip-canary
 ok "lefthook (toml): the entry is printed as TOML" grep -qF '[pre-commit.commands.spec-gates]' <<<"$OUT"
+# lefthook adopted after the gates stubs went in (#203): lefthook install
+# replaced pre-commit only, so git still runs the stub for the other two,
+# and the summary must not claim they run no gates.
+fixture
+rc_is "lefthook adopted later: plain projection first" 0 "$D" --skip-canary
+printf 'pre-commit:\n  commands:\n    lint:\n      run: npm run lint\n' >"$D/lefthook.yml"
+printf '#!/bin/sh\n# lefthook generated\nexit 0\n' >"$D/.git/hooks/pre-commit"
+rc_is "lefthook adopted later: the missing entries -> exit 1" 1 "$D" --skip-canary
+ok "lefthook adopted later: only pre-commit runs no gates" grep -q 'lefthook owns the git hooks and does not run gates for: pre-commit$' <<<"$OUT"
+ok "lefthook adopted later: the stubs still running are named apart" grep -q 'lefthook.yml has no gates entry for: pre-merge-commit commit-msg (git still runs the gates stub for them' <<<"$OUT"
 
 # pre-commit framework: .pre-commit-config.yaml; repos: last, both indents.
 for ind in "" "  "; do
@@ -675,6 +737,25 @@ fixture
 git -C "$D" config core.hooksPath .husky/_
 rc_is "core.hooksPath owned by another tool -> exit 1" 1 "$D" --skip-canary
 ok "nothing written into the other tool's directory" test ! -e "$D/.husky"
+# `pre-commit install` after projection (#201) moves each stub to
+# <hook>.legacy and runs it from there; an older stub refuses there.
+fixture
+rc_is "initial projection" 0 "$D" --skip-canary
+STUBF="$D/.specify/extensions/gates/runtime/hooks/git/stub.sh"
+for h in pre-commit pre-merge-commit commit-msg; do
+    mv "$D/.git/hooks/$h" "$D/.git/hooks/$h.legacy"
+    fx_precommit_hook "$D/.git/hooks" "$h"
+done
+# shellcheck disable=SC2016  # the stub's line, matched literally
+grep -v '^name="${name%\.legacy}"' "$STUBF" >"$D/.git/hooks/pre-commit.legacy"
+rc_is "migration mode: re-projection -> exit 0" 0 "$D" --skip-canary
+ok "migration mode: the older pre-commit.legacy stub is refreshed" cmp -s "$STUBF" "$D/.git/hooks/pre-commit.legacy"
+ok "migration mode: the refresh is reported" grep -q 'refresh the gates stub the pre-commit framework runs as pre-commit.legacy' <<<"$OUT"
+ok "migration mode: the refreshed stub stays executable" test -x "$D/.git/hooks/pre-commit.legacy"
+ok "migration mode: a current stub is left alone" test "$(grep -c 'runs as commit-msg.legacy' <<<"$OUT")" -eq 0
+ok "migration mode: no config entry is asked for" test "$(grep -c 'does not run gates for' <<<"$OUT")" -eq 0
+ok "migration mode: the framework's hook is untouched" grep -q 'File generated by pre-commit' "$D/.git/hooks/pre-commit"
+ok "migration mode: the check passes" grep -q 'git check (static): another tool owns pre-commit and calls the gates hook' <<<"$OUT"
 
 echo ""
 echo "=== proof ==="

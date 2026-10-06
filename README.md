@@ -285,6 +285,9 @@ its enforcement frontmatter — one registry, two consumers.
   `bash .specify/gates/install-shellcheck.sh` (Linux and macOS, x86_64
   and aarch64); for a version spec-gates ships no checksums for, run it
   with `--update` and commit `.specify/gates/shellcheck.local.sha256`.
+  `--update` reads GitHub's asset digests, which shellcheck releases carry
+  only from v0.11.0 on; for an older version, add the checksums to that
+  file by hand, from assets you verified another way.
 - **Claude Code** for the agent boundary. The git and CI boundaries are
   agent-agnostic.
 
@@ -372,7 +375,9 @@ signature, and it downloads the zip itself, so steps 2 and 4 are what tie
 the installed files to a verified release. Step 3 is two commands, not
 one transaction: if the `add` fails, the projected runtime keeps working,
 and `bash .specify/gates/project.sh --check` prints the command that
-finishes the upgrade.
+finishes the upgrade. A runtime projected by 0.3.x has no
+`.specify/gates/project.sh`; there, re-run the `specify extension add`
+command, then step 5.
 
 **No cosign on this machine** (a locked-down workstation, say): the
 checksum check is still required, and the signature can be checked
@@ -486,13 +491,22 @@ since that would run the tool's own steps too (husky's default is
 `npm test`). The call-through counts only where that tool runs it for that
 hook: under the hook's own key in lefthook, not skipped, and running while
 nothing is staged; in a pre-commit framework item whose `stages:` include
-the hook. A commented-out line, or one after a top-level `exit` or
+the hook. It also counts only in a form whose failure refuses the commit:
+the gates hook as a whole command, not behind `|| true`, `&`, a pipe,
+`echo`, `:` or a shell comment, and not excluded by lefthook's
+`exclude_tags:`. A commented-out line, or one after a top-level `exit` or
 `exec <command>`, does not count. A manager config that calls gates while
 git runs no hook for it (its install command never ran) fails.
-`doctor --probe-git` runs the full chain when you want proof; under
-lefthook it runs only the gates job. A hook gates
+`doctor --probe-git` runs the full chain when you want proof: the gates
+hook refuses in probe mode, and the hook git runs must then exit non-zero,
+so the probe proves a refusal reaches git, not only that the hook was
+reached. Under lefthook it runs only the gates job. A hook gates
 installs itself (the stub) is always run with a probe signal, because only
-gates code executes there.
+gates code executes there. `pre-commit install` after projection moves the
+stub to `.git/hooks/<hook>.legacy` and runs it from there, so gates keeps
+running; `pre-commit install -f` deletes it (see
+[How it works](docs/how-it-works.md#the-three-boundary-model) for the
+install order).
 
 ## Commit and PR message rules
 

@@ -229,6 +229,21 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   the last line of its script), on a push or pull request trigger,
   without those variables and outside those wrappers; anything else fails
   with what to change. `verify.sh` refuses a repeated `--boundary`.
+- **A hook-manager call-through counts only where it can refuse** (#202).
+  husky `|| true`, `&`, `echo`, `:` or `true ||`, a lefthook `run:` with
+  the call in a shell comment or excluded by `exclude_tags:`, and a
+  pre-commit `entry: echo ...` all passed the static check. It now counts
+  only the gates hook as a whole command whose status reaches git, and
+  `--probe-git` also requires the hook git runs to exit non-zero, so it
+  proves a refusal reaches git, not only that the hook was reached.
+- **`pre-commit install` after projection no longer blocks every commit**
+  (#201). The pre-commit framework moves the gates stub to
+  `.git/hooks/<hook>.legacy` and runs it first; the stub looked for
+  `.specify/gates/hooks/<hook>.legacy` and refused, while doctor and
+  `--probe-git` stayed green. The stub now runs the gates `<hook>` under
+  that name, `project.sh` refreshes an older moved stub, and doctor
+  reports the layout: an older moved stub fails, and a double run (the
+  config calls gates too) is named.
 - **An unknown `--accept` feature is refused before any gate runs**
   (#179). `verify.sh --accept <name>` with a name that is not a feature
   ran the lint and quality gates first and refused only at the spec gate,
@@ -696,6 +711,20 @@ false`, pre-commit refused the protected artifacts outright; it now
   `_`-prefixed keys are not an enforcement delta, and no `Source:` line
   exceeds 100 characters. The release workflow probes the git hooks and
   the shellcheck installer.
+- **Small install findings** (#203). doctor refuses an unknown option
+  (exit 2) instead of running a plain check, and takes its options in any
+  order; `--canary` passes the rest to `canary.sh` and refuses doctor's
+  own options. `project.sh --check` now fails, as the full run does, on a
+  hook manager whose hooks were never installed, and both fail on a stale
+  hold. A held file emptied to 0 bytes is treated like a held deletion. A
+  repository git refuses for dubious ownership is named as such, with the
+  `safe.directory` fix, and fails. Under lefthook adopted after the gates
+  stubs, `project.sh` names the hooks whose stub still runs apart from
+  those that run no gates. For a 0.3.x projection, which has no
+  `.specify/gates/project.sh`, the half-done-upgrade advice names the add
+  command. `install-shellcheck.sh --update` cannot pin releases before
+  v0.11.0 (they carry no GitHub digests); this limit is documented, and
+  the refusal names the by-hand pin file.
 
 ## 0.3.6 — 2026-10-02
 
