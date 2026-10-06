@@ -262,7 +262,7 @@ RM_BLOCK=(
     $'cat <<\'EOF\' | sh\nrm -rf /etc\nEOF' $'cat > s.sh <<\'EOF\'\nrm -rf /\nEOF\nbash s.sh'
     $'python3 - <<\'EOF\'\nimport os; os.system(\'rm -rf /\')\nEOF'
     $'cat <<EOF > a.md\nrm -rf /etc\nEOF' $'cat <<\'EOF\' > a.md\nrm -rf /etc\nEON'
-    $'cat <<\'EOF\' > a.md\nx\nEOF\nrm -rf /' $'cat <<\'EOF\' > a.md\nx\nEOF\n. a.md; rm -rf /etc'
+    $'cat <<\'EOF\' > a.md\nx\nEOF\nrm -rf /' $'cat <<\'EOF\' > a.sh\nrm -rf /etc\nEOF\n. ./a.sh'
 )
 for c in "${RM_ALLOW[@]}" "${RM_BLOCK[@]}"; do
     want=2
