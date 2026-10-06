@@ -630,6 +630,13 @@ expect_contains "write to a skip-worktree file blocks the run" "$OUT" "index fla
 
 OUT="$(isoblock attributes '  echo "* -diff" >.git/info/attributes')"
 expect_contains "block writing .git/info/attributes blocks the run" "$OUT" "git info files modified: attributes"
+OUT="$(isoblock infoexclude '  echo "*.md" >>.git/info/exclude')"
+expect_contains "block writing .git/info/exclude blocks the run" "$OUT" "git info files modified: exclude"
+# Issue #213: the first git gc writes .git/info/refs, a transport artifact.
+OUT="$(isoblock infogc '  git gc -q')"
+expect_contains "first git gc in a block passes (#213)" "$OUT" "EXIT=0"
+OUT="$(isoblock infoserver '  git update-server-info')"
+expect_contains "git update-server-info in a block passes" "$OUT" "EXIT=0"
 
 # Issue #206: another worktree's activity is not the block's doing. Each
 # fixture has a sibling worktree on branch "side" and a branch "stray" that

@@ -558,7 +558,9 @@ tool gates and before `parity`:
    modified, a `git config core.hooksPath`, a commit, a tag or a new
    branch, fails its criterion, and nothing is ever auto-reverted.
    Repacking (`git gc`, `git pack-refs`) changes how git stores objects
-   and refs, not what they say, and is not checked. Other worktrees are
+   and refs, not what they say, and is not checked; neither is
+   `.git/info/refs`, the ref list that `git gc` and
+   `git update-server-info` write for dumb transports. Other worktrees are
    left out: their `HEAD`, their per-worktree refs, their entries, and
    the refs of the branches they have checked out (or are rebasing)
    before or after the block. A commit, a branch switch, or a worktree

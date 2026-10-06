@@ -38,6 +38,10 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   agent hook left a file the gate then failed. Tracked files are now
   formatted with only `.prettierignore` applied; untracked ignored files
   are still left alone.
+- **The first `git gc` in an accept block passes** (#213). gc writes
+  `.git/info/refs`, the ref list for dumb transports, and the `.git/info/`
+  check failed the block on it. That file is no longer compared;
+  attributes, exclude, sparse-checkout and any other info file still are.
 
 ## 0.4.0 — 2026-10-06
 
