@@ -1186,7 +1186,7 @@ for h in pre-commit pre-merge-commit commit-msg; do
     fx_precommit_hook "$PCL/.git/hooks" "$h"
 done
 rc="$(run_doctor "$PCL")"
-expect "migration mode: doctor passes while .legacy runs gates" "$rc" "0"
+healthy "migration mode: doctor passes while .legacy runs gates" "$rc" "$LACK_BASE"
 has "migration mode: the moved stub is named" "$PCL" "[ok]  commit-msg is the pre-commit framework's hook and runs the gates stub it moved to commit-msg.legacy"
 has "migration mode: the static check passes" "$PCL" "[ok]  pre-commit (static): another tool owns the hook and calls the gates pre-commit hook"
 CLAUDE_PROJECT_DIR="$PCL" bash "$PCL/.specify/gates/doctor.sh" --probe-git >"$PCL/out.txt" 2>&1 || true

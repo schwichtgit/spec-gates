@@ -26,6 +26,14 @@ expect() { # <name> <actual> <wanted>
     fi
 }
 
+SKIPPED=0
+skip() { # <name> <missing-prerequisite>
+    echo "SKIP: $1 (this host lacks $2)"
+    SKIPPED=$((SKIPPED + 1))
+}
+HAVE_FETCH=""
+{ command -v curl || python3 -c 'import urllib.request'; } >/dev/null 2>&1 && HAVE_FETCH=1
+
 WORKDIR="$(mktemp -d 2>/dev/null || mktemp -d -t gates-prcheck)"
 trap '[[ -n "${GATES_KEEP_TMP:-}" ]] || { [[ -n "${WORKDIR:-}" && -d "$WORKDIR" ]] && rm -rf "$WORKDIR"; }' EXIT
 
@@ -131,14 +139,20 @@ mr_api "Adds a."$'\n\n'"Tail line: I have made this seamless."
 expect "truncated, no token -> fails closed (exit 1)" \
     "$(run "${GL[@]}" CI_MERGE_REQUEST_DESCRIPTION="Adds a." CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED=true)" 1
 expect "truncated failure names the fix" "$(grep -c 'GATES_GITLAB_TOKEN' "$WORKDIR/out.txt")" 1
-expect "truncated, token -> full text fetched, tail violation caught (exit 1)" \
-    "$(run "${GL[@]}" CI_MERGE_REQUEST_DESCRIPTION="Adds a." CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED=true GATES_GITLAB_TOKEN=t)" 1
-expect "the caught violation is the AI-ism in the tail" "$(grep -c 'Self-referential' "$WORKDIR/out.txt")" 1
-mr_api "Adds a."$'\n\n'"A long but clean tail."
-expect "truncated, token, clean full text -> exit 0" \
-    "$(run "${GL[@]}" CI_MERGE_REQUEST_DESCRIPTION="Adds a." CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED=true GATES_GITLAB_TOKEN=t)" 0
-expect "truncated, CI_JOB_TOKEN fallback works -> exit 0" \
-    "$(run "${GL[@]}" CI_MERGE_REQUEST_DESCRIPTION="Adds a." CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED=true CI_JOB_TOKEN=j)" 0
+# The fetch needs curl or python3's urllib (pr-check's http_get); the
+# GitLab template installs both, a slim image may have neither.
+if [[ -n "$HAVE_FETCH" ]]; then
+    expect "truncated, token -> full text fetched, tail violation caught (exit 1)" \
+        "$(run "${GL[@]}" CI_MERGE_REQUEST_DESCRIPTION="Adds a." CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED=true GATES_GITLAB_TOKEN=t)" 1
+    expect "the caught violation is the AI-ism in the tail" "$(grep -c 'Self-referential' "$WORKDIR/out.txt")" 1
+    mr_api "Adds a."$'\n\n'"A long but clean tail."
+    expect "truncated, token, clean full text -> exit 0" \
+        "$(run "${GL[@]}" CI_MERGE_REQUEST_DESCRIPTION="Adds a." CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED=true GATES_GITLAB_TOKEN=t)" 0
+    expect "truncated, CI_JOB_TOKEN fallback works -> exit 0" \
+        "$(run "${GL[@]}" CI_MERGE_REQUEST_DESCRIPTION="Adds a." CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED=true CI_JOB_TOKEN=j)" 0
+else
+    skip "truncated, token: full-text fetch cases" "curl or python3's urllib"
+fi
 # Without curl (slim CI images): the fetch falls back to python3's urllib.
 NOCURL="$WORKDIR/path-nocurl"
 mkdir -p "$NOCURL"
@@ -151,7 +165,7 @@ if python3 -c 'import urllib.request' >/dev/null 2>&1; then
         "$(run "${GL[@]}" PATH="$NOCURL" CI_MERGE_REQUEST_DESCRIPTION="Adds a." CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED=true GATES_GITLAB_TOKEN=t)" 1
     expect "no curl: the violation came from the fetched tail" "$(grep -c 'Self-referential' "$WORKDIR/out.txt")" 1
 else
-    echo "SKIP: no curl, python3 fetch (this host lacks python3's urllib)"
+    skip "no curl, python3 fetch" "python3's urllib"
 fi
 # Neither curl nor python3 (#120): no fetcher at all, so the truncated
 # description cannot be checked and the check fails closed, saying why.
@@ -188,8 +202,12 @@ expect "GitLab < 16.7 (no description var), no token -> notice, title checked (e
     "$(run "${GL[@]}")" 0
 expect "the < 16.7 notice is printed" "$(grep -c 'GitLab < 16.7' "$WORKDIR/out.txt")" 1
 mr_api "I have made this seamless."
-expect "GitLab < 16.7 with token -> description fetched and checked (exit 1)" \
-    "$(run "${GL[@]}" GATES_GITLAB_TOKEN=t)" 1
+if [[ -n "$HAVE_FETCH" ]]; then
+    expect "GitLab < 16.7 with token -> description fetched and checked (exit 1)" \
+        "$(run "${GL[@]}" GATES_GITLAB_TOKEN=t)" 1
+else
+    skip "GitLab < 16.7 with token: description fetch" "curl or python3's urllib"
+fi
 
 echo ""
 echo "=== Jenkins and explicit range ==="
@@ -518,5 +536,6 @@ sg checkout -q "$ORIG"
 
 echo ""
 echo "$PASS of $TOTAL tests passed."
+[[ "$SKIPPED" -gt 0 ]] && echo "$SKIPPED case group(s) skipped: this host lacks a tool they need."
 [[ "$FAIL" -gt 0 ]] && exit 1
 exit 0
