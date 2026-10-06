@@ -1213,7 +1213,14 @@ has "migration mode: --probe-git reaches gates through commit-msg.legacy" "$PCL"
 # shellcheck disable=SC2016  # the stub's line, matched literally
 grep -v '^name="${name%\.legacy}"' "$PCL/.specify/extensions/gates/runtime/hooks/git/stub.sh" >"$PCL/.git/hooks/commit-msg.legacy"
 rc="$(run_doctor "$PCL")"
-expect "migration mode: an older moved stub fails doctor" "$rc" "1"
+# Without python3 doctor fails anyway, so the exit code proves nothing
+# there (#223); the named finding below still does.
+if [[ -n "$LACK_BASE" ]]; then
+    echo "SKIP: migration mode: an older moved stub fails doctor (this host lacks $LACK_BASE)"
+    SKIPPED=$((SKIPPED + 1))
+else
+    expect "migration mode: an older moved stub fails doctor" "$rc" "1"
+fi
 has "migration mode: the older stub is named with the fix" "$PCL" "[MISSING] commit-msg (static): git runs .git/hooks/commit-msg, owned by pre-commit, which first runs .git/hooks/commit-msg.legacy: an older gates stub that refuses every commit under that name (fix: re-run project.sh to refresh it)"
 # Both the moved stub and a config item: gates runs twice.
 cp "$PCL/.specify/extensions/gates/runtime/hooks/git/stub.sh" "$PCL/.git/hooks/commit-msg.legacy"

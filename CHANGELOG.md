@@ -48,6 +48,13 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   about 75 s. It now reads the range in a few git passes, builds the
   protected list once per distinct policy, and matches each distinct path
   once. The report is unchanged.
+- **The PR hook reads PR commands behind keywords and wrappers** (#223).
+  With python3, `if …; then gh pr create …; fi`, `env -i gh pr create`
+  and `sudo -u bob gh pr create` passed unchecked; they are now checked,
+  and `eval` or `xargs` before a PR command is refused. `gh api "$EP"`
+  asks, since the endpoint may be a pulls endpoint. pr-check names the
+  missing fetcher (curl or python3's urllib) instead of asking for
+  `GATES_GITLAB_TOKEN` when no fetcher exists.
 
 ## 0.4.0 — 2026-10-06
 

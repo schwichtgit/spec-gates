@@ -169,6 +169,16 @@ gitlab_fetch_description() { # -> full description on stdout, or return 1
     fi
     return 1
 }
+# fetch_fix: what makes the API fetch work. Without curl and python3's
+# urllib no token helps, so that names the missing fetcher (#223).
+fetch_fix() {
+    if ! command -v curl >/dev/null 2>&1 && ! python3 -c 'import urllib.request' >/dev/null 2>&1; then
+        printf '%s' "neither curl nor python3's urllib is available to fetch it; install curl or python3"
+        [[ -n "${GATES_GITLAB_TOKEN:-}" ]] || printf '%s' " and set GATES_GITLAB_TOKEN to a read_api token"
+    else
+        printf '%s' "set GATES_GITLAB_TOKEN to a read_api token"
+    fi
+}
 DESCRIPTION_UNCHECKABLE=""
 if [[ -z "$BODY_FILE" && -z "${GATES_PR_BODY:-}" ]]; then
     if [[ "${CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED:-}" == "true" ]]; then
@@ -176,14 +186,14 @@ if [[ -z "$BODY_FILE" && -z "${GATES_PR_BODY:-}" ]]; then
             BODY="$FULL"
             echo "pr-check: GitLab truncated the MR description; checking the full text fetched from the API"
         else
-            DESCRIPTION_UNCHECKABLE="GitLab truncated the MR description and the full text could not be fetched (set GATES_GITLAB_TOKEN to a read_api token, or shorten the description)"
+            DESCRIPTION_UNCHECKABLE="GitLab truncated the MR description and the full text could not be fetched ($(fetch_fix), or shorten the description)"
         fi
     elif [[ -n "${CI_MERGE_REQUEST_IID:-}" && -z "${CI_MERGE_REQUEST_DESCRIPTION+set}" ]]; then
         if FULL="$(gitlab_fetch_description)"; then
             BODY="$FULL"
             echo "pr-check: CI_MERGE_REQUEST_DESCRIPTION is not set (GitLab < 16.7); checking the description fetched from the API"
         else
-            echo "pr-check: NOTICE -- CI_MERGE_REQUEST_DESCRIPTION is not set (GitLab < 16.7) and no API token is available; only the MR title is checked (set GATES_GITLAB_TOKEN to check the description)"
+            echo "pr-check: NOTICE -- CI_MERGE_REQUEST_DESCRIPTION is not set (GitLab < 16.7) and the description could not be fetched from the API; only the MR title is checked ($(fetch_fix) to check the description)"
         fi
     fi
 fi

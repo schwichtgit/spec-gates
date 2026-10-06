@@ -185,7 +185,8 @@ for c in "gh pr create -t 'feat: x' -b y" "cd x && gh pr create -t 'feat: x' -b 
     'echo "$(gh pr create -t x)"' 'x=`gh pr create -t x`' $'echo x\ngh pr create -t x' 'if true; then gh pr create; fi' \
     'eval gh pr create' '{ gh pr create; }' 'xargs gh pr create' 'env -i gh pr edit 5' 'gh -R o/r pr new' \
     'glab --repo g/p mr update 3' 'gh api repos/o/r/pulls -f title=x' "gh api repos/o/r/pu''lls -f title=x" \
-    'gh api -X PATCH repos/o/r/pulls/5 -f body=x'; do
+    'gh api -X PATCH repos/o/r/pulls/5 -f body=x' 'sudo -u bob gh pr create' 'env -u FOO gh pr edit 5' \
+    'nice -n 5 gh pr create'; do
     vpn "PR hook: no python3 -> still refused: $c" 2 "$c"
 done
 for c in 'git commit -m "fix: handle gh pr create"' 'gh api repos/o/r/issues -f title=anything' \
@@ -1779,6 +1780,33 @@ vp "gh -R o/r pr edit with an AI-ism refused" 2 "gh -R o/r pr edit 5 --body 'Gen
 vp "glab -R g/p mr update non-conventional title refused" 2 "glab -R g/p mr update 3 --title 'add stuff'"
 vp "gh -R o/r pr list is not a PR command" 0 "gh -R o/r pr list"
 vp "a PR alias inside sh -c refused" 2 "sh -c 'gh -R o/r pr new -t x -b y'"
+
+echo ""
+echo "=== validate-pr: PR commands behind keywords, wrappers, eval, xargs (#223) ==="
+for p in 'if true; then gh pr create' '! gh pr create' 'env -i gh pr create' 'env -u FOO gh pr create' \
+    'sudo -u bob gh pr create' 'nice -n 5 gh pr create' 'time -p gh pr create'; do
+    bad="$p -t 'add stuff' -b 'Adds a parser.'" ok="$p -t 'feat: x' -b 'Adds a parser.'"
+    [[ "$p" == if* ]] && bad="$bad; fi" ok="$ok; fi"
+    vp "wrapped PR command refused: $bad" 2 "$bad"
+    vp "wrapped PR command allowed: $ok" "$PR_OK" "$ok"
+done
+for c in "eval gh pr create -t 'feat: x' -b 'Adds a parser.'" "xargs gh pr create -t 'feat: x' -b 'Adds a parser.'" \
+    "xargs -I{} gh pr create -t 'feat: x' -b 'Adds a parser.'" "sudo --odd bob gh pr create -t 'feat: x' -b 'Adds a parser.'"; do
+    vp "a PR command through eval, xargs or an unread wrapper option refused: $c" 2 "$c"
+done
+vp "eval of a non-PR gh api call allowed" 0 "eval gh api user"
+if [[ "$PR_OK" -eq 0 ]]; then
+    # shellcheck disable=SC2016  # literal command text under test
+    askcheck "gh api with a variable endpoint asks" "$(pp_payload 'gh api "$EP" -f title=x')" validate-pr.sh CLAUDE_PROJECT_DIR="$RT"
+    # shellcheck disable=SC2016
+    askcheck "gh api with a variable endpoint asks after a checked PR command" \
+        "$(pp_payload 'gh pr create -t "feat: x" -b "Adds a parser."; gh api "repos/o/r/$P"')" validate-pr.sh CLAUDE_PROJECT_DIR="$RT"
+    # shellcheck disable=SC2016
+    vp "a bad title is refused before the variable endpoint asks" 2 'gh api "$EP"; gh pr create -t "add stuff" -b "x"'
+else
+    echo "SKIP: gh api with a variable endpoint asks (this host lacks python3)"
+fi
+vp "gh api with a literal non-pulls endpoint allowed" 0 'gh api "repos/{owner}/{repo}/issues"'
 
 echo ""
 echo "=== validate-bash: destructive git, protected-path and staging variants (#170) ==="

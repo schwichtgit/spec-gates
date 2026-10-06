@@ -73,7 +73,10 @@ spec-gates uses four of them:
   read literally: a variable, a command substitution (except the
   `"$(cat <<'EOF' … EOF)"` heredoc), a glob, a flag given twice, a
   clustered short flag such as `-tfeat`, `gh api --input`, or a PR
-  command inside `sh -c` or `eval`.
+  command inside `sh -c`, behind `eval` or behind `xargs`. A PR command
+  after a shell keyword (`if …; then gh pr create …`) or a wrapper and
+  its options (`env -i`, `sudo -u bob`) is checked; `gh api "$EP"`, whose
+  endpoint only the shell knows, asks.
 - `PostToolUse(Write|Edit)` → `post-edit.sh`: formats the touched file per
   policy.
 - `Stop` → `format-changed.sh` + `verify-quality.sh`: a stop while
