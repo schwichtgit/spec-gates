@@ -46,9 +46,11 @@ SHA256SUMS`) and `cosign verify-blob` with the identity and issuer
       who published it. Repeat that choice in the final report.
 
 3. **Swap the extension**:
-   `specify extension remove gates --keep-config --force`, then
+   run `specify extension remove gates --keep-config --force` on its own
+   and read its output; only when it reports the extension removed
+   without an error, run
    `specify extension add gates --from <the same versioned URL>`. These
-   are two commands, not a transaction. If `add` fails, the projected
+   are two commands, not a transaction: never chain them. If `add` fails, the projected
    runtime keeps working and `bash .specify/gates/project.sh --check`
    prints the finishing command. A 0.3.x projection has no
    `.specify/gates/project.sh`: re-run the `add`, then continue.

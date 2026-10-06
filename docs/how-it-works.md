@@ -864,7 +864,11 @@ transaction. If the `add` fails, the projected copy of `project.sh`
 (`.specify/gates/project.sh --check`) reports the half-done upgrade and the
 command that finishes it, and doctor fails until it is done. A 0.3.x
 projection has no projected `project.sh`: re-run the `add`, then the
-installed `project.sh`. A
+installed `project.sh`. The git hook stubs in `.git/hooks` are shared by
+every branch and worktree and run the checked-out branch's projected
+hook; the `pre-merge-commit` stub falls back to the branch's `pre-commit`
+hook on a branch projected before that hook shipped (0.3.x), so rolling
+back to 0.3.x means removing that stub as well. A
 `specify extension add --dev` install renders the gates skills as symlinks
 that exist only on the author's machine; doctor fails on symlinked,
 dangling or missing skills. `doctor --installed-only`, run from the
@@ -897,7 +901,8 @@ extension ships a nested markdownlint config at its own root
 and in a repository that uses prettier `project.sh` reports the missing
 `.prettierignore` entries for `.specify/gates/`, `.specify/extensions/`
 and `.claude/hooks/gates/`, appending them only with `--add-lint-ignores`,
-since that file is the consumer's. A packaging test asserts the shipped
+since that file is the consumer's. An entry for a parent directory
+(`.specify/`, `.claude/**`) counts as covering the paths under it. A packaging test asserts the shipped
 tree stays clean under default tooling.
 
 ## Threat model honesty

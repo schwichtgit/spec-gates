@@ -8,6 +8,32 @@ never touches `.specify/gates/policy.json`. New policy keys take the
 defaults stated here until you set them. Releases before 0.3.3 are
 described in their [GitHub release notes](https://github.com/schwichtgit/spec-gates/releases).
 
+## [Unreleased]
+
+### Fixed
+
+- **Doctor names the pending upgrade item** (#214). Whenever
+  `project.sh --check` exited 1, doctor advised running `project.sh`,
+  which reports "no changes" for pending hook-manager wiring, a pending
+  `lefthook install`, stale or missing holds, missing git or a repository
+  git refuses. Doctor now names each item and its command
+  (`--wire-manager`, the manager's install command, the holds file,
+  `safe.directory`) and still fails until it is done.
+- **Upgrade notes are exact** (#215). `project.sh` no longer prints a
+  stray space before the closing parenthesis of "the CI pipeline (...)
+  lacks these template steps".
+  The README Upgrade section says how the new `pre-merge-commit` stub
+  behaves on a branch still on 0.3.x (it runs that branch's `pre-commit`
+  hook) and that rolling back means removing that stub.
+- **A parent directory in `.prettierignore` counts** (#217). `project.sh`
+  reported `.specify/gates/`, `.specify/extensions/` and
+  `.claude/hooks/gates/` as not excluded when `.prettierignore` already
+  had `.specify/` and `.claude/`, and `--add-lint-ignores` appended
+  redundant lines. An entry for the path or a parent directory (with `/`,
+  `/*` or `/**`) now covers it. The README Upgrade step 3 says to run
+  `specify extension remove` and `add` as two commands and to check the
+  remove output first.
+
 ## 0.4.0 — 2026-10-06
 
 ### Upgrading

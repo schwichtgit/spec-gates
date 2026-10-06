@@ -358,7 +358,9 @@ cosign verify-blob --bundle "$D/gates-$V.zip.sigstore.json" \
   --certificate-identity-regexp '^https://github.com/schwichtgit/spec-gates/.github/workflows/release.yml@' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com "$D/gates-$V.zip"
 
-# 3. Swap the installed extension (policy.json stays).
+# 3. Swap the installed extension (policy.json stays). Run these as two
+#    commands: read the remove output first, and run add only if it
+#    reports the extension removed without an error.
 specify extension remove gates --keep-config --force
 specify extension add gates --from "$U/gates-$V.zip"
 
@@ -373,13 +375,24 @@ bash .specify/extensions/gates/runtime/project.sh
 `specify extension add --from` checks neither the checksum nor the
 signature, and it downloads the zip itself, so steps 2 and 4 are what tie
 the installed files to a verified release. Step 3 is two commands, not
-one transaction: if the `add` fails, the projected runtime keeps working,
+one transaction, so do not chain them: check that `remove` succeeded
+before running `add`. If the `add` fails, the projected runtime keeps working,
 and `bash .specify/gates/project.sh --check` prints the command that
 finishes the upgrade. A runtime projected by 0.3.x has no
 `.specify/gates/project.sh`; there, re-run the `specify extension add`
 command, then step 5. Scripts that run `verify.sh` without `--boundary`
 still work, with a deprecation warning; step 5 and doctor name them, so
 add `--boundary agent|git|ci` to each.
+
+The git hook stubs live in `.git/hooks`, which every branch and worktree
+of the clone shares, and each stub runs the checked-out branch's
+projected hook. Step 5 adds a `pre-merge-commit` stub. On a branch still
+on 0.3.x, which has no projected `pre-merge-commit` hook, that stub runs
+the branch's `pre-commit` hook for merge commits instead; on a branch
+with no gates runtime at all it does nothing. Rolling back to 0.3.x
+(reinstalling that release and restoring `.specify/gates` from the step 1
+backup) also means removing the new stub:
+`rm "$(git rev-parse --git-path hooks)/pre-merge-commit"`.
 
 **No cosign on this machine** (a locked-down workstation, say): the
 checksum check is still required, and the signature can be checked
