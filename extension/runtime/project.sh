@@ -449,7 +449,7 @@ report_side() {
     local missing
     missing="$(gates_ci_missing "$ROOT")"
     if [[ -n "$missing" ]]; then
-        say "the CI pipeline ($(gates_ci_files "$ROOT" | tr '\n' ' ')) lacks these template steps:"
+        say "the CI pipeline ($(gates_ci_files "$ROOT" | tr '\n' ' ' | sed 's/ $//')) lacks these template steps:"
         printf '%s\n' "$missing" | sed 's/^/project:   /'
         say "  add them from .specify/extensions/gates/ci/, or record a deliberate omission as ci:<step> in $GATES_HOLDS_REL"
     fi

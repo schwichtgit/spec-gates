@@ -19,6 +19,12 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   git refuses. Doctor now names each item and its command
   (`--wire-manager`, the manager's install command, the holds file,
   `safe.directory`) and still fails until it is done.
+- **Upgrade notes are exact** (#215). `project.sh` no longer prints a
+  stray space before the closing parenthesis of "the CI pipeline (...)
+  lacks these template steps".
+  The README Upgrade section says how the new `pre-merge-commit` stub
+  behaves on a branch still on 0.3.x (it runs that branch's `pre-commit`
+  hook) and that rolling back means removing that stub.
 
 ## 0.4.0 — 2026-10-06
 

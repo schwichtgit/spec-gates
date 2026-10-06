@@ -314,6 +314,7 @@ printf 'on: push\njobs:\n  g:\n    steps:\n      - run: bash .specify/gates/veri
     >"$D/.github/workflows/gates.yml"
 rc_is "CI drift is reported" 0 "$D" --skip-canary
 ok "the missing pr step is named" grep -q '^project:   pr$' <<<"$OUT"
+ok "the pipeline file is named without a stray space (#215)" grep -qF 'the CI pipeline (.github/workflows/gates.yml) lacks' <<<"$OUT"
 printf 'ci:pr  # no PRs in this repo\n' >>"$D/.specify/gates/.upgrade-holds"
 rc_is "an acknowledged omission is not reported" 0 "$D" --skip-canary
 ok "no drift reported after ci:pr" bash -c "! grep -q 'lacks these template steps' <<<\"\$1\"" _ "$OUT"

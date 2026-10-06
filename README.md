@@ -381,6 +381,16 @@ command, then step 5. Scripts that run `verify.sh` without `--boundary`
 still work, with a deprecation warning; step 5 and doctor name them, so
 add `--boundary agent|git|ci` to each.
 
+The git hook stubs live in `.git/hooks`, which every branch and worktree
+of the clone shares, and each stub runs the checked-out branch's
+projected hook. Step 5 adds a `pre-merge-commit` stub. On a branch still
+on 0.3.x, which has no projected `pre-merge-commit` hook, that stub runs
+the branch's `pre-commit` hook for merge commits instead; on a branch
+with no gates runtime at all it does nothing. Rolling back to 0.3.x
+(reinstalling that release and restoring `.specify/gates` from the step 1
+backup) also means removing the new stub:
+`rm "$(git rev-parse --git-path hooks)/pre-merge-commit"`.
+
 **No cosign on this machine** (a locked-down workstation, say): the
 checksum check is still required, and the signature can be checked
 elsewhere. Run the `cosign verify-blob` command on any machine that has
