@@ -1234,21 +1234,36 @@ fi
 
 # Secret files (#130): protect-files refuses Write/Edit of these; a command
 # that names one (`cat .env`, `cp id_rsa x`) asks, since reading it puts
-# the secret in the transcript. Same names and allowlist as protect-files.
-SECRET_FILE="$(printf '%s\n' "$COMMAND" | tr '<>|;&()=,' '         ' | awk '
-    { for (i = 1; i <= NF; i++) {
-        t = $i; gsub(/["'"'"'`]/, "", t)
-        n = split(t, parts, "/"); b = tolower(parts[n])
-        if (b ~ /\.(example|sample|template)$/) continue
-        if (b == ".env" || b ~ /^\.env\./ || b ~ /^(id_rsa|id_ed25519|id_ecdsa)/ \
-            || b == "authorized_keys" || b == "known_hosts" \
-            || b ~ /\.(pem|key|crt|p12|pfx|jks|keystore)$/ \
-            || b ~ /^(credentials|credentials\.json|credentials\.yml|credentials\.yaml|\.netrc|\.pypirc|aws-credentials)$/ \
-            || b ~ /^(gcloud-.*|service-account.*)\.json$/) { if (found == "") found = t }
-    } }
-    END { print found }')"
-if [[ -n "$SECRET_FILE" ]]; then
-    defer_ask "this command names the secret file $SECRET_FILE; confirm it does not expose a credential"
+# the secret in the transcript. The names and allowlist are the ones
+# pre-commit and pr-check refuse (lib/secrets.sh, #221), matched ignoring
+# case; the projected lib, or the one beside this hook in the extension's
+# own layout. One that cannot load asks.
+SECRETS_LIB=missing
+for _sl in "$LROOT/.specify/gates/lib/secrets.sh" "${BASH_SOURCE[0]%/*}/../../lib/secrets.sh"; do
+    [[ -f "$_sl" ]] || continue
+    # shellcheck source=/dev/null disable=SC1090
+    if "$BASH" -n "$_sl" 2>/dev/null && source "$_sl" 2>/dev/null \
+        && command -v gates_forbidden_path >/dev/null 2>&1; then
+        SECRETS_LIB=ok
+    fi
+    break
+done
+if [[ "$SECRETS_LIB" == ok ]]; then
+    SECRET_FILE=""
+    shopt -s nocasematch
+    while IFS= read -r _t; do
+        if gates_forbidden_path "$_t"; then
+            SECRET_FILE="$_t"
+            break
+        fi
+    done < <(printf '%s\n' "$COMMAND" | tr '<>|;&()=,' '         ' | awk '
+        { for (i = 1; i <= NF; i++) { t = $i; gsub(/["'"'"'`]/, "", t); if (t != "" && !seen[t]++) print t } }')
+    shopt -u nocasematch
+    if [[ -n "$SECRET_FILE" ]]; then
+        defer_ask "this command names the secret file $SECRET_FILE (${GATES_FORBIDDEN_WHAT:-a forbidden name}); confirm it does not expose a credential"
+    fi
+else
+    defer_ask "lib/secrets.sh cannot load, so this command cannot be checked for secret files; run /speckit.gates.doctor"
 fi
 
 # Project-owned rules (#71) run once every shipped rule allowed, so they

@@ -31,7 +31,8 @@ spec-gates uses four of them:
 - `PreToolUse(Write|Edit)` → `protect-files.sh`: refuses edits to `.env`
   files, private keys and certificates, exact credential file names
   (`credentials.json`, `.netrc`, cloud service-account files), sensitive
-  directories, lock files, the project's own rules in
+  directories (the same secret-file list `pre-commit` and `pr-check.sh`
+  use, read from `lib/secrets.sh`), lock files, the project's own rules in
   `.specify/gates/hooks.local.d/`, `.specify/gates/policy.json` (always,
   whatever the policy says), and every `protected_files.extra` entry. A
   Write or Edit to `.specify/memory/constitution.md` asks instead, under

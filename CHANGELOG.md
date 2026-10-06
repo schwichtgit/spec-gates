@@ -66,6 +66,13 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   does. Without jq, protect-files asked on every Write because it could
   not read the multi-line `protected_files.extra` that `policy-infer.sh`
   writes; it now reads it and asks only when it cannot.
+- **One secret-file list at every boundary** (#221). protect-files and
+  validate-bash kept their own copy of the forbidden names; they now read
+  it from `lib/secrets.sh`, as `pre-commit` and `pr-check.sh` do, and ask
+  when it cannot load. The list is the union of the old ones, so the git
+  and CI boundaries now also refuse `*.jks`, `credentials`,
+  `credentials.yml`/`.yaml`, `.netrc`, `.pypirc`, `gcloud-*.json` and a
+  top-level `.ssh/`, `.gnupg/`, `.aws/` or `.gcloud/`.
 
 ## 0.4.0 — 2026-10-06
 

@@ -181,42 +181,20 @@ builtin_rules() {
     BASENAME="${1##*/}"
     allowlisted "$BASENAME" && return 0
 
-    # Environment files
-    if [[ "$BASENAME" == ".env" ]] || [[ "$BASENAME" == .env.* ]]; then
-        BLOCKED="Environment file"
+    # Secret files: environment files, SSH keys, certificates and key
+    # stores, credential files, cloud credentials and sensitive directories,
+    # from the list pre-commit and pr-check use (lib/secrets.sh, #221).
+    if [[ "$SECRETS_LIB" == ok ]] && gates_forbidden_path "$FILE_PATH"; then
+        BLOCKED="Secret file: ${GATES_FORBIDDEN_WHAT:-a forbidden name} (lib/secrets.sh)"
     fi
 
-    # SSH keys
-    case "$BASENAME" in
-        id_rsa*|id_ed25519*|id_ecdsa*|authorized_keys|known_hosts)
-            BLOCKED="SSH key/config file"
-            ;;
-    esac
-
-    # Certificates and key stores
-    case "$BASENAME" in
-        *.pem|*.key|*.crt|*.p12|*.pfx|*.jks|*.keystore)
-            BLOCKED="Certificate/key file"
-            ;;
-    esac
-
     # Credentials (#71): an exact credential file name is strong evidence and
-    # blocks. A sensitive word that merely appears in the name (a test such as
-    # test_no_secret_leak.py, a token parser) asks the human instead: blocking
-    # it outright left no way to edit such files at all.
-    case "$BASENAME" in
-        credentials|credentials.json|credentials.yml|credentials.yaml|.netrc|.pypirc)
-            BLOCKED="Credentials file"
-            ;;
-    esac
+    # blocks (above). A sensitive word that merely appears in the name (a
+    # test such as test_no_secret_leak.py, a token parser) asks the human
+    # instead: blocking it outright left no way to edit such files at all.
     if [[ -z "$BLOCKED" && -z "$NAMEASK" ]]; then
         _word="$(echo "$BASENAME" | grep -oiE 'credentials|secret|password|token|keystore' | head -n 1 || true)"
         [[ -n "$_word" ]] && NAMEASK="the file name contains '$_word'; confirm $FILE_PATH does not hold a credential"
-    fi
-
-    # Cloud configs
-    if grep -qiE '^(gcloud-.*\.json|service-account.*\.json|aws-credentials)$' <<<"$BASENAME"; then
-        BLOCKED="Cloud credentials file"
     fi
 
     # The project's own rules (#95): hooks.local.d holds the refusals the
@@ -266,19 +244,28 @@ builtin_rules() {
             BLOCKED="Lock file (auto-generated)"
             ;;
     esac
-
-    # Sensitive directories
-    if grep -qiE '(^|/)(\.ssh|\.gnupg|\.aws|\.gcloud)/' <<<"$FILE_PATH"; then
-        BLOCKED="File in sensitive directory"
-    fi
     return 0
 }
+
+# The secret-file list (#221): the projected lib, or the one beside this
+# hook in the extension's own layout. One that cannot load asks below,
+# once no other rule has blocked.
+PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+SECRETS_LIB=missing
+for _sl in "$PROJECT_ROOT/.specify/gates/lib/secrets.sh" "${BASH_SOURCE[0]%/*}/../../lib/secrets.sh"; do
+    [[ -f "$_sl" ]] || continue
+    # shellcheck source=/dev/null disable=SC1090
+    if "$BASH" -n "$_sl" 2>/dev/null && source "$_sl" 2>/dev/null \
+        && command -v gates_forbidden_path >/dev/null 2>&1; then
+        SECRETS_LIB=ok
+    fi
+    break
+done
 builtin_rules "$FILE_PATH"
 [[ -n "$BLOCKED" || "$REAL_PATH" == "$FILE_PATH" ]] || builtin_rules "$REAL_PATH"
 
 # A hard link shares no path with the file it aliases: compare an existing
 # target with the project's own protected files by device and inode.
-PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 if [[ -z "$BLOCKED" && -z "$CONSTASK" && -f "$REAL_PATH" ]]; then
     for _pf in "$PROJECT_ROOT"/.specify/gates/policy.json "$PROJECT_ROOT"/.specify/gates/baseline.json \
         "$PROJECT_ROOT"/.specify/gates/baseline.lock.json "$PROJECT_ROOT"/.specify/gates/policy.effective.json \
@@ -400,6 +387,8 @@ if compgen -G "$LROOT/.specify/gates/hooks.local.d/protect-files/*.sh" >/dev/nul
     fi
 fi
 
+[[ "$SECRETS_LIB" == ok ]] \
+    || ask "lib/secrets.sh cannot load, so this edit cannot be checked against the secret-file list; run /speckit.gates.doctor"
 [[ -n "$CONSTASK" ]] && ask "$CONSTASK"
 [[ -n "$ASK" ]] && ask "$ASK"
 [[ -n "$NAMEASK" ]] && ask "$NAMEASK"

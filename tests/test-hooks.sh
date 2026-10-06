@@ -1168,6 +1168,41 @@ done
 check "a plain file is allowed" 0 bash -c "printf '%s' '{\"tool_input\":{\"file_path\":\"src/app.ts\"}}' | CLAUDE_PROJECT_DIR='$WORKDIR/none' '$HOOKS/protect-files.sh'"
 
 echo ""
+echo "=== one forbidden-name list at every boundary (#221) ==="
+# pre-commit and pr-check refuse every name the agent hooks refuse.
+for f in release.jks credentials credentials.yml credentials.yaml .netrc .pypirc gcloud-x.json .ssh/config \
+    .gnupg/k aws-credentials CREDENTIALS.JSON; do
+    want=0
+    [[ "$f" == CREDENTIALS.JSON ]] && want=1 # git paths are matched as spelled
+    check "secrets.sh forbids: $f" "$want" bash -c "source '$FF'; gates_forbidden_path '$f'"
+done
+# The agent hooks read the list from lib/secrets.sh: a name added there is
+# refused at the agent boundary too, and a lib that cannot load asks.
+DR="$WORKDIR/drift"
+project_runtime "$DR" "true"
+printf '{ "hooks": {} }\n' >"$DR/.specify/gates/policy.json"
+sed 's/aws-credentials)/aws-credentials | *.drift)/' "$FF" >"$DR/.specify/gates/lib/secrets.sh"
+check "a name added to lib/secrets.sh is refused by protect-files" 2 bash -c \
+    "printf '%s' '{\"tool_input\":{\"file_path\":\"x.drift\"}}' | CLAUDE_PROJECT_DIR='$DR' '$HOOKS/protect-files.sh'"
+askcheck "a name added to lib/secrets.sh asks in validate-bash" '{"tool_input":{"command":"cat x.drift"}}' \
+    validate-bash.sh CLAUDE_PROJECT_DIR="$DR"
+mkdir -p "$WORKDIR/lonehooks"
+cp "$HOOKS/protect-files.sh" "$HOOKS/validate-bash.sh" "$WORKDIR/lonehooks/"
+printf 'gates_forbidden_path() {\n' >"$DR/.specify/gates/lib/secrets.sh"
+for hk in protect-files.sh validate-bash.sh; do
+    case "$hk" in
+        protect-files.sh) pl='{"tool_input":{"file_path":"src/a.ts"}}' ;;
+        *) pl='{"tool_input":{"command":"ls src"}}' ;;
+    esac
+    check "$hk: a lib/secrets.sh that cannot load asks" 0 bash -c \
+        "printf '%s' '$pl' | CLAUDE_PROJECT_DIR='$DR' '$HOOKS/$hk' | grep -q 'lib/secrets.sh cannot load'"
+    check "$hk: no lib/secrets.sh anywhere asks" 0 bash -c \
+        "printf '%s' '$pl' | CLAUDE_PROJECT_DIR='$WORKDIR/none' '$WORKDIR/lonehooks/$hk' | grep -q 'lib/secrets.sh cannot load'"
+done
+check "a project rule still blocks before the secrets-lib question" 2 bash -c \
+    "printf '%s' '{\"tool_input\":{\"file_path\":\".specify/gates/policy.json\"}}' | CLAUDE_PROJECT_DIR='$DR' '$HOOKS/protect-files.sh'"
+
+echo ""
 echo "=== bulk staging (git.block_bulk_staging, #71) ==="
 BK="$WORKDIR/bulk"
 mkdir -p "$BK/.specify/gates" "$BK/src"
