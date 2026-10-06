@@ -256,13 +256,13 @@ branding docs (research R13, R15, R16).
 
 ## Phase 10: Polish & Release
 
-- [ ] T048a (#98) Coverage: a report-only `coverage` CI job (kcov in node:26-slim, `scripts/coverage.sh` + `scripts/coverage-merge.py`, per-file table in the job summary, every PR and main), then tests for the gaps toward 85%: `lib/policy-infer.sh`, `lib/taskfile-detect.sh`, `hooks/git/pre-commit`, `project.sh` error paths, the contract, constitution and spec-gate libraries
-- [ ] T049 Docs sweep: `docs/how-it-works.md`, `README.md` and the command docs agree on `project.sh`, holds, local rules, managers; `CHANGELOG.md` [Unreleased] lists #70–#74, #82, #83
-- [ ] T050 Full local suite: `bash tests/run.sh`, `bash .specify/gates/verify.sh --boundary ci`, `bash .specify/gates/canary.sh`; stock macOS (`env -i … /bin/bash tests/run.sh` with the jq/shellcheck/node shim); container matrix (no python3, python3-minimal, full python3) with `node:26-slim`
-- [ ] T051 Release candidate: build the release-shaped zip, serve it on 127.0.0.1:8734, send both consumer peers a checklist (sha256, the documented upgrade path, `project.sh --dry-run` then one run, doctor, canary, an agent-created PR) and wait for both reports (SC-006)
-- [ ] T052 Flip `**Status**: Complete` in `specs/005-upgrade-safe-projection/spec.md` as the final implementation commit, once every task is checked and every accept block passes
-- [ ] T053a Release notes "Upgrading": commit `.specify/gates/.projected.sha256` and `.specify/gates/project.sh` with the upgrade; the first `project.sh` run on a 0.3.x projection compares against the shipped known-release hashes (US2), so only real local edits stop it
-- [ ] T053 Bump PR: `extension.yml` and `npm version 0.4.0 --no-git-tag-version` in lockstep, CHANGELOG dated heading; tag only on Frank's explicit go; after release update the pinned install URLs and the catalog issue
+- [x] T048a (#98) Coverage: a report-only `coverage` CI job (bashcov in node:26-slim, chosen over kcov; `scripts/coverage.sh` + `scripts/coverage-merge.py`, per-file table in the job summary, every PR and main), then tests for the gaps toward 85%: `lib/policy-infer.sh`, `lib/taskfile-detect.sh`, `hooks/git/pre-commit`, `project.sh` error paths, the contract, constitution and spec-gate libraries
+- [x] T049 Docs sweep: `docs/how-it-works.md`, `README.md` and the command docs agree on `project.sh`, holds, local rules, managers; `CHANGELOG.md` [Unreleased] lists #70–#74, #82, #83
+- [x] T050 Full local suite: `bash tests/run.sh`, `bash .specify/gates/verify.sh --boundary ci`, `bash .specify/gates/canary.sh`; stock macOS (`env -i … /bin/bash tests/run.sh` with the jq/shellcheck/node shim); container matrix (no python3, python3-minimal, full python3) with `node:26-slim`
+- [x] T051 Release candidate: build the release-shaped zip, serve it on 127.0.0.1:8734, send both consumer peers a checklist (sha256, the documented upgrade path, `project.sh --dry-run` then one run, doctor, canary, an agent-created PR) and wait for both reports (SC-006)
+- [x] T052 Flip `**Status**: Complete` in `specs/005-upgrade-safe-projection/spec.md` as the final implementation commit, once every task is checked and every accept block passes
+- [x] T053a Release notes "Upgrading": commit `.specify/gates/.projected.sha256` and `.specify/gates/project.sh` with the upgrade; the first `project.sh` run on a 0.3.x projection compares against the shipped known-release hashes (US2), so only real local edits stop it
+- [x] T053 Bump PR: `extension.yml` and `npm version 0.4.0 --no-git-tag-version` in lockstep, CHANGELOG dated heading; tag only on Frank's explicit go; after release update the pinned install URLs and the catalog issue
 
   ```accept
   # verifies: SC-004
