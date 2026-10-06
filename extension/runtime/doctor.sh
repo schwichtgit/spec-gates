@@ -505,12 +505,12 @@ if declare -f gates_ci_missing >/dev/null 2>&1 && [[ -d "$PROJECT_ROOT/.specify/
             done <<<"$CI_ACKS"
         fi
     else
-        # A pipeline that calls verify.sh but runs no live gates step looks
-        # wired and enforces nothing (#171): a gap, not a nudge.
+        # A pipeline that calls verify.sh but runs no proven gates step looks
+        # wired and may enforce nothing (#171, #198): a gap, not a nudge.
         CI_INERT="$(gates_ci_inert "$PROJECT_ROOT" 2>/dev/null)"
         if [[ -n "$CI_INERT" ]]; then
-            while IFS= read -r cf; do
-                echo "${BAD}CI pipeline $cf calls verify.sh but runs no live 'verify.sh --boundary ci' step (another --boundary, a disabled, manual or never-triggered job, or an ignored failure) — the CI boundary enforces nothing"
+            while IFS=$'\t' read -r cf cwhy; do
+                echo "${BAD}CI pipeline $cf calls verify.sh but no 'verify.sh --boundary ci' step is proven to run and fail it: $cwhy"
                 MISSING=$((MISSING + 1))
             done <<<"$CI_INERT"
         else

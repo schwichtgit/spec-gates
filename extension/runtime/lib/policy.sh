@@ -456,7 +456,16 @@ gates_validate_policy() {
                         else [] end )
                     + ( if ($s | has("include")) then str_array("spec: include"; $s.include) else [] end )
                     + ( if ($s | has("exclude")) then str_array("spec: exclude"; $s.exclude) else [] end )
-                    + ( if ($s | has("snapshot_exclude")) then str_array("spec: snapshot_exclude"; $s.snapshot_exclude) else [] end )
+                    + ( if ($s | has("snapshot_exclude")) then
+                          str_array("spec: snapshot_exclude"; $s.snapshot_exclude) as $sx
+                          | if ($sx | length) > 0 then $sx
+                            # Only *, ? and / would exempt every untracked
+                            # and ignored path from the read-only check.
+                            else [ $s.snapshot_exclude[]
+                                   | select(length > 0 and (explode | all(. == 42 or . == 47 or . == 63)))
+                                   | "spec: snapshot_exclude: \"\(.)\" matches every path; name a path or directory" ]
+                            end
+                        else [] end )
                     + ( if ($s | has("timeout_s")) and ($s.timeout_s | pos_int | not)
                           then ["spec: timeout_s must be an integer >= 1"]
                         else [] end )

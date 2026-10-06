@@ -84,6 +84,18 @@ expect "non-json run also appends (now two records)" \
     "$(wc -l <"$LOG" | tr -d ' ')" 2
 expect "dry-run appends nothing" \
     "$(gate "$D" --dry-run >/dev/null; wc -l <"$LOG" | tr -d ' ')" 2
+# --dry-run lists every gate a run would evaluate, parity included (#199),
+# and leaves it out where a run would (parity off, attestations disabled).
+dry_parity() { # <dir>: the parity entry's status under --dry-run, or none
+    CLAUDE_PROJECT_DIR="$1" bash "$1/.specify/gates/verify.sh" --boundary ci --dry-run --json 2>/dev/null \
+        | jq -r '[.gates[] | select(.name == "parity") | .status] | if length == 0 then "none" else join(",") end'
+}
+expect "dry-run lists the parity gate as planned" "$(dry_parity "$D")" planned
+DPO="$WORKDIR/dry-parity-off"
+project "$DPO" '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error", "custom_command": "true" } }, "attestation": { "parity": "off" } }'
+expect "dry-run with parity off lists no parity gate" "$(dry_parity "$DPO")" none
+project "$DPO" '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error", "custom_command": "true" } }, "attestation": { "enabled": false } }'
+expect "dry-run with attestations disabled lists no parity gate" "$(dry_parity "$DPO")" none
 expect "the log is gitignored next to it (#69)" \
     "$(grep -cxF attestations.jsonl "$D/.specify/gates/.gitignore" 2>/dev/null)" 1
 if git -C "$D" rev-parse --git-dir >/dev/null 2>&1 || git init -q "$D" >/dev/null 2>&1; then

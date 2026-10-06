@@ -67,10 +67,16 @@ the checking; this command runs it, shows the output, and explains it.
      `allow_failure: true` ignores, `--dry-run`, anything after an
      unconditional `exit 0`, manual, hidden or never-run GitLab jobs,
      workflows triggered only by `workflow_dispatch` or `schedule`, and
-     Jenkins stages under `when { expression { false } }` do not. A
-     pipeline that calls `verify.sh` without a live `--boundary ci` step
-     fails. Heredocs, wrapper scripts and computed conditions are read as
-     live: the CI run's own log is the proof that the gates ran. A
+     Jenkins stages under `when { expression { false } }` do not. The
+     gates step must be proven: `bash .specify/gates/verify.sh --boundary ci`
+     as the whole command (or the last line of its script, with no heredoc,
+     `trap` or `exit 0` before it), on a push or pull request trigger (GitLab:
+     a branch or merge request pipeline), with no `GATES_SPEC_EXEC` or
+     `GATES_POLICY_FILE` in the file, and not inside Jenkins `catchError`,
+     `warnError` or `try`. A pipeline that calls `verify.sh` without such a
+     step fails, and the line says what to change. Wrapper scripts and
+     computed conditions are read as live: the CI run's own log is the
+     proof that the gates ran. A
      `ci:<step>` hold for a step the pipeline runs is stale and fails, and
      an unknown id gets a `[rec]`.
    - **Agent hooks**: each projected hook must be executable (Claude Code

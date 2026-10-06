@@ -837,6 +837,27 @@ rejects hook-exclude-number '{ "hooks": { "prettier": { "severity": "error", "ex
 rejects top-level-typo '{ "hooks": {}, "attestaton": { "enabled": false } }' 5 'unknown top-level field "attestaton"'
 rejects timeout-negative '{ "hooks": {}, "spec": { "timeout_s": -1 } }' 5 'spec: timeout_s must be an integer >= 1'
 rejects max-records-negative '{ "hooks": {}, "attestation": { "max_records": -1 } }' 5 'attestation: max_records must be an integer >= 1'
+# A snapshot_exclude pattern of only *, ? and / exempts every untracked and
+# ignored path from the accept-block read-only check (#199).
+sxn=0
+for sx in '*' '**' '**/*' '*/' '?*'; do
+    sxn=$((sxn + 1))
+    rejects "snapshot-exclude-wild-$sxn" "{ \"hooks\": {}, \"spec\": { \"snapshot_exclude\": [\"cache/\", \"$sx\"] } }" 5 \
+        "spec: snapshot_exclude: \"$sx\" matches every path"
+done
+SX_OK="$(write_policy sx-ok '{ "hooks": {}, "spec": { "snapshot_exclude": ["cache/", "*.log", "**/tmp/**", ""] } }')"
+if gates_validate_policy "$SX_OK" >/dev/null 2>&1; then
+    pass "snapshot_exclude patterns naming a path are accepted"
+else
+    fail "snapshot_exclude patterns naming a path rejected"
+fi
+# The schema refuses the same patterns.
+SX_SCHEMA="$(jq -r '.properties.spec.properties.snapshot_exclude.items.not.pattern' "$REPO_ROOT/extension/runtime/policy.schema.json")"
+if [[ "$SX_SCHEMA" == '^[*/?]+$' ]]; then
+    pass "schema refuses wildcard-only snapshot_exclude patterns"
+else
+    fail "schema snapshot_exclude items pattern: $SX_SCHEMA"
+fi
 
 # shellcheck disable=SC2016  # a literal "$schema" key
 GOOD_TOP="$(write_policy good-top '{ "_comment": "x", "$schema": "./policy.schema.json", "hooks": {} }')"

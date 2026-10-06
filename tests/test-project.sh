@@ -271,7 +271,7 @@ rc_is "a hold equal to upstream is reported stale" 0 "$D" --skip-canary
 ok "stale hold named" bash -c "grep -A1 'stale holds' <<<\"\$1\" | grep -q '.specify/gates/doctor.sh'" _ "$OUT"
 rc_is "--keep-local on a missing file is refused" 2 "$D" --skip-canary --keep-local .specify/gates/nope.sh
 mkdir -p "$D/.github/workflows"
-printf 'jobs:\n  g:\n    steps:\n      - run: bash .specify/gates/verify.sh --boundary ci\n      - run: bash .specify/gates/canary.sh\n' \
+printf 'on: push\njobs:\n  g:\n    steps:\n      - run: bash .specify/gates/verify.sh --boundary ci\n      - run: bash .specify/gates/canary.sh\n' \
     >"$D/.github/workflows/gates.yml"
 rc_is "CI drift is reported" 0 "$D" --skip-canary
 ok "the missing pr step is named" grep -q '^project:   pr$' <<<"$OUT"

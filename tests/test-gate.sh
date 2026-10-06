@@ -121,6 +121,21 @@ if command -v shellcheck >/dev/null 2>&1; then
 else
     skip "gitignored-file checks" "shellcheck not installed"
 fi
+# prettier reads .gitignore itself and skips a named file it lists, so the
+# same tracked-file rule needs --ignore-path (#199); .prettierignore holds.
+if have_node_linters; then
+    D="$WORKDIR/ignored-md"
+    project "$D" "$NONE_PRETTIER"
+    git -C "$D" init -q
+    printf '*.md\n' >"$D/.gitignore"
+    printf '#Bad md\n\n\n- x\n' >"$D/README.md"
+    git -C "$D" add -f README.md
+    expect "tracked md listed in .gitignore -> prettier still checks it (exit 2)" "$(gate "$D")" 2
+    printf 'README.md\n' >"$D/.prettierignore"
+    expect "tracked md listed in .prettierignore -> prettier skips it" "$(gate "$D")" 0
+else
+    skip "prettier tracked-but-gitignored check" "run npm ci to install pinned prettier"
+fi
 
 # --- candidate collection starts no process per file (#169) ---
 # A jq and a git shim count their invocations while check mode walks a tree
@@ -289,7 +304,16 @@ usage_err() {
 usage_err "--boundary foo" 'invalid value: foo (allowed: agent, git, ci)' --boundary foo
 usage_err "--boundary without a value" '--boundary needs a value' --boundary
 usage_err "--boundary followed by a flag" '--boundary needs a value' --boundary --json
+usage_err "a repeated --boundary" '--boundary given more than once' --boundary ci --boundary agent
 usage_err "--accept without a value" '--accept needs a feature name or all' --boundary ci --accept
+usage_err "--accept with an empty value" '--accept needs a feature name or all' --boundary ci --accept ""
+ATT_BEFORE="$(cat "$DE/.specify/gates/attestations.jsonl" 2>/dev/null | wc -l | tr -d ' ')"
+usage_err "no --boundary" '--boundary is required' --json
+usage_err "no arguments" '--boundary is required'
+expect "no --boundary: the refusal object says unspecified" \
+    "$(CLAUDE_PROJECT_DIR="$DE" bash "$DE/.specify/gates/verify.sh" --json 2>/dev/null | jq -r '.result + " " + .boundary')" "refused unspecified"
+expect "no --boundary: no attestation written" \
+    "$(cat "$DE/.specify/gates/attestations.jsonl" 2>/dev/null | wc -l | tr -d ' ')" "$ATT_BEFORE"
 for b in agent git ci; do
     expect "--boundary $b accepted" "$(CLAUDE_PROJECT_DIR="$DE" bash "$DE/.specify/gates/verify.sh" --boundary "$b" >/dev/null 2>&1 && echo 0 || echo $?)" 0
 done

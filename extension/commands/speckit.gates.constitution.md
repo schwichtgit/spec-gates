@@ -195,7 +195,10 @@ approval, change by change, using the existing wiring:
   `continue-on-error: true`, `allow_failure: true`), one that only prints
   the command, and a job that never runs (a manual or hidden GitLab job, a
   workflow triggered only by `workflow_dispatch` or `schedule`) stay
-  `missing`.
+  `missing`. The `verify.sh` step must be proven the way doctor proves it:
+  the whole command (or the last line of its script) on a push or pull
+  request trigger, without `GATES_SPEC_EXEC` or `GATES_POLICY_FILE`, and
+  outside Jenkins `catchError` or `try`.
 - `accept` → add the `# verifies:` accept block stub to the named feature's
   `tasks.md`.
 - `scanner` → add the rule to the tool's config.

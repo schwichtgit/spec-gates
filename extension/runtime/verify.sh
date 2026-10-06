@@ -67,6 +67,9 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --boundary)
             [[ $# -ge 2 && "$2" != -* ]] || usage "--boundary needs a value (agent, git or ci)"
+            # A second --boundary would replace the first: in CI,
+            # `--boundary ci --boundary agent` runs the agent set (#198).
+            [[ "$BOUNDARY" == unspecified ]] || usage "--boundary given more than once"
             case "$2" in
                 agent | git | ci) BOUNDARY="$2" ;;
                 *) usage "--boundary: invalid value: $2 (allowed: agent, git, ci)" ;;
@@ -76,13 +79,14 @@ while [[ $# -gt 0 ]]; do
         --json)     JSON=1; shift ;;
         --dry-run)  DRY_RUN=1; shift ;;
         --accept)
-            [[ $# -ge 2 && "$2" != -* ]] || usage "--accept needs a feature name or all"
+            [[ $# -ge 2 && -n "$2" && "$2" != -* ]] || usage "--accept needs a feature name or all"
             ACCEPT_ARG="$2"
             shift 2
             ;;
         *) usage "unknown argument: $1" ;;
     esac
 done
+[[ "$BOUNDARY" != "unspecified" ]] || usage "--boundary is required (agent, git or ci)"
 
 # GATES_POLICY_FILE replaces the whole policy (#196): set for one command
 # it would drop every gate the repository declares. The git and CI
@@ -382,11 +386,14 @@ ATT_ENABLED="$(gates_policy_section_get attestation enabled)"
 # detected against the lockfile pins, so agent, git, and CI runs are proven
 # equivalent transitively — no attestation transport needed. Severity comes
 # from attestation.parity (default error; warning reports without failing;
-# off omits the entry). Disabled attestations disable parity too.
+# off omits the entry). Disabled attestations disable parity too. --dry-run
+# lists it as planned, like every other gate it would run.
 # ---------------------------------------------------------------------------
 PARITY_SEV="$(gates_policy_section_get attestation parity)"
 [[ -z "$PARITY_SEV" ]] && PARITY_SEV="error"
-if [[ "$DRY_RUN" != "1" && "$ATT_ENABLED" != "false" && "$PARITY_SEV" != "off" ]]; then
+if [[ "$DRY_RUN" == "1" && "$ATT_ENABLED" != "false" && "$PARITY_SEV" != "off" ]]; then
+    record "parity" "planned" "tool versions against lockfile pins"
+elif [[ "$DRY_RUN" != "1" &&"$ATT_ENABLED" != "false" && "$PARITY_SEV" != "off" ]]; then
     parity_input="[]"
     if [[ ${#ATT_GATES[@]} -gt 0 ]]; then
         parity_input="[$(IFS=,; printf '%s' "${ATT_GATES[*]}")]"

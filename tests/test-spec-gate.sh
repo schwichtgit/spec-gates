@@ -547,6 +547,13 @@ OUT="$(isoblock excluded '  echo new >>cache/data' \
     '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } }, "spec": { "snapshot_exclude": ["cache/**"] } }')"
 expect_contains "spec.snapshot_exclude exempts an ignored path" "$OUT" "EXIT=0"
 
+# "dir/" names the directory, like "dir/**" (#199): the ignored root and
+# untracked files under it.
+OUT="$(isoblock excldir '  echo new >>cache/data
+  mkdir -p scratch && echo x >scratch/new.txt' \
+    '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } }, "spec": { "snapshot_exclude": ["cache/", "scratch/"] } }')"
+expect_contains "a trailing-slash snapshot_exclude exempts the directory" "$OUT" "EXIT=0"
+
 # A nested verify.sh (recursion guard set) appends its attestation; the gate
 # exempts its own evidence log, and the nested run reports spec as skipped.
 # shellcheck disable=SC2016  # block text, expanded when the block runs
@@ -558,6 +565,26 @@ expect_contains "nested verify.sh inside a block passes" "$OUT" "EXIT=0"
 OUT="$(isoblock child '  (sleep 2; echo late >late.txt) &')"
 expect_contains "block leaving a child running blocks the run" "$OUT" "EXIT=2"
 expect_contains "leftover child is named" "$OUT" "left a process running"
+
+# Issue #197: a child that leaves the process group (set -m) or the session
+# (setsid after a fork) is found by the lease descriptor it inherited. The
+# system binaries are named by path: macOS hides their environment from ps,
+# so these pass only through the lease.
+OUT="$(isoblock setm '  /bin/bash -c "set -m; (/bin/sleep 2; git config core.hooksPath /dev/null) & disown"')"
+expect_contains "block leaving a set -m child running blocks the run" "$OUT" "EXIT=2"
+expect_contains "detached child is named" "$OUT" "left a detached process running (stopped)"
+OUT="$(isoblock setsid '  perl -e "use POSIX; fork and exit; POSIX::setsid(); sleep 2; open(F, q(>late.txt))"')"
+expect_contains "block leaving a setsid child running blocks the run" "$OUT" "EXIT=2"
+expect_contains "new-session child is named" "$OUT" "left a detached process running (stopped)"
+# A runtime that closes inherited descriptors (Node's spawn passes only
+# stdio) is found by the GATES_SPEC_BLOCK marker; on macOS a system shell
+# hides it, so this runs where /proc exposes every environment.
+if [[ -r /proc/self/environ ]]; then
+    OUT="$(isoblock nodespawn '  node -e "require(\"child_process\").spawn(\"sh\", [\"-c\", \"sleep 2; echo late >late.txt\"], { detached: true, stdio: \"ignore\" }).unref()"')"
+    expect_contains "child without the lease descriptor is found by its marker" "$OUT" \
+        "left a detached process running (stopped)"
+fi
+
 sleep 3
 TOTAL=$((TOTAL + 1))
 if [[ ! -e "$WORKDIR/iso-child/late.txt" ]]; then
@@ -567,6 +594,83 @@ else
     echo "FAIL: passing block's child kept running and wrote late.txt"
     FAIL=$((FAIL + 1))
 fi
+expect "set -m child is stopped before it switches hooks off" \
+    "$(git -C "$WORKDIR/iso-setm" config core.hooksPath || echo unset)" "unset"
+TOTAL=$((TOTAL + 1))
+if [[ ! -e "$WORKDIR/iso-setsid/late.txt" ]]; then
+    echo "PASS: setsid child is stopped, no late write"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL: setsid child kept running and wrote late.txt"
+    FAIL=$((FAIL + 1))
+fi
+if [[ -r /proc/self/environ ]]; then
+    TOTAL=$((TOTAL + 1))
+    if [[ ! -e "$WORKDIR/iso-nodespawn/late.txt" ]]; then
+        echo "PASS: marked child is stopped, no late write"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL: marked child kept running and wrote late.txt"
+        FAIL=$((FAIL + 1))
+    fi
+fi
+
+OUT="$(isoblock skipflag '  git update-index --skip-worktree .gitignore')"
+expect_contains "block setting skip-worktree blocks the run" "$OUT" "index flags modified: .gitignore"
+
+# A file already flagged skip-worktree: status hides the edit, the hash not.
+D="$WORKDIR/iso-skipwrite"
+isofix "$D"
+git -C "$D" update-index --skip-worktree .gitignore
+# shellcheck disable=SC2016  # literal backticks
+printf -- '- [x] T001 Must leave the repository alone\n\n  ```accept\n  echo x >>.gitignore\n  ```\n' \
+    | mkfeature "$D" 500-iso Complete
+OUT="$(gate_out "$D")"
+expect_contains "write to a skip-worktree file blocks the run" "$OUT" "index flags modified: .gitignore"
+
+OUT="$(isoblock attributes '  echo "* -diff" >.git/info/attributes')"
+expect_contains "block writing .git/info/attributes blocks the run" "$OUT" "git info files modified: attributes"
+
+# Issue #206: another worktree's activity is not the block's doing. Each
+# fixture has a sibling worktree on branch "side" and a branch "stray" that
+# no worktree has checked out; <where> picks the worktree the gate runs in.
+# The block body may name the fixture paths as @MAIN@ and @SIB@.
+wtblock() { # <name> <main|linked> <block-body>
+    local d="$WORKDIR/iso-$1" body="$3" t
+    isofix "$d"
+    git -C "$d" worktree add -q "$d-wt" -b side >/dev/null 2>&1
+    git -C "$d" branch stray
+    t="$d"
+    [[ "$2" == linked ]] && t="$d-wt"
+    body="$(MAIN="$d" SIB="$d-wt" awk '{ gsub(/@MAIN@/, ENVIRON["MAIN"]); gsub(/@SIB@/, ENVIRON["SIB"]); print }' <<<"$body")"
+    # shellcheck disable=SC2016  # literal backticks and a %s placeholder
+    printf -- '- [x] T001 Must leave the repository alone\n\n  ```accept\n%s\n  ```\n' "$body" \
+        | mkfeature "$t" 500-iso Complete
+    gate_out "$t"
+}
+WTC='-c user.email=a@test -c user.name=a commit -q --allow-empty --no-verify -m x'
+
+OUT="$(wtblock wtsibcommit main "  git -C @SIB@ $WTC")"
+expect_contains "commit in a sibling worktree passes" "$OUT" "EXIT=0"
+OUT="$(wtblock wtsibswitch main '  git -C @SIB@ switch -q -c other')"
+expect_contains "branch switch in a sibling worktree passes" "$OUT" "EXIT=0"
+OUT="$(wtblock wtsibadd main '  git worktree add -q -b fresh @MAIN@-wt2')"
+expect_contains "sibling worktree added on a new branch passes" "$OUT" "EXIT=0"
+OUT="$(wtblock wtsibremove main "  git -C @SIB@ $WTC && git worktree remove @SIB@")"
+expect_contains "sibling worktree that commits and is removed passes" "$OUT" "EXIT=0"
+OUT="$(wtblock wtmaincommit linked "  git -C @MAIN@ $WTC")"
+expect_contains "commit in the main worktree passes in a linked one" "$OUT" "EXIT=0"
+
+OUT="$(wtblock wtstray main '  git branch -D -q stray')"
+expect_contains "deleting a branch checked out nowhere blocks the run" "$OUT" "refs modified: refs/heads/stray"
+OUT="$(wtblock wtnew main '  git branch brandnew')"
+expect_contains "creating a branch blocks the run" "$OUT" "refs modified: refs/heads/brandnew"
+OUT="$(wtblock wtown linked "  git $WTC")"
+expect_contains "commit on a linked worktree's own branch blocks the run" "$OUT" "refs modified: HEAD refs/heads/side"
+OUT="$(wtblock wtlock linked '  git worktree lock @SIB@')"
+expect_contains "locking its own linked worktree blocks the run" "$OUT" "worktrees modified: iso-wtlock-wt"
+OUT="$(wtblock wtinner main '  git worktree add -q --detach inner')"
+expect_contains "worktree added inside the project blocks the run" "$OUT" "working tree modified: inner/"
 
 OUT="$(isoblock reaped '  sleep 30 &
   kill $!')"

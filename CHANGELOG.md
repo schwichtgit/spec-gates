@@ -194,6 +194,41 @@ add` forms at the agent boundary. `project.sh` lists new settings like
   `commit-msg`; validate-bash allowed all four. It now asks before each
   (also `--continue` and `--skip`), naming the CI boundary as the only
   check, and the docs list all four.
+- **Small gates findings from RC3** (#199). `verify.sh` without
+  `--boundary`, or with `--accept ""`, is a usage error (exit 1) instead of
+  a full run. `--dry-run` lists the `parity` gate. prettier checks a
+  tracked file even when `.gitignore` lists it. In `spec.snapshot_exclude`,
+  `cache/` now covers the directory like `cache/**`, and a pattern of only
+  `*`, `?` and `/` makes the policy invalid. `constitution.sh align` no
+  longer proposes values below the schema minimum, `align` and `check`
+  refuse an invalid policy instead of reporting principles active against
+  it, and a heading or marker inside a fenced code block is not a
+  principle.
+- **An accept block can no longer leave a detached process behind**
+  (#197). A child that left the block's process group (`set -m`,
+  `setsid`, a double fork) kept running after a passing block and could
+  switch `core.hooksPath` off seconds later. Blocks now inherit a lease
+  descriptor and a `GATES_SPEC_BLOCK` marker; a process still holding
+  either after the block exits is stopped and fails it. The read-only
+  check also covers skip-worktree and assume-unchanged flags (with a
+  content hash of flagged files), `.git/info/` and linked worktrees.
+- **Work in another worktree no longer fails an accept block** (#206). The
+  read-only check compared every ref and every linked worktree, so a
+  commit, a branch switch, or a worktree added or removed in a sibling
+  worktree while a block ran failed it. Refs of branches other worktrees
+  have checked out, and other worktrees' entries, are now left out; `HEAD`,
+  this worktree's branch, tags and branches checked out nowhere still
+  count.
+- **The CI gates step must be proven, not merely found** (#198). Doctor
+  and the constitution `ci` surface still accepted steps that cannot fail
+  the pipeline: `verify.sh --boundary ci; exit 0`, `&`, `true || ...`,
+  `if ...; then`, a second `--boundary`, `GATES_SPEC_EXEC` in the step
+  env, a `workflow_call`-only trigger, GitLab `only: [tags]`,
+  `except: [branches]` or workflow `rules: - when: never`, and Jenkins
+  `catchError` or `try`. A step now counts only as the bare command (or
+  the last line of its script), on a push or pull request trigger,
+  without those variables and outside those wrappers; anything else fails
+  with what to change. `verify.sh` refuses a repeated `--boundary`.
 - **An unknown `--accept` feature is refused before any gate runs**
   (#179). `verify.sh --accept <name>` with a name that is not a feature
   ran the lint and quality gates first and refused only at the spec gate,

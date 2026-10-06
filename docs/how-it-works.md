@@ -353,7 +353,9 @@ Dispatch follows the policy's `verify-quality.orchestrator`:
   policy's include and exclude globs via `lib/formatter-dispatch.sh`. In a
   git work tree it skips untracked files git ignores (husky's generated
   `.husky/_/`, build output), since CI never sees them; a tracked file is
-  checked even when an ignore pattern matches it.
+  checked even when an ignore pattern matches it (prettier runs with
+  `--ignore-path .prettierignore`, so `.gitignore` never hides a tracked
+  file from it, while `.prettierignore` still applies).
 - `task`: `task lint` (error class) and `task test` (warning class), the
   fixed Taskfile convention. `policy-infer` seeds it when a Taskfile
   declares top-level `lint` and `test` targets.
@@ -378,15 +380,16 @@ locked in by a broken configuration. The other agent hooks match:
 `protect-files` asks before every edit (it cannot tell what the policy
 protects), `post-edit` and `format-changed` format nothing, and doctor
 reports the policy as `[MISSING]`; `project.sh` refuses to project under
-it. A bad `--boundary` value, `--boundary` or `--accept` without a value, or
-an `--accept` name that is not a feature, is a usage error (exit `1`)
+it. A missing `--boundary`, a bad `--boundary` value, `--boundary` or
+`--accept` without a value (an empty value included), or an `--accept`
+name that is not a feature, is a usage error (exit `1`)
 refused before any gate runs.
 
 **Environment overrides are visible.** `GATES_POLICY_FILE` replaces the
 whole policy, so set on one command it would drop every gate the
 repository declares. The git hooks, `verify.sh --boundary git|ci` and
 `pr-check.sh` ignore it and enforce the policy the repository commits;
-`verify.sh` at the agent boundary (or with no `--boundary`) applies it.
+`verify.sh` at the agent boundary applies it.
 Either way the run says so: a stderr line, an `[override] policy` line in
 the text report, and a `policy_override` object (`file`, `applied`) in the
 `--json` output and the attestation, whose `policy_sha256` hashes the
@@ -476,15 +479,51 @@ tool gates and before `parity`:
    per-block watchdog (`spec.timeout_s`, default 30s) that stops the
    block's whole process group, and snapshots around each block:
    `git status` plus a content hash of every dirty or untracked file, git
-   config in every scope, the hooks directory git uses, `HEAD` and every
+   config in every scope, the hooks directory git uses, the files in
+   `.git/info/` (attributes, exclude, sparse-checkout), every index entry
+   flagged skip-worktree or assume-unchanged (the flag and a content hash,
+   since `git status` no longer reports edits to such a file), this
+   worktree's path and lock when it is a linked one, `HEAD` and every
    local ref, and gitignored files (checked by ctime). A block that
    changes any of them, including a write to a file that was already
-   modified, a `git config core.hooksPath`, a commit or a tag, fails its
-   criterion, and nothing is ever auto-reverted. The process group is
-   stopped after every block too, and a block that leaves a process
-   running fails. `spec.snapshot_exclude` exempts untracked or ignored
-   paths another process writes during the run. Outside a git work tree
-   there is nothing to check against, so blocks fail closed.
+   modified, a `git config core.hooksPath`, a commit, a tag or a new
+   branch, fails its criterion, and nothing is ever auto-reverted.
+   Repacking (`git gc`, `git pack-refs`) changes how git stores objects
+   and refs, not what they say, and is not checked. Other worktrees are
+   left out: their `HEAD`, their per-worktree refs, their entries, and
+   the refs of the branches they have checked out (or are rebasing)
+   before or after the block. A commit, a branch switch, or a worktree
+   added or removed in a sibling worktree during the run does not fail a
+   block. The flip side: a block that adds a worktree outside the
+   project, or commits in another worktree, is not caught either (one
+   inside the project shows up as an untracked directory).
+
+   No process may outlive its block. The process group is stopped after
+   every block, and a block that leaves a process running fails. A child
+   that leaves the group or the session (`set -m`, `setsid`, a double
+   fork) is found two ways: every process the block starts inherits the
+   write end of a FIFO on descriptor 7, which the gate reads to EOF (no
+   EOF half a second after the block exits means a holder is alive), and
+   carries `GATES_SPEC_BLOCK=<id>` in its environment, which the gate
+   looks for in `/proc/<pid>/environ` on Linux and in `ps -E` elsewhere.
+   What is found is killed, and the block fails with
+   `left a detached process running (stopped)`. Not found: a process that
+   closed descriptor 7 and also started a program without the marker
+   (`env -i`, `env -u GATES_SPEC_BLOCK`, or overwrote its environment in
+   memory). On macOS `ps` shows no environment for Apple-signed binaries
+   (`/bin/sh`, `/bin/sleep`, `/usr/bin/git`, `/usr/bin/perl`), so there
+   only the descriptor finds them: a `/bin/sh` child started through
+   Node's `child_process` or Python's `subprocess`, which pass no extra
+   descriptors, is not seen on macOS. The process table is read after a
+   short settle and before the after-snapshot, so a write such a process
+   makes right away is still caught as a mutation; a later one is not.
+   `spec.snapshot_exclude` exempts untracked or ignored paths another
+   process writes during the run; `cache/` names the directory and
+   everything under it, like `cache/**`, and a pattern of only `*`, `?`
+   and `/` (which would exempt everything) makes the policy invalid.
+   Outside a git work tree there is nothing to check against, so blocks
+   fail closed.
+
 4. **Enforce**: a Complete feature fails the `spec` gate on any unchecked
    task or failing block, naming the feature, the task or criterion, and
    the cause. Incomplete features are informational
@@ -593,7 +632,8 @@ The marker is an HTML comment (invisible when rendered, surviving prettier
 and the core command's fill and version pass) bound by position to the
 principle heading above it. Principles are the `###` headings under
 `## Core Principles`; sub-headings in other sections (Additional
-Constraints, Governance) are prose. The grammar is fixed: a `surface` from
+Constraints, Governance) are prose, and a heading or marker inside a
+fenced code block is example content, never a principle. The grammar is fixed: a `surface` from
 `policy | agent-hook | git-hook | ci | accept | scanner | prose`, a `ref`
 required for all but `prose`, and an optional `expect` for policy surfaces.
 A malformed marker, or one outside Core Principles, is fail-closed: `check`
@@ -618,8 +658,10 @@ Each principle is `active`, `missing` (with a concrete proposed change), or
 `pending-boundary` (the whole boundary is not projected yet). A policy
 proposal follows `policy.schema.json`, so applying it makes the principle
 active; a marker no valid policy can satisfy (a path the schema lacks, an
-`expect` outside the allowed values) is proposed as an annotation fix
-instead. Proposed policy changes target the **overlay**, so with a live contract they flow
+`expect` outside the allowed values or below the schema's minimum) is
+proposed as an annotation fix instead. `align` and `check` refuse (exit
+`1`) a policy `verify.sh` would refuse, whether named with `--policy` or
+resolved, since nothing in it is enforced. Proposed policy changes target the **overlay**, so with a live contract they flow
 through `sync` into the effective policy like any other deviation. `align`
 never writes; applying is the session's job, change by change, with
 approval.
@@ -685,29 +727,64 @@ installed copy), and CI pipelines missing a template step (the gates,
 canary and PR-check steps, recognized by command on GitHub, GitLab and
 Jenkins; `ci:<step>` in the holds file records a deliberate omission).
 Only a live step counts: one that runs on a push or pull request and can
-fail the pipeline. Doctor removes, as text, what never runs or can never
-fail: comments (`#` in YAML, `//` and `/* */` in a Jenkinsfile); steps or
-jobs under `if: false`; a command only printed by `echo` or `printf`; a
-command followed by `|| true`, `|| :`, `|| exit 0` or `|| echo`; a command
-with `--dry-run`; anything after an unconditional `exit 0` in the same run
-block; GitHub `continue-on-error: true` on the step or job, and a workflow
-whose only triggers are `workflow_dispatch` and `schedule`; GitLab
-`allow_failure: true`, `when: manual` or `when: never` on the job or as
-its unconditional first rule, and a hidden `.name:` job nothing extends;
-a Jenkins stage under `when { expression { false } }` and an `sh` step with
-`returnStatus: true`. The gates step is `verify.sh` with `--boundary ci`
-among its arguments; another boundary does not count. A pipeline that
-calls `verify.sh` but has no live gates step fails (the boundary looks
-wired and enforces nothing); a repository with no such pipeline at all
-gets a recommendation. A `ci:<step>` hold for a step the pipeline runs is
-stale and fails; one naming no template step gets a recommendation to
-remove it.
+fail the pipeline. Doctor first removes, as text, what never runs or can
+never fail: comments (`#` in YAML, `//` and `/* */` in a Jenkinsfile);
+steps or jobs under `if: false`; a command only printed by `echo` or
+`printf`; a command followed by `|| true`, `|| :`, `|| exit 0` or
+`|| echo`; a command with `--dry-run`; anything after an unconditional
+`exit 0` in the same run block; GitHub `continue-on-error: true` on the
+step or job, and a workflow whose only triggers are `workflow_dispatch`
+and `schedule`; GitLab `allow_failure: true`, `when: manual` or
+`when: never` on the job, rules that never let a job run (every rule up to
+the first unconditional one says `when: never` or `manual`; under
+`workflow:` this stops the whole file), an `only:`/`except:` that keeps a
+job out of branch and merge request pipelines (`only: [tags]`,
+`except: [branches]`), and a hidden `.name:` job nothing extends; a
+Jenkins stage under `when { expression { false } }` and an `sh` step with
+`returnStatus: true`.
 
-The check reads files, so it has limits: a heredoc, `set +e`, a pipe into
-another command without `pipefail`, a wrapper script that runs the step, an
-`if:` or `continue-on-error:` computed by an expression, conditional GitLab
-rules, a job reached only through `extends:` or an alias, and a Jenkins
-`when` other than a literal false are read as live. The proof that the gates
+The gates step is then proven, not searched for: denying inert forms one
+by one always leaves another. It counts only when all of these hold:
+
+- the command, after one layer of quotes, is exactly
+  `bash .specify/gates/verify.sh --boundary ci` (`bash`, `./` and the
+  directory are optional; `--json` may come before or after
+  `--boundary ci`), with nothing else on the line: no `;`, `&&`, `||`, `&`,
+  `|`, `:`, `if`, `exit`, `true`, env prefix, second `--boundary` or
+  `--dry-run`;
+- it is the whole value of a GitHub `run:`, a GitLab `script:` or
+  `before_script:` item (an `after_script:` failure does not fail the
+  job), or the string of a Jenkins `sh` step (`sh '...'`,
+  `sh(script: '...')`); or the last line of such a `|` block or `'''`
+  string. Nothing before it in the same shell (earlier lines of the block,
+  earlier GitLab script items) holds a heredoc, a `trap`, an `exit 0` or a
+  `\` continuation into it;
+- a GitHub workflow has `push` or `pull_request` among its `on:` events;
+- the pipeline file never names `GATES_SPEC_EXEC` (skips the spec gate)
+  or `GATES_POLICY_FILE` (replaces the policy), in any `env:`,
+  `variables:` or `withEnv`;
+- a Jenkins `sh` step is not inside `catchError`, `warnError` or `try`.
+
+A pipeline that calls `verify.sh` but has no proven gates step fails, and
+the line names what to change; a repository with no such pipeline at all
+gets a recommendation. `verify.sh` itself refuses a repeated `--boundary`.
+A `ci:<step>` hold for a step the pipeline runs is stale and fails; one
+naming no template step gets a recommendation to remove it.
+
+The check reads files, so it has limits. Read as live: a GitHub
+`if:`, `continue-on-error:` or event filter (`branches:`, `paths:`)
+computed by an expression or narrowing the trigger; conditional GitLab
+rules (an `if:` that never matches, an earlier conditional `when: never`),
+a job reached only through `extends:` or an alias, and an `exit 0` in
+`before_script:` ahead of a `script:` step; a GitHub `shell:`
+override; CI/CD variables set outside the file (GitLab project settings,
+Jenkins job configuration) and Jenkins triggers, which live in the job,
+not the Jenkinsfile; a Jenkins `when` other than a literal false; a
+Jenkins step in a closure that is never called. Rejected although it may
+be fine: the gates command followed by other commands in the same block
+(move it to its own step, or make it the last line), and a path written
+with a variable. The canary and PR-check steps are still recognized by
+command after the removals above, not proven. The proof that the gates
 ran is the CI run's own log: `verify.sh` prints a
 `gates: boundary=ci failed=N warnings=N` summary line.
 

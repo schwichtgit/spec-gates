@@ -183,10 +183,13 @@
         "snapshot_exclude": {
           "type": "array",
           "items": {
-            "type": "string"
+            "type": "string",
+            "not": {
+              "pattern": "^[*/?]+$"
+            }
           },
           "default": [],
-          "description": "Repository-relative path globs of untracked or gitignored files left out of the accept-block read-only check, for files another process writes while blocks run (an editor or plugin cache). Tracked files are always checked."
+          "description": "Repository-relative path globs of untracked or gitignored files left out of the accept-block read-only check, for files another process writes while blocks run (an editor or plugin cache). A trailing slash names a directory and everything under it (\"cache/\" equals \"cache/**\"). A pattern of only *, ? and / would exempt every path and is refused. Tracked files are always checked."
         }
       }
     }
