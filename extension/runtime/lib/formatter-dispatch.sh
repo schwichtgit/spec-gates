@@ -164,7 +164,17 @@ format_file() {
                 GATES_FORMAT_SKIPPED="prettier not installed (node_modules/.bin or PATH)"
                 return 0
             fi
-            _gates_run_tool "$pbin" --write "$file_path" || rc=$?
+            # prettier reads .gitignore and silently skips a file it lists.
+            # The gate checks a tracked file regardless (#199), so a tracked
+            # file is formatted with only .prettierignore applied (#204). An
+            # untracked file keeps the default: gitignored output stays
+            # untouched.
+            local pargs=(--write)
+            if git -C "$(dirname "$file_path")" ls-files --error-unmatch \
+                -- "$(basename "$file_path")" >/dev/null 2>&1; then
+                pargs+=(--ignore-path "$(_gates_dispatch_project_root)/.prettierignore")
+            fi
+            _gates_run_tool "$pbin" "${pargs[@]}" "$file_path" || rc=$?
             ;;
         py)
             if command -v ruff >/dev/null 2>&1; then

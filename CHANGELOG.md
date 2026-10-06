@@ -33,6 +33,11 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   `/*` or `/**`) now covers it. The README Upgrade step 3 says to run
   `specify extension remove` and `add` as two commands and to check the
   remove output first.
+- **post-edit formats a tracked file that `.gitignore` lists** (#204).
+  prettier skipped it in write mode while the gate checks it, so the
+  agent hook left a file the gate then failed. Tracked files are now
+  formatted with only `.prettierignore` applied; untracked ignored files
+  are still left alone.
 
 ## 0.4.0 — 2026-10-06
 
