@@ -109,6 +109,13 @@ add` forms at the agent boundary. `project.sh` lists new settings like
 
 ### Fixed
 
+- **A pattern after a leading `**/` matches top-level paths** (#220).
+  The shared glob matcher compared the rest of a `**/` pattern as a
+  literal, so `**/*.md` missed `README.md` and `**/.claude/mind.*` missed
+  `.claude/mind.mv2`. `spec.snapshot_exclude`, `spec.exclude` and
+  `protected_files.extra` in protect-files (an entry such as
+  `**/secrets/*.json` did not protect a file at the repository root from
+  the agent) now match as documented.
 - **`verify.sh` without `--boundary` warns instead of refusing** (#216).
   A 0.3.6 caller such as `"gates": "bash .specify/gates/verify.sh"` broke
   on upgrade. It now runs as in 0.3.6 (every gate, boundary

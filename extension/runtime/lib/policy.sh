@@ -118,10 +118,12 @@ gates_glob_match() {
         local trimmed="${glob%/\*\*}"
         [[ "$path" == "$trimmed" || "$path" == "$trimmed"/* ]] && return 0
     fi
+    # `**/x` also matches a top-level `x`; the remainder is a pattern, not
+    # a literal, so `**/*.md` matches `README.md` (#220).
     if [[ "$glob" == \*\*/* ]]; then
         local rest="${glob#\*\*/}"
-        # shellcheck disable=SC2053
-        [[ "$path" == "$rest" || "$path" == */"$rest" ]] && return 0
+        # shellcheck disable=SC2053,SC2295
+        [[ "$path" == $rest || "$path" == */$rest ]] && return 0
     fi
     return 1
 }

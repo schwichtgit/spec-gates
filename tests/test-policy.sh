@@ -877,6 +877,30 @@ else
     fail "top-level keys differ: schema [$SCHEMA_TOP] validator [$VALIDATOR_TOP]"
 fi
 
+# --- glob matcher: a pattern after a leading **/ (#220) ---
+echo ""
+echo "=== gates_glob_match: **/ prefix ==="
+while IFS='|' read -r want path glob; do
+    [[ -n "$want" ]] || continue
+    got=no
+    gates_glob_match "$path" "$glob" && got=yes
+    if [[ "$got" == "$want" ]]; then
+        pass "glob $glob vs $path -> $want"
+    else
+        fail "glob $glob vs $path: got $got, want $want"
+    fi
+done <<'EOF'
+yes|README.md|**/*.md
+yes|docs/a/b.md|**/*.md
+yes|.claude/mind.mv2|**/.claude/mind.*
+yes|x/.claude/mind.mv2|**/.claude/mind.*
+yes|secrets/k.json|**/secrets/*.json
+yes|.env|**/.env
+no|README.txt|**/*.md
+no|claude/mind.mv2|**/.claude/mind.*
+no|xsecrets/k.json|**/secrets/*.json
+EOF
+
 echo ""
 echo "$PASSED of $TOTAL tests passed"
 if [[ "$FAILED" -eq 0 ]]; then
