@@ -61,7 +61,10 @@ nothing is checked.
      with the installed copy, fails. Without jq the registry cannot be
      read, and the state is reported as not checked.
    - **Upgrade safety**: whether `project.sh --check` finds the projection
-     current; local edits that are not held fail; held files are listed,
+     current, and when it reports pending work, which item it is (files
+     to project, hook-manager wiring for `--wire-manager`, the manager's
+     install command, a stale or missing hold, missing git, a repository
+     git refuses), each with its command; local edits that are not held fail; held files are listed,
      and a hold whose file now equals the installed copy is stale and
      fails; a held file that is missing fails (a deletion cannot be held;
      `--take-upstream <path>` restores it), and held edits get a `[rec]`

@@ -8,6 +8,18 @@ never touches `.specify/gates/policy.json`. New policy keys take the
 defaults stated here until you set them. Releases before 0.3.3 are
 described in their [GitHub release notes](https://github.com/schwichtgit/spec-gates/releases).
 
+## [Unreleased]
+
+### Fixed
+
+- **Doctor names the pending upgrade item** (#214). Whenever
+  `project.sh --check` exited 1, doctor advised running `project.sh`,
+  which reports "no changes" for pending hook-manager wiring, a pending
+  `lefthook install`, stale or missing holds, missing git or a repository
+  git refuses. Doctor now names each item and its command
+  (`--wire-manager`, the manager's install command, the holds file,
+  `safe.directory`) and still fails until it is done.
+
 ## 0.4.0 — 2026-10-06
 
 ### Upgrading

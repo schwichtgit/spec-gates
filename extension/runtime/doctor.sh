@@ -434,8 +434,34 @@ if declare -f gates_ci_missing >/dev/null 2>&1 && [[ -d "$PROJECT_ROOT/.specify/
         case "$prc" in
             0) echo "${OK}projection matches the installed extension" ;;
             1)
-                echo "${BAD}the projection is not current — run: bash .specify/extensions/gates/runtime/project.sh"
-                MISSING=$((MISSING + 1))
+                # Exit 1 also covers pending work that re-projecting does
+                # not finish (#214): name each item, so the advice does not
+                # loop on a project.sh that reports "no changes".
+                PITEMS=""
+                grep -q '^project: planned changes:' <<<"$POUT" \
+                    && PITEMS="the projection is not current — run: bash .specify/extensions/gates/runtime/project.sh"
+                grep -q 'does not run gates for:\|has no gates entry for:' <<<"$POUT" \
+                    && PITEMS="$PITEMS"$'\n'"hook-manager wiring is pending — run: bash .specify/extensions/gates/runtime/project.sh --wire-manager (entries it cannot append are printed below)"
+                # shellcheck disable=SC2016  # the backticks are literal
+                while IFS= read -r pcmd; do
+                    [[ -n "$pcmd" ]] && PITEMS="$PITEMS"$'\n'"the hook manager has not generated the git hooks it is wired for — run: $pcmd"
+                done <<<"$(sed -n 's/^project: pending: .* until you run `\(.*\)`$/\1/p' <<<"$POUT" | sort -u)"
+                grep -q '^project: FAILED: stale holds' <<<"$POUT" \
+                    && PITEMS="$PITEMS"$'\n'"stale holds — remove the lines listed below from $GATES_HOLDS_REL"
+                grep -q '^project: FAILED: held files that do not exist' <<<"$POUT" \
+                    && PITEMS="$PITEMS"$'\n'"held files are missing or empty — restore each: bash .specify/extensions/gates/runtime/project.sh --take-upstream <path>"
+                grep -q '^project: git is not installed' <<<"$POUT" \
+                    && PITEMS="$PITEMS"$'\n'"git is not installed, so the git boundary is not wired — install git, then run: bash .specify/extensions/gates/runtime/project.sh"
+                grep -q '^project: git refuses this repository: dubious ownership' <<<"$POUT" \
+                    && PITEMS="$PITEMS"$'\n'"git refuses this repository (dubious ownership) — trust it with the safe.directory command below, then run: bash .specify/extensions/gates/runtime/project.sh"
+                grep -q '^project: another tool owns these git hooks' <<<"$POUT" \
+                    && PITEMS="$PITEMS"$'\n'"another tool owns git hooks that do not call gates — add the line printed below to each"
+                PITEMS="${PITEMS#$'\n'}"
+                [[ -n "$PITEMS" ]] || PITEMS="project.sh --check reports pending work (below)"
+                while IFS= read -r pitem; do
+                    echo "${BAD}$pitem"
+                    MISSING=$((MISSING + 1))
+                done <<<"$PITEMS"
                 ;;
             3)
                 echo "${BAD}projected files were edited locally and are not held — the next upgrade stops on them (keep with --keep-local, or take upstream)"
