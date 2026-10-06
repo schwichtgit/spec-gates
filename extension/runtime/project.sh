@@ -453,6 +453,15 @@ report_side() {
         printf '%s\n' "$missing" | sed 's/^/project:   /'
         say "  add them from .specify/extensions/gates/ci/, or record a deliberate omission as ci:<step> in $GATES_HOLDS_REL"
     fi
+    # Callers written for 0.3.6 (#216): verify.sh still runs them, with a
+    # deprecation warning.
+    local unbounded
+    unbounded="$(gates_verify_unbounded "$ROOT")"
+    if [[ -n "$unbounded" ]]; then
+        say "these callers run verify.sh without --boundary (deprecated: it warns and runs every gate; a later release may refuse it):"
+        printf '%s\n' "$unbounded" | sed 's/^/project:   /'
+        say "  add --boundary agent|git|ci to each"
+    fi
     [[ -n "$GITNOTE" ]] && say "$GITNOTE"
     local n mf notrun="" stubrun=""
     if [[ "$WIREMGR" -eq 0 && -n "$MGRPLAN" ]]; then

@@ -432,6 +432,20 @@ for b in git ci; do
     expect "$b boundary names the override on stderr" \
         "$(grep -c 'is ignored at the '"$b"' boundary' "$WORKDIR/po.err")" 1
 done
+# #216: a run without --boundary ignores it like git and CI do.
+rc=0
+PO_OUT="$(GATES_POLICY_FILE="$WORKDIR/override-policy.json" CLAUDE_PROJECT_DIR="$DPO" \
+    bash "$DPO/.specify/gates/verify.sh" --json 2>"$WORKDIR/po.err")" || rc=$?
+expect "no --boundary ignores GATES_POLICY_FILE (repository's failing policy enforced)" "$rc" 2
+expect "no --boundary --json reports unspecified and the ignored override" \
+    "$(printf '%s' "$PO_OUT" | jq -r '"\(.boundary):\(.policy_override.applied):\(.attestation.boundary):\(.attestation.policy_override.applied)"')" \
+    "unspecified:false:unspecified:false"
+expect "no --boundary names the ignored override on stderr" \
+    "$(grep -c 'GATES_POLICY_FILE=.* is ignored without --boundary' "$WORKDIR/po.err")" 1
+PO_TEXT="$(GATES_POLICY_FILE="$WORKDIR/override-policy.json" CLAUDE_PROJECT_DIR="$DPO" \
+    bash "$DPO/.specify/gates/verify.sh" 2>/dev/null || true)"
+expect "no --boundary text report names the ignored override" \
+    "$(grep -c '^  \[override\] policy -- GATES_POLICY_FILE=.* was ignored without --boundary' <<<"$PO_TEXT")" 1
 rc=0
 PO_OUT="$(GATES_POLICY_FILE="$WORKDIR/override-policy.json" CLAUDE_PROJECT_DIR="$DPO" \
     bash "$DPO/.specify/gates/verify.sh" --boundary agent --json 2>/dev/null)" || rc=$?

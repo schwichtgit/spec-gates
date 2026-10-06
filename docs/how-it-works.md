@@ -419,16 +419,26 @@ locked in by a broken configuration. The other agent hooks match:
 `protect-files` asks before every edit (it cannot tell what the policy
 protects), `post-edit` and `format-changed` format nothing, and doctor
 reports the policy as `[MISSING]`; `project.sh` refuses to project under
-it. A missing `--boundary`, a bad `--boundary` value, `--boundary` or
+it. A bad `--boundary` value, a repeated `--boundary`, `--boundary` or
 `--accept` without a value (an empty value included), or an `--accept`
 name that is not a feature, is a usage error (exit `1`)
 refused before any gate runs.
 
+**A missing `--boundary` warns.** Without it, `verify.sh` runs as 0.3.6
+did: every gate, boundary `unspecified` in the report, the `--json` object
+and the attestation, and the exit code the gates decide. It prints one
+deprecation warning on stderr naming `--boundary agent|git|ci` (stdout,
+and so `--json`, is unchanged); a later release may refuse such a run.
+`project.sh` and doctor (`[rec]`) name the lines in `package.json`,
+`Taskfile.yml`/`Taskfile.yaml` and the Makefile that call
+`gates/verify.sh` without `--boundary`.
+
 **Environment overrides are visible.** `GATES_POLICY_FILE` replaces the
 whole policy, so set on one command it would drop every gate the
-repository declares. The git hooks, `verify.sh --boundary git|ci` and
-`pr-check.sh` ignore it and enforce the policy the repository commits;
-`verify.sh` at the agent boundary applies it.
+repository declares. The git hooks, `verify.sh --boundary git|ci`,
+`verify.sh` without `--boundary` and `pr-check.sh` ignore it and enforce
+the policy the repository commits; `verify.sh` at the agent boundary
+applies it.
 Either way the run says so: a stderr line, an `[override] policy` line in
 the text report, and a `policy_override` object (`file`, `applied`) in the
 `--json` output and the attestation, whose `policy_sha256` hashes the

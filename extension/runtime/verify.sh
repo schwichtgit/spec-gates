@@ -86,22 +86,30 @@ while [[ $# -gt 0 ]]; do
         *) usage "unknown argument: $1" ;;
     esac
 done
-[[ "$BOUNDARY" != "unspecified" ]] || usage "--boundary is required (agent, git or ci)"
+# Without --boundary the run is the 0.3.6 one (#216): every gate, boundary
+# "unspecified". It warns instead of refusing, so callers written for
+# 0.3.6 keep working after an upgrade; a later release may require it.
+if [[ "$BOUNDARY" == "unspecified" ]]; then
+    echo "gates: warning: verify.sh without --boundary is deprecated; it runs every gate as before, and a later release may refuse it. Pass --boundary agent|git|ci" >&2
+fi
 
 # GATES_POLICY_FILE replaces the whole policy (#196): set for one command
 # it would drop every gate the repository declares. The git and CI
-# boundaries judge the policy the repository commits, so they ignore it;
-# elsewhere it applies. Either way the run says so (stderr, --json and the
+# boundaries judge the policy the repository commits, so they ignore it,
+# and so does a run without --boundary (#216); at the agent boundary it
+# applies. Either way the run says so (stderr, --json and the
 # attestation's policy_override).
 POLICY_OVERRIDE="${GATES_POLICY_FILE:-}"
 POLICY_OVERRIDE_JSON=""
 POLICY_OVERRIDE_APPLIED=""
+POLICY_OVERRIDE_WHERE="at the $BOUNDARY boundary"
+[[ "$BOUNDARY" == "unspecified" ]] && POLICY_OVERRIDE_WHERE="without --boundary"
 if [[ -n "$POLICY_OVERRIDE" ]]; then
     case "$BOUNDARY" in
-        git | ci)
+        git | ci | unspecified)
             unset GATES_POLICY_FILE
             POLICY_OVERRIDE_APPLIED=false
-            echo "gates: GATES_POLICY_FILE=$POLICY_OVERRIDE is ignored at the $BOUNDARY boundary; the repository's policy applies" >&2
+            echo "gates: GATES_POLICY_FILE=$POLICY_OVERRIDE is ignored $POLICY_OVERRIDE_WHERE; the repository's policy applies" >&2
             ;;
         *)
             POLICY_OVERRIDE_APPLIED=true
@@ -488,7 +496,7 @@ else
     if [[ "$POLICY_OVERRIDE_APPLIED" == "true" ]]; then
         echo "  [override] policy -- GATES_POLICY_FILE=$POLICY_OVERRIDE was enforced instead of the repository's policy"
     elif [[ -n "$POLICY_OVERRIDE" ]]; then
-        echo "  [override] policy -- GATES_POLICY_FILE=$POLICY_OVERRIDE was ignored at the $BOUNDARY boundary"
+        echo "  [override] policy -- GATES_POLICY_FILE=$POLICY_OVERRIDE was ignored $POLICY_OVERRIDE_WHERE"
     fi
     if [[ ${#RESULTS[@]} -gt 0 ]]; then
         for r in "${RESULTS[@]}"; do

@@ -230,6 +230,42 @@ gates_ci_steps() {
     printf 'pr\tpr-check\\.sh\n'
 }
 
+# Callers that run verify.sh without --boundary (#216): package.json,
+# Taskfile and Makefile lines that name gates/verify.sh with no --boundary
+# before the next ;, & or |. verify.sh still runs them, with a deprecation
+# warning. Comment lines are skipped and backslash continuations joined, so
+# `verify.sh \` + `--boundary ci` is not listed. One <file>:<line> each.
+gates_verify_unbounded() { # <root>
+    local root="$1" f seen="" s dup
+    for f in package.json Taskfile.yml Taskfile.yaml Makefile makefile GNUmakefile; do
+        [[ -f "$root/$f" ]] || continue
+        # Makefile and makefile are one file on a case-insensitive disk.
+        dup=0
+        for s in $seen; do [[ "$root/$f" -ef "$root/$s" ]] && dup=1; done
+        [[ "$dup" -eq 1 ]] && continue
+        seen="$seen $f"
+        awk -v f="$f" '
+            function scan(line, at,    rest, seg) {
+                while (match(line, /gates\/verify\.sh/)) {
+                    rest = substr(line, RSTART + RLENGTH)
+                    seg = rest
+                    if (match(seg, /[;&|]/)) seg = substr(seg, 1, RSTART - 1)
+                    if (seg !~ /--boundary/) { print f ":" at; return }
+                    line = rest
+                }
+            }
+            buf == "" && /^[ \t]*#/ { next }
+            {
+                if (buf == "") start = NR
+                if (sub(/\\$/, "")) { buf = buf $0 " "; next }
+                scan(buf $0, start)
+                buf = ""
+            }
+            END { if (buf != "") scan(buf, start) }' "$root/$f"
+    done
+    return 0
+}
+
 # The regex of one template step id; empty for an id the template lacks.
 gates_ci_step_re() { # <id>
     gates_ci_steps | awk -F '\t' -v id="$1" '$1 == id { print $2 }'
