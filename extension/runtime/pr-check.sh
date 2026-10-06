@@ -4,7 +4,7 @@ set -uo pipefail
 
 # spec-gates pull/merge request check -- CI boundary (issues #53, #56).
 #
-# Two checks that need PR/MR context only CI has, so they are deliberately
+# Three checks that need PR/MR context only CI has, so they are deliberately
 # NOT verify.sh gates (verify.sh checks the tree identically at every
 # boundary):
 #
@@ -24,6 +24,10 @@ set -uo pipefail
 #    paths they change against every parent. Declarations in the PR/MR
 #    description count for every commit (a squash merge keeps the
 #    description, not the commit trailers).
+# 3. Secrets and forbidden files: every commit in the range is scanned with
+#    the pre-commit rules (lib/secrets.sh) for the files it adds or
+#    changes, so commits that never ran pre-commit (cherry-pick, rebase,
+#    am, revert, --no-verify) are scanned before merge (#212).
 #
 # A base whose policy is invalid stops the check (exit 2): its rules cannot
 # be read, and reading nothing would pass everything (#166). A base with no
@@ -106,6 +110,13 @@ if ! command -v gates_protected_check >/dev/null 2>&1 || [[ ! -f "$MESSAGE_LIB" 
 fi
 # shellcheck source=/dev/null disable=SC1091
 source "$MESSAGE_LIB"
+SECRETS_LIB="$RUNTIME_DIR/lib/secrets.sh"
+if [[ ! -f "$SECRETS_LIB" ]]; then
+    echo "pr-check: $SECRETS_LIB not found -- the projected runtime predates the range's secret scan; re-project it (/speckit.gates.upgrade)" >&2
+    exit 2
+fi
+# shellcheck source=/dev/null disable=SC1091
+source "$SECRETS_LIB"
 FAILED=0
 
 BODY=""
@@ -352,8 +363,54 @@ protected_range_check() { # -> 0 pass/skip, 1 violations, 2 setup error
     return 0
 }
 
+# --- 3. Secrets and forbidden files over the commit range ---
+# The pre-commit scan, with its rules (lib/secrets.sh), over the files each
+# commit in the range adds or changes (issue #212): commits made by
+# cherry-pick, rebase, am or revert, or with --no-verify, never ran
+# pre-commit. Each commit's own copy is scanned, so a secret added and
+# removed again within the range still fails: it is in the history the
+# range pushes and merges, and needs rotating and the branch rewriting. A
+# rename is listed under its new name (--no-renames), as in pre-commit. A
+# merge commit is scanned for the paths whose result differs from every
+# parent, so merging the base in does not re-scan the base's files.
+secret_range_check() { # -> 0 pass/skip, 1 findings, 2 setup error
+    if [[ "$RANGE_RC" -eq 1 ]]; then
+        echo "pr-check: secret scan skipped -- no pull/merge request range (pass --range or set GATES_COMMIT_RANGE)"
+        return 0
+    fi
+    [[ "$RANGE_RC" -eq 0 ]] || return 2
+    local entries c n=0 p out src=0
+    entries="$(mktemp 2>/dev/null || mktemp -t gates-entries)" || return 2
+    while IFS= read -r c; do
+        [[ -z "$c" ]] && continue
+        n=$((n + 1))
+        if git rev-parse -q --verify "$c^2" >/dev/null 2>&1; then
+            git diff-tree -r -c --no-commit-id --name-only -z --no-renames --diff-filter=ACMRT "$c"
+        else
+            git diff-tree -r --root --no-commit-id --name-only -z --no-renames --diff-filter=ACMRT "$c"
+        fi | while IFS= read -r -d '' p; do printf '%s:%s\0' "$c" "$p"; done >>"$entries"
+    done < <(git rev-list --reverse "$BASE..$HEAD_REF")
+    out="$(gates_secret_scan <"$entries")" || src=$?
+    rm -f "$entries"
+    if [[ "$src" -eq 2 ]]; then
+        echo "pr-check: ERROR -- cannot read the range's content for the secret scan (git grep failed)" >&2
+        return 2
+    fi
+    if [[ "$src" -ne 0 ]]; then
+        printf '%s\n' "$out" >&2
+        echo "pr-check: $RANGE -- secrets or forbidden files in $n commit(s) scanned; remove them from the history (rewrite the branch) and rotate any exposed credential" >&2
+        return 1
+    fi
+    echo "pr-check: $RANGE -- $n commit(s) scanned for secrets and forbidden files, none found"
+    return 0
+}
+
 rc=0
 protected_range_check || rc=$?
+[[ "$rc" -eq 2 ]] && exit 2
+[[ "$rc" -ne 0 ]] && FAILED=$((FAILED + 1))
+rc=0
+secret_range_check || rc=$?
 [[ "$rc" -eq 2 ]] && exit 2
 [[ "$rc" -ne 0 ]] && FAILED=$((FAILED + 1))
 [[ "$FAILED" -gt 0 ]] && exit 1

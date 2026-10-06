@@ -70,7 +70,7 @@ DECL=$'\n\nProtected-Change: c.md\nApproved-By: Reviewer'
 
 echo "=== no PR context ==="
 expect "push to main (no title, body, or range) -> skipped, exit 0" "$(run)" 0
-expect "skip is reported" "$(grep -c 'skipped' "$WORKDIR/out.txt")" 2
+expect "skip is reported (text, protected range, secret scan)" "$(grep -c 'skipped' "$WORKDIR/out.txt")" 3
 # #196: an inherited GATES_POLICY_FILE does not replace the repository's rules.
 printf '%s' '{ "hooks": {}, "git": { "conventional_commits": false } }' >"$WORKDIR/lax.json"
 expect "GATES_POLICY_FILE is ignored: non-conventional title still -> exit 1" \
@@ -443,6 +443,78 @@ for p in github gitlab jenkins; do
 done
 RUN_SCRIPT=.specify/gates/pr-check.sh
 RUN_SHELL=(bash)
+
+echo ""
+echo "=== secrets and forbidden files over the range (#212) ==="
+# Commits made by cherry-pick, rebase, am or revert (or with --no-verify)
+# never ran pre-commit; pr-check scans each commit in the range with the
+# same rules (lib/secrets.sh). Key-shaped values are assembled at runtime,
+# so this file never holds one. Each branch starts at main ($BASE).
+ORIG="$(git -C "$W" rev-parse --abbrev-ref HEAD)"
+sg() { git -C "$W" "$@" >/dev/null 2>&1; }
+akia() { printf 'AKIA%s\n' ABCDEFGHIJKLMNOP; }
+sg checkout -q -b sec-src "$BASE"
+akia >"$W/leak.txt" && sg add leak.txt && sg commit -q -m "feat: leak"
+sg checkout -q -b sec-pick "$BASE"
+echo ok >"$W/ok.txt" && sg add ok.txt && sg commit -q -m "feat: ok"
+sg cherry-pick sec-src
+expect "a secret in a cherry-picked commit -> exit 1" "$(run GATES_COMMIT_RANGE="$BASE..sec-pick")" 1
+expect "the secret is reported in the pre-commit style" \
+    "$(grep -c '^    SECRET: AWS key pattern in leak.txt$' "$WORKDIR/out.txt")" 1
+expect "the finding is grouped under its commit" "$(grep -c '^commit [0-9a-f]* feat: leak:$' "$WORKDIR/out.txt")" 1
+# The file stays in later commits that do not change it: reported once.
+echo more >"$W/ok.txt" && sg add ok.txt && sg commit -q -m "feat: more"
+run GATES_COMMIT_RANGE="$BASE..sec-pick" >/dev/null
+expect "a file is reported for the commit that changed it, not every later one" \
+    "$(grep -c 'SECRET:' "$WORKDIR/out.txt")" 1
+
+sg checkout -q -b sec-rename "$BASE"
+echo X=1 >"$W/settings.txt" && sg add settings.txt && sg commit -q -m "feat: settings"
+sg mv settings.txt .env && sg commit -q -m "chore: rename settings"
+expect "a forbidden file renamed in -> exit 1" "$(run GATES_COMMIT_RANGE="$BASE..sec-rename")" 1
+expect "the rename is reported under its new name" \
+    "$(grep -c '^  BLOCKED: forbidden file: .env$' "$WORKDIR/out.txt")" 1
+
+sg checkout -q -b sec-clean "$BASE"
+echo x >"$W/clean.txt" && sg add clean.txt && sg commit -q -m "feat: clean"
+expect "a clean range -> exit 0" "$(run GATES_COMMIT_RANGE="$BASE..sec-clean")" 0
+expect "the clean scan is reported" \
+    "$(grep -c '1 commit(s) scanned for secrets and forbidden files, none found' "$WORKDIR/out.txt")" 1
+
+# Added and removed again within the range: each commit's own copy is
+# scanned, so this fails. The secret is in the history the branch pushed
+# and would merge: rotate it and rewrite the branch.
+sg checkout -q -b sec-undo "$BASE"
+akia >"$W/tmp.txt" && sg add tmp.txt && sg commit -q -m "feat: tmp"
+sg rm -q tmp.txt && sg commit -q -m "fix: drop tmp"
+expect "a secret added and removed within the range -> exit 1" "$(run GATES_COMMIT_RANGE="$BASE..sec-undo")" 1
+expect "the commit that added it is named" "$(grep -c '^commit [0-9a-f]* feat: tmp:$' "$WORKDIR/out.txt")" 1
+
+# Merging the base in does not re-scan the base's files: a key-shaped
+# string already on the base is not the pull request's.
+sg checkout -q -b sec-main "$BASE"
+akia >"$W/old.txt" && sg add old.txt && sg commit -q -m "chore: old"
+SECMAIN="$(git -C "$W" rev-parse sec-main)"
+sg checkout -q -b sec-merge "$BASE"
+echo y >"$W/y.txt" && sg add y.txt && sg commit -q -m "feat: y"
+sg merge -q --no-edit sec-main
+expect "a merge bringing in the base's files -> exit 0" "$(run GATES_COMMIT_RANGE="$SECMAIN..sec-merge")" 0
+akia >"$W/evil.txt" && sg add evil.txt && sg commit -q --amend --no-edit
+expect "a secret the merge itself adds -> exit 1" "$(run GATES_COMMIT_RANGE="$SECMAIN..sec-merge")" 1
+
+# The base revision's copy (GATES_RUNTIME_DIR, #166) carries the scan.
+sg checkout -q sec-pick
+RUN_SCRIPT="$RT/.specify/gates/pr-check.sh"
+expect "the base's pr-check.sh scans the range -> exit 1" \
+    "$(run GATES_COMMIT_RANGE="$BASE..sec-pick" GATES_RUNTIME_DIR="$RT/.specify/gates")" 1
+expect "the base's copy reports the secret" "$(grep -c 'SECRET: AWS key pattern in leak.txt' "$WORKDIR/out.txt")" 1
+NOSEC="$WORKDIR/nosec-runtime"
+cp -R "$RT" "$NOSEC" && rm -f "$NOSEC/.specify/gates/lib/secrets.sh"
+RUN_SCRIPT="$NOSEC/.specify/gates/pr-check.sh"
+expect "a runtime without lib/secrets.sh -> exit 2" \
+    "$(run GATES_COMMIT_RANGE="$BASE..sec-clean" GATES_RUNTIME_DIR="$NOSEC/.specify/gates")" 2
+RUN_SCRIPT=.specify/gates/pr-check.sh
+sg checkout -q "$ORIG"
 
 echo ""
 echo "$PASS of $TOTAL tests passed."

@@ -462,13 +462,32 @@ git -C "$GF" reset -q --hard "$RN_BASE" >/dev/null 2>&1
 
 # Forbidden-file allowlist: template/example files are committable even when
 # the base name looks sensitive; real secret files still blocked.
-FF="$WORKDIR/forbidden.sh"
-sed -n '/^check_forbidden_files() {/,/^}/p' "$GITHOOKS/pre-commit" >"$FF"
-check "forbidden: .env.example allowed" 0 bash -c "source '$FF'; check_forbidden_files .env.example"
-check "forbidden: config.sample allowed" 0 bash -c "source '$FF'; check_forbidden_files config.sample"
-check "forbidden: .env.template allowed" 0 bash -c "source '$FF'; check_forbidden_files .env.template"
-check "forbidden: .env blocked" 1 bash -c "source '$FF'; check_forbidden_files .env"
-check "forbidden: .env.local blocked" 1 bash -c "source '$FF'; check_forbidden_files .env.local"
+FF="$REPO_ROOT/extension/runtime/lib/secrets.sh"
+check "forbidden: .env.example allowed" 1 bash -c "source '$FF'; gates_forbidden_path .env.example"
+check "forbidden: config.sample allowed" 1 bash -c "source '$FF'; gates_forbidden_path config.sample"
+check "forbidden: .env.template allowed" 1 bash -c "source '$FF'; gates_forbidden_path .env.template"
+check "forbidden: .env blocked" 0 bash -c "source '$FF'; gates_forbidden_path .env"
+check "forbidden: .env.local blocked" 0 bash -c "source '$FF'; gates_forbidden_path .env.local"
+
+# lib/secrets.sh is required (issue #212). An adopted branch on a runtime
+# from 0.4.0 on refuses without it; one on an older runtime (hooks copied
+# into .git/hooks run on every branch) commits with a warning; a branch
+# that never adopted gates is checked in the never-projected section.
+SL="$WORKDIR/nosecrets"
+mkdir -p "$SL"
+git -C "$SL" init -q -b feat/x
+git -C "$SL" config user.email t@example.com
+git -C "$SL" config user.name tester
+project_runtime "$SL" "true"
+rm -f "$SL/.specify/gates/lib/secrets.sh"
+( cd "$SL" && git add -A && git commit -q --no-verify -m "chore: adopt gates" ) >/dev/null 2>&1
+cp "$GITHOOKS/pre-commit" "$SL/.git/hooks/pre-commit"
+chmod +x "$SL/.git/hooks/pre-commit"
+check "secrets lib: an adopted runtime without it refuses" 0 \
+    bash -c "cd '$SL' && echo a >a.txt && git add a.txt && ! git commit -q -m 'feat: a' 2>'$WORKDIR/sl.err' && grep -q 'pre-commit refused .*missing: lib/secrets.sh' '$WORKDIR/sl.err'"
+echo "0.3.6" >"$SL/.specify/gates/.runtime-version"
+check "secrets lib: a 0.3.x runtime commits, scan skipped with a warning" 0 \
+    bash -c "cd '$SL' && git commit -q -m 'feat: a' 2>'$WORKDIR/sl.err' && grep -q 'secret and forbidden-file scan skipped' '$WORKDIR/sl.err'"
 
 # ===========================================================================
 # Part D: agent-boundary protect-files consumes protected_files.extra
@@ -688,7 +707,9 @@ check "never-projected: no 'unversioned' leniency" 1 \
 cp "$GITHOOKS/pre-commit" "$NP/.git/hooks/"
 chmod +x "$NP/.git/hooks/pre-commit"
 check "never-projected: a branch from before adoption still commits" 0 \
-    bash -c "cd '$NP' && echo x >x.txt && git add x.txt && git commit -q -m 'feat: x'"
+    bash -c "cd '$NP' && echo x >x.txt && git add x.txt && git commit -q -m 'feat: x' 2>'$WORKDIR/np.err'"
+check "never-projected: the skipped secret scan is announced" 0 \
+    grep -q "gates not adopted); secret and forbidden-file scan skipped" "$WORKDIR/np.err"
 
 # ===========================================================================
 # Part E2c: hook stubs (issue #59). .git/hooks holds the stub, which runs

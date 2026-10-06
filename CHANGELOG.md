@@ -126,6 +126,13 @@ add` forms at the agent boundary. `project.sh` lists new settings like
 - **`grep -n rm <path> > /dev/null` is no longer refused** (#205). A
   redirect target is not an rm argument, so `/dev/null` after `>` or `2>`
   no longer reads as an absolute rm target.
+- **CI scans the pull request's commits for secrets and forbidden files**
+  (#212). Commits made by `cherry-pick`, `rebase`, `am` or `revert` run no
+  commit hook, and no boundary scanned them. `pr-check.sh` now runs the
+  `pre-commit` scan, with the same rules (now `lib/secrets.sh`, shared by
+  both), over the files each commit in the range adds or changes, renames
+  included. A secret added and removed within the range still fails: it is
+  in the pushed history.
 - **`verify.sh` without `--boundary` warns instead of refusing** (#216).
   A 0.3.6 caller such as `"gates": "bash .specify/gates/verify.sh"` broke
   on upgrade. It now runs as in 0.3.6 (every gate, boundary

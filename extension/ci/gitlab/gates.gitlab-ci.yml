@@ -35,7 +35,8 @@ gates:
     # or a linter the policy enables is not installed), not a dirty tree.
     - bash .specify/gates/canary.sh
     # MR title/description against the commit-message rules, and
-    # Protected-Change declarations across the MR's commits. Skips itself
+    # Protected-Change declarations across the MR's commits, and the
+    # pre-commit secret and forbidden-file scan over each of them. Skips itself
     # outside merge-request pipelines. Note: editing an MR title or
     # description does not start a pipeline; re-run it after such edits.
     # GitLab exposes the description from 16.7 and truncates long ones; then

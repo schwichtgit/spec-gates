@@ -90,7 +90,11 @@ create`; GitLab: `glab repo create` or the web UI; Jenkins: the SCM
    description against the commit-message rules, and Protected-Change
    declarations across the PR's commits (declarations in the description
    count for every commit, since a squash merge keeps the description).
-   Merge commits are checked too, and the rules come from the policy at
+   It also scans every commit in the range for secrets and forbidden
+   files with the `pre-commit` rules, since commits made by
+   `cherry-pick`, `rebase`, `am` or `revert` never ran that hook; a
+   secret removed again later in the range still fails, because it is in
+   the pushed history. Merge commits are checked too, and the rules come from the policy at
    the PR's base, so the PR cannot relax its own check. It needs full history (`fetch-depth: 0` / `GIT_DEPTH: 0`, set in the
    templates) and skips itself outside PR/MR pipelines. A base policy
    that is not valid fails the step (exit 2) and names the problem. A base
