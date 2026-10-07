@@ -611,7 +611,7 @@ because no legitimate run looks like that.
 
 **Canaries.** `canary.sh` (projected next to `verify.sh`) plants known
 violations in `mktemp` sandboxes and requires the real entrypoints to
-reject them, 15 probes in all:
+reject them, 16 probes in all:
 
 - the format, markdown and shell probes run through `verify.sh` itself;
   when the tool is missing but the policy enables it, the probe fails as
@@ -628,7 +628,7 @@ reject them, 15 probes in all:
   protected file without its trailer, and a message naming a branding term;
 - `pr` runs `pr-check.sh` over a sandbox range with an undeclared protected
   change and over a description containing an AI-ism;
-- `spec` and `contract` are described with their gates below.
+- `spec`, `errexit` and `contract` are described with their gates below.
 
 Hooks run by path, as Claude Code runs them, so their shebang picks the
 interpreter (bash 3.2 on macOS). The suite copies the runtime from the
@@ -660,13 +660,19 @@ tool gates and before `parity`:
    label, owning task), and checkbox counts are taken fence-aware so a
    `- [ ]` inside a code sample never counts. Malformed shapes (an
    unterminated fence, a command-less block, a block with no preceding
-   task) fail the gate at `spec.severity` naming `tasks.md:<line>`. Parsing
-   is fail-closed by design: a criterion the gate cannot read is a red run,
-   not a skipped check.
+   task, a `!` command before the block's last command) fail the gate at
+   `spec.severity` naming `tasks.md:<line>`. Parsing is fail-closed by
+   design: a criterion the gate cannot read is a red run, not a skipped
+   check.
 3. **Execute**: for features whose `spec.md` says `**Status**: Complete`
    (and any feature named via `--accept`), blocks run serially from the
-   repository root with output captured (shown only on failure), a
-   per-block watchdog (`spec.timeout_s`, default 30s) that stops the
+   repository root under `bash -eo pipefail`, so a failing command or
+   pipeline stage on any line fails the block, not just the last one
+   (#236). A `!`-negated command is exempt from errexit, which is why the
+   parser refuses one that is followed by another command line;
+   `test -z "$(...)"`, `if ...; then exit 1; fi` and `! cmd || exit 1`
+   fail the block wherever they stand. Output is captured (shown only on
+   failure), with a per-block watchdog (`spec.timeout_s`, default 30s) that stops the
    block's whole process group, and snapshots around each block:
    `git status` plus a content hash of every dirty or untracked file, git
    config in every scope, the hooks directory git uses, the files in
@@ -678,6 +684,11 @@ tool gates and before `parity`:
    changes any of them, including a write to a file that was already
    modified, a `git config core.hooksPath`, a commit, a tag or a new
    branch, fails its criterion, and nothing is ever auto-reverted.
+   That includes a build into an ignored directory such as `dist/`: on a
+   fresh CI checkout the directory is new and the block fails, while
+   locally, where it already exists with identical content, the block
+   may pass. A block that needs build output writes it to
+   `"$(mktemp -d)"` and reads it from there.
    Repacking (`git gc`, `git pack-refs`) changes how git stores objects
    and refs, not what they say, and is not checked; neither is
    `.git/info/refs`, the ref list that `git gc` and
@@ -739,7 +750,10 @@ top-level `spec` object with per-run counts and per-feature outcomes
 (`enforced-pass | enforced-fail | informational | no-criteria`). A `spec`
 canary projects a sandbox feature marked Complete with a `false` accept
 block and requires the sandboxed gate to reject it: stubbing the block
-runner to a no-op fails the canary suite naming the spec gate. `doctor`
+runner to a no-op fails the canary suite naming the spec gate. The
+`errexit` canary plants a block whose first line fails and whose last
+passes, so a runner that judges a block by its last command alone fails
+the suite too. `doctor`
 reports what the gate sees (features, blocks, complete count), fails on
 parse errors, and nudges when every task is checked but the `Complete`
 flip is missing.

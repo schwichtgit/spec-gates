@@ -203,6 +203,28 @@ cp "$REPO_ROOT/extension/runtime/lib/spec-gate.sh" "$FIX/.specify/gates/lib/"
 expect "restored runner -> spec canary green again (exit 0)" \
     "$(canary "$FIX" --only spec)" 0
 
+# --- #236: the errexit canary catches a runner that judges the last line ---
+echo ""
+echo "=== errexit canary (#236) ==="
+expect "healthy fixture: errexit canary blocked (exit 0)" \
+    "$(canary "$FIX" --only errexit)" 0
+# Run blocks without errexit and pipefail again: a block that fails on its
+# first line and ends on `true` passes, which the canary must report.
+sed 's/bash -eo pipefail "/bash "/' \
+    "$REPO_ROOT/extension/runtime/lib/spec-gate.sh" >"$FIX/.specify/gates/lib/spec-gate.sh"
+expect "the regressed runner was planted" \
+    "$(grep -c 'bash -eo pipefail "' "$FIX/.specify/gates/lib/spec-gate.sh" || true)" 0
+RC_ERR=0
+OUT_ERR="$(CLAUDE_PROJECT_DIR="$FIX" bash "$FIX/.specify/gates/canary.sh" --only spec,errexit 2>&1)" || RC_ERR=$?
+expect "last-line-only runner -> suite fails (exit 1)" "$RC_ERR" 1
+expect "output names the errexit canary as ACCEPTED" \
+    "$(grep -c '^canary: errexit -- ACCEPTED' <<<"$OUT_ERR" || true)" 1
+expect "the plain spec canary still blocks" \
+    "$(grep -c '^canary: spec -- blocked' <<<"$OUT_ERR" || true)" 1
+cp "$REPO_ROOT/extension/runtime/lib/spec-gate.sh" "$FIX/.specify/gates/lib/"
+expect "restored runner -> errexit canary green again (exit 0)" \
+    "$(canary "$FIX" --only errexit)" 0
+
 # --- SC-002 (003): the contract canary catches a no-op drift check ---
 echo ""
 echo "=== contract canary (feature 003) ==="

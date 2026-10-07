@@ -78,10 +78,11 @@ gates_spec_included() { # <feature-name>
 #   BLOCK<TAB><cmdfile><TAB><verifies-or-dash><TAB><task text>
 #   TASKS<TAB><total><TAB><unchecked><TAB><first unchecked task text>
 # Malformed shapes (unterminated fence, command-less block, block with no
-# preceding task) are ERROR lines, never skips. Fences are CommonMark-style
-# runs of 3+ backticks, closed only by a run at least as long — prettier
-# rewrites a block whose body contains ``` to a ````-fenced block, so exact-
-# three matching would silently drop that criterion. Interval regexes and
+# preceding task, a `!` command before the last command) are ERROR lines,
+# never skips. Fences are CommonMark-style runs of 3+ backticks, closed
+# only by a run at least as long — prettier rewrites a block whose body
+# contains ``` to a ````-fenced block, so exact-three matching would
+# silently drop that criterion. Interval regexes and
 # gensub are avoided on purpose: the parser must run on BSD awk (macOS).
 gates_spec_parse() { # <tasks-md> <outdir>
     local file="${1:-}" outdir="${2:-}"
@@ -91,6 +92,7 @@ gates_spec_parse() { # <tasks-md> <outdir>
         in_fence = 0; in_accept = 0
         task = ""; have_task = 0
         nblocks = 0; total = 0; unchecked = 0; first_unc = ""
+        negmsg = "a ! command other than the last one in the block never fails it under set -e; write `test -z \"$(...)\"`, `if ...; then exit 1; fi` or `! cmd || exit 1`"
     }
     {
         line = $0
@@ -108,7 +110,7 @@ gates_spec_parse() { # <tasks-md> <outdir>
         }
         if (in_accept) {
             if (is_fence && finfo == "" && flen >= open_len) {
-                if (!orphan) {
+                if (!orphan && !negerr) {
                     if (ncmds == 0) {
                         printf "ERROR\t%d\taccept block has no command lines\n", open_line
                     } else {
@@ -127,7 +129,22 @@ gates_spec_parse() { # <tasks-md> <outdir>
             while (n < indent && substr(line, n + 1, 1) == " ") n++
             stripped = substr(line, n + 1)
             body = body stripped "\n"
-            if (stripped ~ /[^[:space:]]/ && stripped !~ /^[[:space:]]*#/) ncmds++
+            if (stripped ~ /[^[:space:]]/ && stripped !~ /^[[:space:]]*#/) {
+                ncmds++
+                # Blocks run under errexit, which a `!` command never
+                # trips (#236): one followed by any further command line
+                # is a parse error. A backslash-continued line belongs to
+                # the command before it.
+                if (!cont) {
+                    if (neg_line && !negerr) {
+                        printf "ERROR\t%d\t%s\n", neg_line, negmsg
+                        negerr = 1
+                    }
+                    neg_line = 0
+                    if (stripped ~ /^[[:space:]]*![[:space:]]/ && index(stripped, "||") == 0) neg_line = NR
+                }
+                cont = (stripped ~ /\\$/)
+            }
             if (verifies == "" && stripped ~ /^# verifies:/) {
                 v = stripped
                 sub(/^# verifies:[[:space:]]*/, "", v)
@@ -142,6 +159,7 @@ gates_spec_parse() { # <tasks-md> <outdir>
                 open_line = NR
                 open_len = flen
                 body = ""; ncmds = 0; verifies = ""; orphan = 0
+                neg_line = 0; negerr = 0; cont = 0
                 match(line, /^[[:space:]]*/)
                 indent = RLENGTH
                 if (!have_task) {
@@ -606,7 +624,8 @@ gates_spec_detached_stop() { # <id> <scratch> <fifo> <eof>
     return 1
 }
 
-# Execute one accept block (R4/R5): repo-root cwd, pure-shell watchdog (no
+# Execute one accept block (R4/R5): `bash -eo pipefail`, so any failing
+# line fails the block (#236), repo-root cwd, pure-shell watchdog (no
 # timeout(1) on macOS base), snapshots before and after. Outside a git work
 # tree the block does not run: a mutation check that cannot happen fails
 # closed. The block is a job of a `set -m` subshell, so it leads its own
@@ -687,7 +706,7 @@ gates_spec_run_block() { # <cmdfile> <timeout-s> <root> <outfile>
         (cd "$root" && GATES_SPEC_EXEC=1 GATES_SPEC_BLOCK="$bid" exec env -u GIT_DIR -u GIT_INDEX_FILE \
             -u GIT_WORK_TREE -u GIT_PREFIX -u GIT_COMMON_DIR -u GIT_OBJECT_DIRECTORY \
             -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_NAMESPACE -u GIT_QUARANTINE_PATH \
-            bash "$cmdfile") 7>"$lease" >"$outfile" 2>&1 </dev/null &
+            bash -eo pipefail "$cmdfile") 7>"$lease" >"$outfile" 2>&1 </dev/null &
         pid=$!
         trap 'kill -TERM -- -"$pid" 2>/dev/null' HUP INT TERM
         (

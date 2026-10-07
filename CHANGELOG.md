@@ -20,6 +20,12 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   step can be adopted on its own: `project.sh` prints it for GitHub,
   GitLab or Jenkins when the step is missing or held, and
   `docs/how-it-works.md` documents it.
+- **Every line of an accept block counts** (#236). Blocks ran as plain
+  `bash`, so only the last command decided the result: `false` followed
+  by `true` passed. Blocks now run under `bash -eo pipefail`, and a `!`
+  command before the last command line is a parse error naming the forms
+  that fail the block. Behavior change: a block that relied on an earlier
+  line failing unnoticed now fails. A new `errexit` canary guards it.
 - **Doctor names the pending upgrade item** (#214). Whenever
   `project.sh --check` exited 1, doctor advised running `project.sh`,
   which reports "no changes" for pending hook-manager wiring, a pending

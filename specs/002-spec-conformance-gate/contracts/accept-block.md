@@ -40,9 +40,15 @@ the association):
    allowed anywhere and are passed through to the shell.
 4. **Commands**: all interior lines, dedented by the fence's indentation,
    form one shell script executed with the project's `/bin/bash` from the
-   repository root. Exit `0` = the criterion holds; any nonzero exit = it
-   does not. Multi-line sequences are allowed; `set -e` semantics are the
-   author's choice (the block body is executed as written).
+   repository root, under `bash -eo pipefail`. Exit `0` = the criterion
+   holds; any nonzero exit = it does not. Multi-line sequences are
+   allowed, and every line counts: a failing command or pipeline stage
+   anywhere in the block fails it (#236). A `!`-negated command never
+   trips errexit, so a line starting with `!` that is followed by another
+   command line is a parse error naming `tasks.md:<line>`; write
+   `test -z "$(...)"`, `if ...; then exit 1; fi`, or `! cmd || exit 1`
+   instead. A `!` on the block's last command line stays allowed, since
+   its status is the block's exit status.
 5. **At least one command**: a block containing only comments and blank
    lines is a parse error (an empty criterion would be a silent no-op —
    exactly the failure class this project forbids).

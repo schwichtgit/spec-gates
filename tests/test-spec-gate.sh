@@ -372,6 +372,77 @@ expect_contains "Complete with zero blocks stays informational" "$OUT" "EXIT=0"
 expect "outcome is no-criteria" \
     "$(gate_json "$D" | jq -r '.attestation.spec.results[0].outcome')" "no-criteria"
 
+# --- issue #236: every line of a block counts (errexit + pipefail) ---
+echo ""
+echo "=== errexit and pipefail (#236) ==="
+
+D="$WORKDIR/errexit"
+project "$D" "$MINIMAL"
+mkfeature "$D" 210-errexit Complete <<'EOF'
+- [x] T001 Task
+
+  ```accept
+  # verifies: SC-210
+  false
+  true
+  ```
+EOF
+OUT="$(gate_out "$D")"
+expect_contains "#236: a failing first line fails the block" "$OUT" "EXIT=2"
+expect_contains "#236: the failure names the criterion" "$OUT" "SC-210"
+
+D="$WORKDIR/pipefail"
+project "$D" "$MINIMAL"
+mkfeature "$D" 210-pipefail Complete <<'EOF'
+- [x] T001 Task
+
+  ```accept
+  # verifies: SC-211
+  false | cat
+  ```
+EOF
+OUT="$(gate_out "$D")"
+expect_contains "#236: a failing pipeline stage fails the block" "$OUT" "EXIT=2"
+expect_contains "#236: the pipeline failure names the criterion" "$OUT" "SC-211"
+
+D="$WORKDIR/neg-early"
+project "$D" "$MINIMAL"
+mkfeature "$D" 210-neg Draft <<'EOF'
+- [x] T001 Task
+
+  ```accept
+  ! grep -q needle README
+  true
+  ```
+EOF
+OUT="$(gate_out "$D")"
+expect_contains "#236: a non-last ! command is a parse error" "$OUT" "EXIT=2"
+expect_contains "#236: the error names tasks.md:<line>" "$OUT" \
+    "specs/210-neg/tasks.md:4: a ! command other than the last one"
+expect_contains "#236: the error names a form that works" "$OUT" '! cmd || exit 1'
+
+D="$WORKDIR/neg-last"
+project "$D" "$MINIMAL"
+printf 'text\n' >"$D/README"
+mkfeature "$D" 210-neglast Complete <<'EOF'
+- [x] T001 Task
+
+  ```accept
+  test -f README
+  ! grep -q needle README
+  # a trailing comment is not a command
+  ```
+
+- [x] T002 Task
+
+  ```accept
+  ! grep -q needle README || exit 1
+  ! grep -q needle \
+    README
+  ```
+EOF
+expect "#236: a ! command on the last line, or with || exit 1, passes" "$(gate "$D")" 0
+
 # --- timeout (R4) and mutation (R5) ---
 echo ""
 echo "=== timeout and mutation detection ==="
