@@ -26,6 +26,32 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   command before the last command line is a parse error naming the forms
   that fail the block. Behavior change: a block that relied on an earlier
   line failing unnoticed now fails. A new `errexit` canary guards it.
+- **A `!` command feeding a heredoc can end an accept block** (#237).
+  The rule from #236 counted heredoc body and terminator lines as further
+  commands, so `! grep -q x <<EOF`, its body and `EOF` as the last lines
+  were refused. Heredoc lines (`<<`, `<<-`, quoted or not) no longer
+  count; a command after the terminator still does.
+- **Agent hooks: last quadratic paths and edge cases** (#238).
+  validate-bash counted and removed quotes, cut `--opt=value` words and
+  expanded the command's own assignments in ways that were quadratic in
+  bash 3.2 or awk (minutes on a long quote-dense word or thousands of
+  assignments, several only in a UTF-8 locale); they are linear now,
+  with results unchanged. A command that reads every file under a
+  sensitive directory (`grep -r . ~/.ssh/`, `rg`, `tar`, `zip`, `scp`,
+  `xargs`) now asks; listings such as `ls -R` or `du` still run.
+  validate-pr without python3 asks on `gh api -H "Accept: x" "$EP"`, and
+  with it no longer refuses `gh api user -f title=$T`: fields are
+  checked only on a pulls endpoint or one it cannot read.
+- **Agent hooks read command text as bytes** (#238). In a UTF-8 locale a
+  command holding bytes that are not UTF-8 aborted BWK awk or stopped
+  BSD tr and sed, so in raw mode (no jq) every such command asked instead
+  of being checked, and non-ASCII text such as `ÉNV=1` lowercased by GNU
+  tr turned the protected-path check off. validate-bash and protect-files
+  now run their text tools under `LC_ALL=C`, and the rules apply to such
+  commands as to any other. A sensitive directory named without its
+  trailing slash (`~/.ssh`, `.aws`) now counts like `~/.ssh/` at every
+  boundary, and the symlink resolution of `ln` and of changed paths is
+  linear on a long path component.
 - **Doctor names the pending upgrade item** (#214). Whenever
   `project.sh --check` exited 1, doctor advised running `project.sh`,
   which reports "no changes" for pending hook-manager wiring, a pending

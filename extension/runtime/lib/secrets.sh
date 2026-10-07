@@ -55,6 +55,11 @@ gates_forbidden_path() { # <path>
             GATES_FORBIDDEN_WHAT="file in a sensitive directory"
             return 0
             ;;
+        # The directory itself, without its trailing slash (~/.ssh).
+        */.ssh | */.gnupg | */.aws | */.gcloud)
+            GATES_FORBIDDEN_WHAT="sensitive directory"
+            return 0
+            ;;
     esac
 
     return 1

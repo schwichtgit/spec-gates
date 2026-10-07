@@ -62,6 +62,15 @@ for _tool in grep sed tr awk; do
     command -v "$_tool" >/dev/null 2>&1 \
         || ask "$_tool not found, so validate-bash cannot check this command; run /speckit.gates.doctor"
 done
+# The text tools read the command as bytes (#238): every pattern here is
+# ASCII, and in a UTF-8 locale a byte sequence that is not UTF-8 aborts
+# BWK awk ("towc: multibyte conversion failure"), stops BSD tr and sed
+# ("Illegal byte sequence") and turns GNU grep -o into "Binary file
+# matches". bash itself keeps the caller's locale.
+awk() { LC_ALL=C command awk "$@"; }
+sed() { LC_ALL=C command sed "$@"; }
+tr() { LC_ALL=C command tr "$@"; }
+grep() { LC_ALL=C command grep "$@"; }
 
 INPUT=$(cat /dev/stdin)
 DEGRADED=""
@@ -314,8 +323,11 @@ fi
 if [[ -z "$BLOCKED" ]]; then
     while IFS= read -r _seg; do
         _skip=0
+        # The arguments after rm, which the match puts at offset 0 or 1;
+        # a substring, not ${_seg#*rm} (#238).
+        if [[ "${_seg:0:2}" == rm ]]; then _seg="${_seg:2}"; else _seg="${_seg:3}"; fi
         # shellcheck disable=SC2086  # deliberate word split of the arguments
-        for _arg in ${_seg#*rm}; do
+        for _arg in $_seg; do
             if [[ "$_skip" -eq 1 ]]; then
                 _skip=0
                 continue
@@ -468,8 +480,45 @@ head_before() {
     HB="${1%%$2*}"
     return 0
 }
+# odd_quote <quote> <word>: set QO to 1 when <word> holds an odd number of
+# <quote> characters, else 0. Regexes, as counting with ${word//[!\"]/} is
+# quadratic in bash 3.2 on a long word (#238); the count stays for text the
+# regexes cannot read.
+odd_quote() {
+    local q="$1" re s
+    re="^[^${q}]*(${q}[^${q}]*${q}[^${q}]*)*\$"
+    if [[ "$2" =~ $re ]]; then QO=0; return 0; fi
+    re="^[^${q}]*${q}[^${q}]*(${q}[^${q}]*${q}[^${q}]*)*\$"
+    if [[ "$2" =~ $re ]]; then QO=1; return 0; fi
+    if [[ "$q" == \" ]]; then s="${2//[!\"]/}"; else s="${2//[!\']/}"; fi
+    QO=$((${#s} % 2))
+    return 0
+}
+# unquote <word>: set UQ to <word> without its " and ' characters. A split
+# on them, as ${word//\"/} is quadratic in bash 3.2 in the number of quotes
+# (#238).
+unquote() {
+    case "$1" in *[\"\']*) ;; *) UQ="$1"; return 0 ;; esac
+    local IFS=\"\' _uq=()
+    read -r -a _uq <<<"$1" || true
+    IFS=
+    UQ="${_uq[*]:-}"
+    return 0
+}
+# after_eq <word>: set AE to the text of <word> after its first =. A regex
+# and a substring, as ${word#*=} is quadratic in bash 3.2 on a long word
+# (#238); the expansion stays for text the regex cannot read.
+after_eq() {
+    if [[ "$1" =~ ^[^=]*= ]]; then
+        AE="${1:${#BASH_REMATCH[0]}}"
+        return 0
+    fi
+    AE="${1#*=}"
+    return 0
+}
 git_scan() {
-    local seg t t2 q a v base cdir sub n i dashdash xa whole staged wtree force seqoff
+    local seg t a v base cdir sub n i dashdash xa whole staged wtree force seqoff k dq sq
+    local -a p
     local hskip=""
     local scwd="$CWD"
     local asg='^[A-Za-z_][A-Za-z0-9_]*='
@@ -497,8 +546,9 @@ git_scan() {
             t="${w[i]}"
             # A hook manager's skip variable (#194), set for this command
             # or exported before it: husky, lefthook, pre-commit.
-            case "${t//[\"\']/}" in
-                HUSKY=0 | LEFTHOOK=0 | LEFTHOOK=false | SKIP=?* | LEFTHOOK_EXCLUDE=?*) hskip="${t//[\"\']/}" ;;
+            unquote "$t"
+            case "$UQ" in
+                HUSKY=0 | LEFTHOOK=0 | LEFTHOOK=false | SKIP=?* | LEFTHOOK_EXCLUDE=?*) hskip="$UQ" ;;
             esac
             if [[ ! "$t" =~ $asg ]]; then
                 case "$t" in
@@ -573,7 +623,7 @@ git_scan() {
                 if [[ "$sub" == commit && "$a" == -* ]]; then
                     v=""
                     case "$a" in
-                        --*=*) v="${a#*=}" ;;
+                        --*=*) after_eq "$a"; v="$AE" ;;
                         --message | --file | --reuse-message | --reedit-message | --template \
                             | --author | --date | --fixup | --squash | --trailer | --cleanup)
                             v="${w[i]:-}"
@@ -595,11 +645,17 @@ git_scan() {
                             ;;
                     esac
                     # A quoted value the word split cut: skip to its end.
-                    while [[ "$i" -lt "$n" ]]; do
-                        t="${v//[!\"]/}"
-                        q="${v//[!\']/}"
-                        [[ $((${#t} % 2)) -ne 0 || $((${#q} % 2)) -ne 0 ]] || break
-                        v="$v ${w[i]}"
+                    # The quote parity is kept per word added, so a long
+                    # value is not counted again for every word (#238).
+                    odd_quote \" "$v"
+                    dq="$QO"
+                    odd_quote \' "$v"
+                    sq="$QO"
+                    while [[ "$i" -lt "$n" && ( "$dq" -eq 1 || "$sq" -eq 1 ) ]]; do
+                        odd_quote \" "${w[i]}"
+                        dq=$((dq ^ QO))
+                        odd_quote \' "${w[i]}"
+                        sq=$((sq ^ QO))
                         i=$((i + 1))
                     done
                 fi
@@ -611,8 +667,8 @@ git_scan() {
                     continue
                 fi
             fi
-            t="${a//\"/}"
-            t="${t//\'/}"
+            unquote "$a"
+            t="$UQ"
             case "$sub" in
                 push)
                     if [[ "$dashdash" -eq 0 ]]; then
@@ -715,30 +771,39 @@ git_scan() {
                 esac
             fi
             # Rejoin an argument the word split cut: a quoted name with a
-            # space ("src dir") or an escaped one (src\ dir).
+            # space ("src dir") or an escaped one (src\ dir). The pieces
+            # are joined once and the quote parity kept per piece, so a
+            # long argument is not copied or counted per word (#238).
+            p=("$a")
+            k=0
+            odd_quote \" "$a"
+            dq="$QO"
+            odd_quote \' "$a"
+            sq="$QO"
             while [[ "$i" -lt "$n" ]]; do
-                t="${a//[!\"]/}"
-                q="${a//[!\']/}"
-                if [[ "$a" == *\\ ]]; then
-                    a="${a%\\} ${w[i]}"
-                elif [[ $((${#t} % 2)) -ne 0 || $((${#q} % 2)) -ne 0 ]]; then
-                    a="$a ${w[i]}"
-                else
+                if [[ "${p[k]: -1}" == \\ ]]; then
+                    p[k]="${p[k]:0:${#p[k]}-1}"
+                elif [[ "$dq" -eq 0 && "$sq" -eq 0 ]]; then
                     break
                 fi
+                k=$((k + 1))
+                p[k]="${w[i]}"
+                odd_quote \" "${w[i]}"
+                dq=$((dq ^ QO))
+                odd_quote \' "${w[i]}"
+                sq=$((sq ^ QO))
                 i=$((i + 1))
             done
-            t="${a//\"/}"
-            t="${t//\'/}"
+            a="${p[*]}"
+            unquote "$a"
+            t="$UQ"
             # Pathspec magic (`:/`, `:(top)`, `:!x`): git expands it, and
             # the segment split may have cut it at the parenthesis.
             if [[ "$t" == :* ]]; then
                 printf 'BULK git %s %s\n' "$sub" "$a"
                 continue
             fi
-            q="${a//[!\"]/}"
-            t2="${a//[!\']/}"
-            if [[ "$t" == *\\ || $((${#q} % 2)) -ne 0 || $((${#t2} % 2)) -ne 0 ]]; then
+            if [[ "${t: -1}" == \\ || "$dq" -eq 1 || "$sq" -eq 1 ]]; then
                 printf 'BULKQ %s\n' "$a"
                 continue
             fi
@@ -1011,27 +1076,35 @@ fi
 NCMD_DQ="$(tr -d "\"'" <<<"$NCMD")"
 PCMD="$NCMD"
 [[ "$NCMD_DQ" == "$NCMD" ]] || PCMD="$PCMD"$'\n'"$NCMD_DQ"
-_xp="$(awk '
-    function rep(s, p, r, word,    i, out, nx) {
-        out = ""
-        while ((i = index(s, p)) > 0) {
-            nx = substr(s, i + length(p), 1)
-            if (word && nx ~ /[a-z0-9_]/) r2 = p; else r2 = r
-            out = out substr(s, 1, i - 1) r2; s = substr(s, i + length(p))
-        }
-        return out s
-    }
-    { line[NR] = $0; s = $0
-      while (match(s, /(^|[[:space:];&|(])[a-z_][a-z0-9_]*=[^[:space:];&|()]*/)) {
-          a = substr(s, RSTART, RLENGTH); sub(/^[[:space:];&|(]/, "", a)
-          e = index(a, "="); v[substr(a, 1, e - 1)] = substr(a, e + 1)
-          s = substr(s, RSTART + RLENGTH)
+# One split per line at its $ signs, each name looked up once and the
+# output printed in pieces: replacing every assigned name in every line
+# scaled with assignments times lines (#238). A second pass expands what a
+# value names in turn (g=$f/x).
+# shellcheck disable=SC2016  # awk code, not shell
+XP_AWK='
+    { line[NR] = $0
+      n = split($0, w, /[[:space:];&|(]/)
+      for (k = 1; k <= n; k++) {
+          if (w[k] !~ /^[a-z_][a-z0-9_]*=/) continue
+          e = index(w[k], "="); a = substr(w[k], e + 1)
+          if ((c = index(a, ")")) > 0) a = substr(a, 1, c - 1)
+          v[substr(w[k], 1, e - 1)] = a
       } }
     END { for (k = 1; k <= NR; k++) {
-              o = line[k]
-              for (n in v) { o = rep(o, "${" n "}", v[n], 0); o = rep(o, "$" n, v[n], 1) }
-              print o
-          } }' <<<"$NCMD_DQ")"
+              np = split(line[k], part, /[$]/)
+              printf "%s", part[1]
+              for (j = 2; j <= np; j++) {
+                  r = part[j]
+                  if (match(r, /^\{[a-z_][a-z0-9_]*\}/)) nm = substr(r, 2, RLENGTH - 2)
+                  else if (match(r, /^[a-z_][a-z0-9_]*/)) nm = substr(r, 1, RLENGTH)
+                  else nm = ""
+                  if (nm != "" && (nm in v)) printf "%s%s", v[nm], substr(r, RLENGTH + 1)
+                  else printf "$%s", r
+              }
+              printf "\n"
+          } }'
+_xp="$(awk "$XP_AWK" <<<"$NCMD_DQ")"
+[[ "$_xp" != *'$'* ]] || _xp="$(awk "$XP_AWK" <<<"$_xp")"
 [[ "$_xp" == "$NCMD_DQ" ]] || PCMD="$PCMD"$'\n'"$_xp"
 # pp_spelled <spelling> <anchored>: set _named, _entered and _redirect when
 # PCMD names <spelling> (or a parent of it) in a change, changes into it, or
@@ -1097,6 +1170,18 @@ base_name() {
         [[ -z "$head" || "${head: -1}" == / ]] && return 0
     fi
     BN="${1##*/}"
+}
+# dir_name <path>: set DN to <path> without its last component, as
+# ${path%/*} does, which is quadratic in bash 3.2 in a UTF-8 locale on a
+# long last component (#238); <path> itself when it has no slash.
+dir_name() {
+    if [[ "$1" == */* ]]; then
+        base_name "$1"
+        DN="${1:0:${#1}-${#BN}-1}"
+    else
+        DN="$1"
+    fi
+    return 0
 }
 # protected_globs: the extra glob entries with no literal prefix
 # (`**/*.lock.md`), which protected_prefixes cannot match by text.
@@ -1186,10 +1271,22 @@ ln_resolve() { # <path> [<real directory a relative path starts from>]
     while [[ -n "$todo" ]]; do
         while [[ "$todo" == /* ]]; do todo="${todo#/}"; done
         [[ -n "$todo" ]] || break
-        if [[ "$todo" == */* ]]; then comp="${todo%%/*}"; todo="${todo#*/}"; else comp="$todo"; todo=""; fi
+        # A regex and substrings, as ${todo#*/} is quadratic in bash 3.2
+        # on a long first component (#238); the expansions stay for text
+        # the regex cannot read.
+        if [[ "$todo" =~ ^[^/]*/ ]]; then
+            comp="${BASH_REMATCH[0]:0:${#BASH_REMATCH[0]}-1}"
+            todo="${todo:${#BASH_REMATCH[0]}}"
+        elif [[ "$todo" == */* ]]; then
+            comp="${todo%%/*}"
+            todo="${todo#*/}"
+        else
+            comp="$todo"
+            todo=""
+        fi
         case "$comp" in
             . | '') continue ;;
-            ..) out="${out%/*}"; continue ;;
+            ..) dir_name "$out"; out="$DN"; continue ;;
         esac
         if [[ -L "$out/$comp" ]]; then
             LN_VIA=1
@@ -1240,7 +1337,8 @@ if [[ -n "$LN_SEGS" ]]; then
         read -r -a _largs <<<"$_seg"
         _last="${_largs[${#_largs[@]} - 1]}"
         [[ "$_last" == /* ]] || _last="$CWD/$_last"
-        _bases=("$CWD" "${_last%/*}")
+        dir_name "$_last"
+        _bases=("$CWD" "$DN")
         [[ -d "$_last" ]] && _bases+=("$_last")
         for _a in "${_largs[@]}"; do
             [[ "$_a" == \~/* ]] && _a="$HOME/${_a#\~/}"
@@ -1284,7 +1382,8 @@ if [[ "$MUTATES" -eq 1 || "$WRITE_REDIRECT" -eq 1 ]]; then
     fi
     shopt -s nocasematch
     while IFS= read -r _a; do
-        _a="${_a//[\"\']/}"
+        unquote "$_a"
+        _a="$UQ"
         case "$_a" in
             '' | -* | *'$'* | *'`'* | *'*'* | *'?'* | *'['* | '~'* | /dev/*) continue ;;
         esac
@@ -1341,17 +1440,27 @@ for _sl in "$LROOT/.specify/gates/lib/secrets.sh" "${BASH_SOURCE[0]%/*}/../../..
     fi
     break
 done
+# A command that reads the contents of every file under a directory it
+# names (#238): a recursive grep, rg/ag/ack (recursive by default), an
+# archiver, scp, or xargs running a command on listed names. cp -r and
+# rsync count as changes (MUTATES) already. Listings (ls -R, find, du,
+# stat) read no contents. Like MUTATES, this holds for the whole command.
+READ_TREE="$VERB_START"'((e|f)?grep[[:space:]]+([^;&|]*[[:space:]])?(-[a-z]*r[a-z]*|--recursive|--dereference-recursive|--directories(=|[[:space:]]+)recurse|-d[[:space:]]*recurse)|rg|ag|ack|tar|zip|7z|cpio|pax|scp|xargs)([[:space:]]|$)'
+READS_TREE=0
+grep -qE "$READ_TREE" <<<"$BCMD" && READS_TREE=1
 if [[ "$SECRETS_LIB" == ok ]]; then
     SECRET_FILE=""
     shopt -s nocasematch
     while IFS= read -r _t; do
         if gates_forbidden_path "$_t"; then
             # A read-only command that names a sensitive directory
-            # (`ls ~/.ssh/`, `cat ~/.aws/config`) runs: only the directory
-            # matched, not a secret name. A write there, or a glob that
-            # could read every key in it (`cat ~/.ssh/*`), still asks (#229).
-            if [[ "$GATES_FORBIDDEN_WHAT" == "file in a sensitive directory" && "$MUTATES" -eq 0 \
-                && "$WRITE_REDIRECT" -eq 0 && "$_t" != *[*?[]* ]]; then
+            # (`ls ~/.ssh`, `cat ~/.aws/config`) runs: only the directory
+            # matched, not a secret name. A write there, a glob that could
+            # read every key in it (`cat ~/.ssh/*`, #229), or a command that
+            # reads every file under it (`grep -r x ~/.ssh/`, `tar cf -
+            # ~/.ssh/`, #238) still asks.
+            if [[ "$GATES_FORBIDDEN_WHAT" == *"sensitive directory" && "$MUTATES" -eq 0 \
+                && "$WRITE_REDIRECT" -eq 0 && "$READS_TREE" -eq 0 && "$_t" != *[*?[]* ]]; then
                 continue
             fi
             SECRET_FILE="$_t"

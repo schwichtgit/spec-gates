@@ -191,7 +191,7 @@ for c in "gh pr create -t 'feat: x' -b y" "cd x && gh pr create -t 'feat: x' -b 
 done
 for c in 'git commit -m "fix: handle gh pr create"' 'gh api repos/o/r/issues -f title=anything' \
     'echo see gh pr create docs' 'gh api user' 'sudo --odd bob gh api user' \
-    "gh api graphql -f query='query(\$o: String!) { x }'" "gh api user -f 'title=\$T'"; do
+    "gh api graphql -f query='query(\$o: String!) { x }'" "gh api user -f 'title=\$T'" 'gh api -H "Accept: x" user'; do
     vpn "PR hook: no python3 -> not a PR command, allowed: $c" 0 "$c"
 done
 check "PR hook: missing runtime lib -> PR command refused" 2 bash -c "printf '%s' '$PRCMD' | CLAUDE_PROJECT_DIR='$WORKDIR/no-runtime-here' '$HOOKS/validate-pr.sh'"
@@ -235,7 +235,9 @@ askcheck() { # <name> <payload> <hook> [VAR=value...]: expect exit 0 + "ask" JSO
 # #229: without python3 a gh api endpoint that is not literal text asks,
 # as the parser does.
 # shellcheck disable=SC2016  # literal command text under test
-for c in 'gh api "$EP"' 'gh api -X GET "$EP"' 'x=1 gh api `ep` -f title=x' 'sudo -u bob gh api "repos/$R/issues"'; do
+# A quoted option value with a space before the endpoint (#238).
+for c in 'gh api "$EP"' 'gh api -X GET "$EP"' 'x=1 gh api `ep` -f title=x' 'sudo -u bob gh api "repos/$R/issues"' \
+    'gh api -H "Accept: x" "$EP"' "gh api --header 'X-A: a b' -X GET \"\$EP\""; do
     askcheck "PR hook: no python3 -> a variable gh api endpoint asks: $c" "$(jq -nc --arg c "$c" '{tool_input:{command:$c}}')" \
         validate-pr.sh PATH="$NOPY" CLAUDE_PROJECT_DIR="$RT"
 done
@@ -1179,11 +1181,23 @@ echo ""
 echo "=== one forbidden-name list at every boundary (#221) ==="
 # pre-commit and pr-check refuse every name the agent hooks refuse.
 for f in release.jks credentials credentials.yml credentials.yaml .netrc .pypirc gcloud-x.json .ssh/config \
-    .gnupg/k aws-credentials CREDENTIALS.JSON; do
+    .gnupg/k aws-credentials CREDENTIALS.JSON .ssh sub/.aws .gcloud .gnupg; do
     want=0
     [[ "$f" == CREDENTIALS.JSON ]] && want=1 # git paths are matched as spelled
     check "secrets.sh forbids: $f" "$want" bash -c "source '$FF'; gates_forbidden_path '$f'"
 done
+# #238: a sensitive directory named without its trailing slash is the
+# same rule at every boundary: protect-files refuses it, pre-commit refuses
+# a file or link staged under that name.
+for f in "$HOME/.ssh" .aws sub/.gnupg; do
+    check "protect-files refuses a sensitive directory without its slash: $f" 2 \
+        bash -c "jq -nc --arg f '$f' '{tool_input:{file_path:\$f}}' | CLAUDE_PROJECT_DIR='$WORKDIR/none' '$HOOKS/protect-files.sh'"
+done
+GB="$(git -C "$GF" rev-parse HEAD)"
+check "pre-commit refuses a link staged as .aws" 0 \
+    bash -c "cd '$GF' && ln -s /nonexistent .aws && git add .aws && ! git commit -q -m 'chore: link' 2>'$WORKDIR/sc.err' && grep -qF 'BLOCKED: forbidden file: .aws' '$WORKDIR/sc.err'"
+git -C "$GF" reset -q --hard "$GB" >/dev/null 2>&1
+rm -f "$GF/.aws"
 # The agent hooks read the list from lib/secrets.sh: a name added there is
 # refused at the agent boundary too, and a lib that cannot load asks.
 DR="$WORKDIR/drift"
@@ -1379,6 +1393,85 @@ if [[ -x /usr/bin/awk && -x /bin/bash ]]; then
     check "a 200 KB word without lib/secrets.sh asks in time" 0 bounded 20 bash -c "out=\$(PATH='$BP' CLAUDE_PROJECT_DIR='$BL/none' '$BL/lone/validate-bash.sh' <'$BL/cat.json') && grep -q 'secrets.sh cannot load' <<<\"\$out\""
 else
     echo "SKIP: large commands under /bin/bash and /usr/bin/awk (one is absent)"
+fi
+# More expansions and passes that were quadratic in bash 3.2 or awk (#238),
+# several only in a UTF-8 locale: quote counting and removal on a long
+# word, ${a#*=}, ${a%%[mFcCtSu]*} (#233), the git scan reading every
+# segment in bash (#233), and the assignment expansion (assignments x
+# lines). Each input takes a few seconds and a minute or more without its
+# fix, so the bound catches a regression and stays clear of a slow host.
+UL=""
+for l in en_US.UTF-8 C.UTF-8 en_US.utf8; do
+    if [[ "$(LC_ALL="$l" locale charmap 2>/dev/null)" == UTF-8 ]]; then
+        UL="$l"
+        break
+    fi
+done
+if [[ -x /usr/bin/awk && -x /bin/bash ]]; then
+    BQ="$WORKDIR/big-quotes"
+    mkdir -p "$BQ/p/.specify/gates"
+    echo '{"hooks":{}}' >"$BQ/p/.specify/gates/policy.json"
+    head -c 100000 /dev/zero | tr '\0' x >"$BQ/x.txt"
+    { printf 'git add a'; sed 's/xx/"x"/g' "$BQ/x.txt"; } >"$BQ/addq.txt"
+    { printf 'rm a'; sed "s/xx/'x'/g" "$BQ/x.txt"; } >"$BQ/rmq.txt"
+    { printf 'git commit --'; for _ in 1 2 3 4; do cat "$BQ/x.txt"; done; printf '=v -m x'; } >"$BQ/eq.txt"
+    { printf 'git commit -n'; for _ in 1 2 3 4 5 6; do cat "$BQ/x.txt"; done; } >"$BQ/hb.txt"
+    awk 'BEGIN { for (i = 0; i < 200000; i++) printf "x;" }' >"$BQ/semi.txt"
+    awk 'BEGIN { for (i = 0; i < 5000; i++) printf "v%d=x%d\n", i, i; for (i = 0; i < 5000; i++) print "echo $v1 line" }' >"$BQ/xp.txt"
+    head -c 600000 /dev/zero | tr '\0' x >"$BQ/x600.txt"
+    { printf 'rm '; head -c 400000 "$BQ/x600.txt"; printf '/a'; } >"$BQ/rmslash.txt"
+    { printf 'ln -s x a/'; cat "$BQ/x600.txt"; } >"$BQ/lnlast.txt"
+    { printf 'rm '; cat "$BQ/x600.txt"; printf '/..'; } >"$BQ/rmdotdot.txt"
+    for f in addq rmq eq hb semi xp rmslash lnlast rmdotdot; do
+        jq -n --rawfile c "$BQ/$f.txt" '{tool_input:{command:$c}}' >"$BQ/$f.json"
+    done
+    BE="LC_ALL='${UL:-${LC_ALL:-C}}' PATH='/usr/bin:/bin:/usr/sbin:/sbin:$PATH' CLAUDE_PROJECT_DIR='$BQ/p'"
+    check "git add of a quote-dense 150 KB word is allowed in time" 0 bounded 30 bash -c "out=\$($BE /bin/bash '$HOOKS/validate-bash.sh' <'$BQ/addq.json') && [[ -z \"\$out\" ]]"
+    check "rm of a quote-dense 150 KB word is allowed in time" 0 bounded 30 bash -c "out=\$($BE /bin/bash '$HOOKS/validate-bash.sh' <'$BQ/rmq.json') && [[ -z \"\$out\" ]]"
+    check "git commit --<400 KB>=v is allowed in time" 0 bounded 30 bash -c "out=\$($BE /bin/bash '$HOOKS/validate-bash.sh' <'$BQ/eq.json') && [[ -z \"\$out\" ]]"
+    check "git commit -n with a 600 KB option word asks in time" 0 bounded 30 bash -c "out=\$($BE /bin/bash '$HOOKS/validate-bash.sh' <'$BQ/hb.json') && grep -q 'permissionDecision\":\"ask' <<<\"\$out\""
+    check "200000 short segments are allowed in time" 0 bounded 30 bash -c "out=\$($BE /bin/bash '$HOOKS/validate-bash.sh' <'$BQ/semi.json') && [[ -z \"\$out\" ]]"
+    check "5000 assignments and 5000 lines that use one are allowed in time" 0 bounded 30 bash -c "out=\$($BE /bin/bash '$HOOKS/validate-bash.sh' <'$BQ/xp.json') && [[ -z \"\$out\" ]]"
+    # ln_resolve's ${todo#*/} on a long first component, and ${out%/*}
+    # and ${_last%/*} on a long last one (UTF-8).
+    check "rm <400 KB>/a is allowed in time" 0 bounded 30 bash -c "out=\$($BE /bin/bash '$HOOKS/validate-bash.sh' <'$BQ/rmslash.json') && [[ -z \"\$out\" ]]"
+    check "rm <600 KB>/.. is allowed in time" 0 bounded 30 bash -c "out=\$($BE /bin/bash '$HOOKS/validate-bash.sh' <'$BQ/rmdotdot.json') && [[ -z \"\$out\" ]]"
+    check "ln -s x a/<600 KB> is allowed in time" 0 bounded 30 bash -c "out=\$($BE /bin/bash '$HOOKS/validate-bash.sh' <'$BQ/lnlast.json') && [[ -z \"\$out\" ]]"
+else
+    echo "SKIP: quote-dense and many-segment commands (/usr/bin/awk or /bin/bash is absent)"
+fi
+# Bytes that are not UTF-8 (#238). jq turns them into U+FFFD; raw mode
+# (no jq) passes them on, and in a UTF-8 locale BWK awk aborted on them
+# and BSD tr and sed refused them, so every such command asked instead of
+# being checked. The text tools now read bytes: the rules apply as for any
+# other command. Valid non-ASCII text lowercased by a byte-wise tr (GNU)
+# became invalid and turned the protected-path check off.
+if [[ -n "$UL" && -x /usr/bin/awk ]]; then
+    IU="$WORKDIR/invalid-utf8"
+    mkdir -p "$IU/p/.specify/gates"
+    echo '{"hooks":{}}' >"$IU/p/.specify/gates/policy.json"
+    PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH" toolpath "$IU/bin" jq
+    iu() { # <name> <expect: block|ask|allow> <hook> <json with \xNN escapes>
+        local f="$IU/in-$PASS-$FAIL.json"
+        printf '%b' "$4" >"$f"
+        check "$1" 0 bash -c "out=\$(LC_ALL='$UL' PATH='$IU/bin' CLAUDE_PROJECT_DIR='$IU/p' '$HOOKS/$3' <'$f' 2>/dev/null); rc=\$?
+            case '$2' in
+                block) [[ \$rc -eq 2 ]] ;;
+                ask) [[ \$rc -eq 0 ]] && grep -q 'permissionDecision\":\"ask' <<<\"\$out\" && ! grep -q 'cannot decode' <<<\"\$out\" ;;
+                allow) [[ \$rc -eq 0 && -z \"\$out\" ]] ;;
+            esac"
+    }
+    iu "raw mode, invalid UTF-8: rm -rf / still blocks" block validate-bash.sh '{"tool_input":{"command":"echo \xff && rm -rf /"}}'
+    iu "raw mode, invalid UTF-8: git push --force still blocks" block validate-bash.sh '{"tool_input":{"command":"echo \xfe; git push --force"}}'
+    iu "raw mode, invalid UTF-8: a protected path change asks" ask validate-bash.sh '{"tool_input":{"command":"echo \xff; rm .specify/gates/policy.json"}}'
+    iu "raw mode, invalid UTF-8: a secret file asks" ask validate-bash.sh '{"tool_input":{"command":"cat .env \xff"}}'
+    iu "raw mode, invalid UTF-8: a plain command runs" allow validate-bash.sh '{"tool_input":{"command":"echo a\xffb"}}'
+    iu "raw mode, invalid UTF-8: protect-files refuses a secret file" block protect-files.sh '{"tool_input":{"file_path":"a\xff/.env","content":"x"}}'
+    # shellcheck disable=SC2016
+    check "non-ASCII text before a protected path still asks" 0 bash -c "out=\$(printf '%s' \"\$1\" | LC_ALL='$UL' CLAUDE_PROJECT_DIR='$IU/p' '$HOOKS/validate-bash.sh') && grep -q 'protected path .specify/gates/policy.json' <<<\"\$out\"" \
+        _ '{"tool_input":{"command":"rm \u00c9NV=1 .specify/gates/policy.json"}}'
+else
+    echo "SKIP: invalid UTF-8 under /usr/bin/awk (no UTF-8 locale or /usr/bin/awk)"
 fi
 rule protect-files 10-no-vendor.sh 'if grep -q "\"vendor/"; then echo "vendor/ is generated" >&2; exit 1; fi'
 check "protect-files local rule refuses" 2 bash -c "printf '%s' '{\"tool_input\":{\"file_path\":\"vendor/x.go\"}}' | CLAUDE_PROJECT_DIR='$LR' '$HOOKS/protect-files.sh'"
@@ -1652,6 +1745,26 @@ done
 for c in 'echo x > ~/.ssh/config' 'cp a ~/.aws/config' 'cat ~/.ssh/*' 'cat ~/.ssh/id_rsa' 'cat ~/.aws/credentials' \
     'ls ~/.ssh/ && cat .env'; do
     askcheck "a sensitive-directory write, glob or secret asks: $c" "$(vb_payload "$c")" validate-bash.sh CLAUDE_PROJECT_DIR="$VB"
+done
+# #238: the directory without its trailing slash counts like the slash
+# form: a listing runs, a write or a full read asks.
+# shellcheck disable=SC2088
+vb_allows "a listing of a sensitive directory without its slash runs" 'ls -la ~/.aws'
+# shellcheck disable=SC2088
+for c in 'echo x > ~/.aws' 'cp key ~/.ssh' 'ls ~/.gnupg | xargs cat'; do
+    askcheck "a write or full read of a sensitive directory without its slash asks: $c" "$(vb_payload "$c")" validate-bash.sh CLAUDE_PROJECT_DIR="$VB"
+done
+# #238: a command that reads every file under a sensitive directory asks;
+# a listing or a single-file read does not.
+# shellcheck disable=SC2088
+for c in 'grep -r . ~/.ssh/' 'grep -Rl key ~/.aws/' 'tar cf - ~/.ssh/' 'tar cf - ~/.ssh' 'zip -r k.zip ~/.gnupg' \
+    'rg key ~/.ssh/' 'scp -r ~/.ssh/ host:' 'ls ~/.ssh/ | xargs cat'; do
+    askcheck "a recursive read of a sensitive directory asks: $c" "$(vb_payload "$c")" validate-bash.sh CLAUDE_PROJECT_DIR="$VB"
+done
+# shellcheck disable=SC2088
+for c in 'ls -R ~/.ssh/' 'du -sh ~/.ssh/' 'stat ~/.ssh' 'find ~/.ssh/ -name config' 'grep -i host ~/.ssh/config' \
+    'git commit -m "feat: tar ~/.ssh/ docs"'; do
+    vb_allows "a listing or single read of a sensitive directory runs: $c" "$c"
 done
 for c in 'git commit --no-verify -m "feat: x"' 'git commit -n -m "feat: x"' 'git commit -nm "feat: x"' \
     'git -c core.hooksPath=/dev/null commit -m "feat: x"' 'git config core.hooksPath /tmp/none' \
@@ -2022,6 +2135,16 @@ else
     echo "SKIP: gh api with a variable endpoint asks (this host lacks python3)"
 fi
 vp "gh api with a literal non-pulls endpoint allowed" 0 'gh api "repos/{owner}/{repo}/issues"'
+# #238: the endpoint is read before the fields, so an unreadable title on
+# an endpoint that is not a pulls endpoint is no PR command.
+# shellcheck disable=SC2016  # literal command text under test
+vp "gh api user with an unreadable title field allowed" 0 'gh api user -f title=$T'
+# shellcheck disable=SC2016
+vp "gh api on a pulls endpoint with an unreadable title field refused" 2 'gh api repos/o/r/pulls -f title=$T'
+if [[ "$PR_OK" -eq 0 ]]; then
+    # shellcheck disable=SC2016
+    vp "gh api on a variable endpoint with an unreadable title field refused" 2 'gh api "$EP" -f title=$T'
+fi
 
 echo ""
 echo "=== validate-bash: destructive git, protected-path and staging variants (#170) ==="

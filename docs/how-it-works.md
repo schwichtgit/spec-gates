@@ -119,7 +119,9 @@ a modification from a read by the command text is a heuristic, so it asks
 rather than blocks; a read-only command such as `grep -n rm <path>` and
 the literal message of a `git commit -m` do not count as a change), when a Bash command names a secret file the file hook
 refuses (`cat .env`; a read that only names a sensitive directory, such
-as `ls ~/.ssh/`, runs), when it bypasses the git hooks (`--no-verify`,
+as `ls ~/.ssh/`, runs, while a command that reads every file under one,
+such as `grep -r`, `rg`, `tar`, `zip`, `scp` or `xargs`, asks), when it
+bypasses the git hooks (`--no-verify`,
 `git commit -n`, a `core.hooksPath` setting, or a hook manager's skip
 variable such as `HUSKY=0`, `LEFTHOOK=0` or `SKIP=`), when it creates
 commits that git runs no commit hook for (`git cherry-pick`, `git rebase`,
@@ -670,7 +672,8 @@ tool gates and before `parity`:
    repository root under `bash -eo pipefail`, so a failing command or
    pipeline stage on any line fails the block, not just the last one
    (#236). A `!`-negated command is exempt from errexit, which is why the
-   parser refuses one that is followed by another command line;
+   parser refuses one that is followed by another command line (the
+   body and terminator of a heredoc it feeds are not command lines, #237);
    `test -z "$(...)"`, `if ...; then exit 1; fi` and `! cmd || exit 1`
    fail the block wherever they stand. Output is captured (shown only on
    failure), with a per-block watchdog (`spec.timeout_s`, default 30s) that stops the

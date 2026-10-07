@@ -88,6 +88,42 @@ gates_spec_parse() { # <tasks-md> <outdir>
     local file="${1:-}" outdir="${2:-}"
     [[ -f "$file" && -d "$outdir" ]] || return 0
     awk -v dir="$outdir" '
+    # Queue the delimiters of the heredocs a command line opens (#237):
+    # `<<`/`<<-` outside quotes, comments, `<<<` and arithmetic `((...))`.
+    function hd_scan(s,    n, i, c, sq, dq, ad, j, d, q, strip) {
+        n = length(s); sq = 0; dq = 0; ad = 0
+        for (i = 1; i <= n; i++) {
+            c = substr(s, i, 1)
+            if (sq) { if (c == "\047") sq = 0; continue }
+            if (c == "\\") { i++; continue }
+            if (dq) { if (c == "\"") dq = 0; continue }
+            if (c == "\047") { sq = 1; continue }
+            if (c == "\"") { dq = 1; continue }
+            if (c == "#" && (i == 1 || substr(s, i - 1, 1) ~ /[[:space:]]/)) return
+            if (c == "(" && substr(s, i + 1, 1) == "(") { ad++; i++; continue }
+            if (c == ")" && substr(s, i + 1, 1) == ")" && ad > 0) { ad--; i++; continue }
+            if (c != "<" || substr(s, i + 1, 1) != "<" || ad > 0) continue
+            if (substr(s, i + 2, 1) == "<") { i += 2; continue }
+            j = i + 2; strip = 0
+            if (substr(s, j, 1) == "-") { strip = 1; j++ }
+            while (substr(s, j, 1) ~ /[ \t]/) j++
+            d = ""
+            while (j <= n) {
+                c = substr(s, j, 1)
+                if (c ~ /[ \t;&|<>()]/) break
+                if (c == "\047" || c == "\"") {
+                    q = c; j++
+                    while (j <= n && substr(s, j, 1) != q) { d = d substr(s, j, 1); j++ }
+                    j++
+                    continue
+                }
+                if (c == "\\") j++
+                d = d substr(s, j, 1); j++
+            }
+            if (d != "") { hd_n++; hd_delim[hd_n] = d; hd_strip[hd_n] = strip }
+            i = j - 1
+        }
+    }
     BEGIN {
         in_fence = 0; in_accept = 0
         task = ""; have_task = 0
@@ -129,6 +165,13 @@ gates_spec_parse() { # <tasks-md> <outdir>
             while (n < indent && substr(line, n + 1, 1) == " ") n++
             stripped = substr(line, n + 1)
             body = body stripped "\n"
+            # Heredoc body and terminator lines are data, not commands.
+            if (hd_on) {
+                t = stripped
+                if (hd_strip[hd_i]) sub(/^\t+/, "", t)
+                if (t == hd_delim[hd_i] && ++hd_i > hd_n) { hd_n = 0; hd_on = 0 }
+                next
+            }
             if (stripped ~ /[^[:space:]]/ && stripped !~ /^[[:space:]]*#/) {
                 ncmds++
                 # Blocks run under errexit, which a `!` command never
@@ -144,6 +187,8 @@ gates_spec_parse() { # <tasks-md> <outdir>
                     if (stripped ~ /^[[:space:]]*![[:space:]]/ && index(stripped, "||") == 0) neg_line = NR
                 }
                 cont = (stripped ~ /\\$/)
+                hd_scan(stripped)
+                if (!cont && hd_n > 0) { hd_on = 1; hd_i = 1 }
             }
             if (verifies == "" && stripped ~ /^# verifies:/) {
                 v = stripped
@@ -159,7 +204,7 @@ gates_spec_parse() { # <tasks-md> <outdir>
                 open_line = NR
                 open_len = flen
                 body = ""; ncmds = 0; verifies = ""; orphan = 0
-                neg_line = 0; negerr = 0; cont = 0
+                neg_line = 0; negerr = 0; cont = 0; hd_n = 0; hd_on = 0
                 match(line, /^[[:space:]]*/)
                 indent = RLENGTH
                 if (!have_task) {

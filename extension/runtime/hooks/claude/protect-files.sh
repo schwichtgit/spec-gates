@@ -62,6 +62,13 @@ for _tool in grep sed tr basename awk; do
     command -v "$_tool" >/dev/null 2>&1 \
         || ask "$_tool not found, so protect-files cannot check this edit; run /speckit.gates.doctor"
 done
+# The text tools read the path as bytes (#238): in a UTF-8 locale a byte
+# sequence that is not UTF-8 stops BSD tr and sed ("Illegal byte
+# sequence") and aborts BWK awk. bash itself keeps the caller's locale.
+awk() { LC_ALL=C command awk "$@"; }
+sed() { LC_ALL=C command sed "$@"; }
+tr() { LC_ALL=C command tr "$@"; }
+grep() { LC_ALL=C command grep "$@"; }
 
 INPUT=$(cat /dev/stdin)
 DEGRADED=""

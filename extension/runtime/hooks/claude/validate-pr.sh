@@ -71,8 +71,10 @@ might_be_pr() { # <command>
 # `gh api "$EP"`: the endpoint -- the first word after `gh api` and its
 # options that is not a field (no =) -- holds a $ or backtick, so whether
 # it is a pulls endpoint is unknown; the hook asks, as the parser does (#229).
+# An option value may be quoted with spaces in it (-H "Accept: x", #238).
 api_endpoint_dynamic() { # <command>
-    local opts='(-[^[:space:]]*([[:space:]]+[^-[:space:]][^[:space:]]*)?[[:space:]]+)*'
+    local wc="([^[:space:]\"']|\"[^\"]*\"|'[^']*')"
+    local opts="(-$wc*([[:space:]]+([^-[:space:]\"']|\"[^\"]*\"|'[^']*')$wc*)?[[:space:]]+)*"
     grep -qE "$CMD_START${CMD_PRE}gh[[:space:]]+api[[:space:]]+$opts([^-[:space:]=][^[:space:]=]*)?[\$\`]" <<<"$1"
 }
 
@@ -338,6 +340,9 @@ def parse_pr(kind, args):
 def parse_api(args):
     endpoint, elit = None, True
     found = {}
+    # Field errors wait for the endpoint: `gh api user -f title=$T` is no
+    # PR command, so its fields are not read (#238).
+    errors = []
     i = 0
     while i < len(args):
         a, alit = args[i]
@@ -361,19 +366,24 @@ def parse_api(args):
                 if key not in ("title", "body"):
                     continue
                 if key in found:
-                    refuse("ERROR: the %s field is given more than once." % key)
+                    errors.append("ERROR: the %s field is given more than once." % key)
                 if name in ("-F", "--field") and v.startswith("@"):
                     found["body_file" if key == "body" else "title_file"] = v[1:]
                     found[key] = None
                     continue
                 if not vlit:
-                    refuse("ERROR: the %s field is not literal text (a variable, command substitution, glob or unbalanced quote)." % key)
+                    errors.append("ERROR: the %s field is not literal text (a variable, command substitution, glob or unbalanced quote)." % key)
                 found[key] = v
             continue
         if not a.startswith("-") and endpoint is None:
             endpoint, elit = a, alit
-    if endpoint is not None and not elit and re.search(r"[$`]", endpoint) \
-            and not API_PULLS.search(endpoint):
+    dynamic = endpoint is not None and not elit and re.search(r"[$`]", endpoint) \
+        and not API_PULLS.search(endpoint)
+    # A field this cannot read on an endpoint that is or may be a pulls
+    # endpoint is refused.
+    if errors and (dynamic or (endpoint is not None and API_PULLS.search(endpoint))):
+        refuse(errors[0])
+    if dynamic:
         # `gh api "$EP"`: the shell picks the endpoint, so whether it is a
         # pulls endpoint is unknown here (#223).
         return {"ask": "gh api %s: the endpoint is not literal text, so this hook cannot tell "
