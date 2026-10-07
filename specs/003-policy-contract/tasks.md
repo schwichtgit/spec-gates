@@ -143,7 +143,7 @@ when the invariant check is stubbed.
   printf ' ' >>"$w/c/.specify/gates/policy.effective.json"
   rc=0; out="$(CLAUDE_PROJECT_DIR="$w/c" bash "$w/c/.specify/gates/verify.sh" --boundary ci 2>&1)" || rc=$?
   [ "$rc" -eq 2 ]
-  printf '%s' "$out" | grep -q 'effective policy drifted'
+  grep -q 'effective policy drifted' <<<"$out"
   ```
 
   ```accept

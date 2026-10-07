@@ -60,10 +60,10 @@ self-evidencing:
   in `--json`: the policy's SHA-256, and per gate the resolved binary,
   detected version, lockfile pin, candidate vs checked file counts,
   result, and duration. Evidence, never file contents.
-- **Canaries** — `canary.sh` plants 15 known violations in disposable
+- **Canaries** — `canary.sh` plants 16 known violations in disposable
   sandboxes (dirty and lint-failing files, dangerous tool calls with and
-  without jq, staged secrets, undeclared protected changes, branding, a
-  failing accept block, a tampered effective policy, and more) and requires
+  without jq, staged secrets, undeclared protected changes, branding,
+  failing accept blocks, a tampered effective policy, and more) and requires
   the real gate or hook to reject each one. An accepted probe fails the
   suite naming the broken gate; CI runs it on every build. On demand:
   `bash .specify/gates/canary.sh` (or `doctor.sh --canary`). The full list
@@ -103,6 +103,13 @@ The full grammar lives in
 Malformed blocks (unterminated fence, no commands, no preceding task) fail
 the gate naming `tasks.md:<line>` — an unreadable criterion is never
 silently skipped.
+
+Every line of a block counts: blocks run under `bash -eo pipefail`, so a
+failing command or pipeline stage anywhere fails the criterion, not just
+the last line. A `!`-negated command never trips errexit, so a `!` line
+followed by more commands is a parse error; write `test -z "$(...)"`,
+`if ...; then exit 1; fi`, or `! cmd || exit 1` instead (a `!` on the last
+line is fine).
 
 Enforcement follows the feature's own completion claim, read from
 `spec.md`:

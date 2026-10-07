@@ -73,7 +73,7 @@ pass with a doctor warning, unevaluable edits return "ask".
     p="$(command -v "$t" 2>/dev/null)" && ln -s "$p" "$tmp/bin/$t"
   done
   h=extension/runtime/hooks/claude
-  ! printf '%s' '{"tool_input":{"command":"rm -rf /"}}' | env PATH="$tmp/bin" "$h/validate-bash.sh" 2>/dev/null
+  ! printf '%s' '{"tool_input":{"command":"rm -rf /"}}' | env PATH="$tmp/bin" "$h/validate-bash.sh" 2>/dev/null || exit 1
   printf '%s' '{"tool_input":{"command":"ls -la"}}' | env PATH="$tmp/bin" "$h/validate-bash.sh" 2>/dev/null
   ! printf '%s' '{"tool_input":{"file_path":".env"}}' | env PATH="$tmp/bin" "$h/protect-files.sh" 2>/dev/null
   ```
@@ -105,8 +105,9 @@ remove+add (contracts/project-sh.md).
   . tests/lib/fixture.sh
   d="$(fx_project)"; trap 'fx_cleanup "$d"' EXIT
   (cd "$d" && GATES_TEST=1 bash .specify/extensions/gates/runtime/project.sh --skip-canary >/dev/null)
-  (cd "$d" && GATES_TEST=1 bash .specify/extensions/gates/runtime/project.sh --skip-canary) | grep -q 'no changes'
-  head -1 "$d/.specify/gates/.projected.sha256" | grep -q '^# spec-gates-manifest v1 version='
+  out="$(cd "$d" && GATES_TEST=1 bash .specify/extensions/gates/runtime/project.sh --skip-canary)"
+  grep -q 'no changes' <<<"$out"
+  grep -q '^# spec-gates-manifest v1 version=' <<<"$(head -1 "$d/.specify/gates/.projected.sha256")"
   ```
 
 **Checkpoint**: one approval projects or upgrades; PR 2.
@@ -246,7 +247,7 @@ branding docs (research R13, R15, R16).
   # verifies: FR-022a
   set -eu
   out="$(GATES_PROBE=1 extension/runtime/hooks/git/commit-msg /dev/null 2>&1 || true)"
-  printf '%s' "$out" | grep -q '^gates-probe:commit-msg:'
+  grep -q '^gates-probe:commit-msg:' <<<"$out"
   ! GATES_PROBE=1 extension/runtime/hooks/git/pre-commit >/dev/null 2>&1
   ```
 

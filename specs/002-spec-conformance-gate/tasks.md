@@ -99,9 +99,9 @@ timeout, a broken fence.
   rc=0
   out="$(CLAUDE_PROJECT_DIR="$d" env -u GATES_SPEC_EXEC bash "$d/.specify/gates/verify.sh" --boundary ci 2>&1)" || rc=$?
   [ "$rc" -eq 2 ]
-  printf '%s' "$out" | grep -q '900-sc001'
-  printf '%s' "$out" | grep -q 'criterion-under-test'
-  printf '%s' "$out" | grep -q 'exit 9'
+  grep -q '900-sc001' <<<"$out"
+  grep -q 'criterion-under-test' <<<"$out"
+  grep -q 'exit 9' <<<"$out"
   ````
 
 **Checkpoint**: US1 and US2 — the spec is now a boundary for any feature
@@ -156,8 +156,8 @@ and the suite fails naming the spec gate when the runner is stubbed.
   rc=0
   out="$(CLAUDE_PROJECT_DIR="$d" env -u GATES_SPEC_EXEC bash "$d/.specify/gates/verify.sh" --boundary ci 2>&1)" || rc=$?
   [ "$rc" -eq 2 ]
-  printf '%s' "$out" | grep -q 'unchecked task'
-  printf '%s' "$out" | grep -q 'forgotten-task'
+  grep -q 'unchecked task' <<<"$out"
+  grep -q 'forgotten-task' <<<"$out"
   ```
 
   ```accept

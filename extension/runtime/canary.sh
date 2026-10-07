@@ -46,6 +46,9 @@ unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_PREFIX GIT_COMMON_DIR \
 #                                     -> pr-check.sh (CI boundary) (exit 1)
 #   spec    -- Complete feature with a failing accept block
 #                                     -> verify.sh spec gate       (exit 2)
+#   errexit -- Complete feature whose accept block fails on a line before
+#              its last, passing one
+#                                     -> verify.sh spec gate       (exit 2)
 #   contract -- tampered effective policy in a synced sandbox
 #                                     -> verify.sh contract gate   (exit 2)
 #
@@ -76,7 +79,7 @@ done
 CANARY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 
-CANARY_SET="format markdown shell bash protect prhook bulk local secret credential protected branding pr spec contract"
+CANARY_SET="format markdown shell bash protect prhook bulk local secret credential protected branding pr spec errexit contract"
 
 if [[ -n "$ONLY" ]]; then
     IFS=',' read -r -a _only_ids <<<"$ONLY"
@@ -637,6 +640,36 @@ run_spec_canary() {
 }
 
 # ---------------------------------------------------------------------------
+# Errexit canary (#236): the accept block fails on its first line and ends
+# on a passing one. A runner that judges a block by its last command alone
+# accepts it, so the sandboxed spec gate must reject it.
+# ---------------------------------------------------------------------------
+run_errexit_canary() {
+    local d="$WORKDIR/errexit"
+    project_sandbox "$d" '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } } }'
+    mkdir -p "$d/specs/900-canary-fixture" || setup_fail "errexit fixture dir"
+    git init -q "$d" >/dev/null 2>&1 || setup_fail "errexit fixture git init"
+    printf '# Canary Fixture\n\n**Status**: Complete\n' \
+        >"$d/specs/900-canary-fixture/spec.md" || setup_fail "errexit fixture spec.md"
+    {
+        echo '- [x] T001 A criterion whose first line fails'
+        echo ''
+        echo '  ```accept'
+        echo '  false'
+        echo '  true'
+        echo '  ```'
+    } >"$d/specs/900-canary-fixture/tasks.md" || setup_fail "errexit fixture tasks.md"
+    local rc=0
+    CLAUDE_PROJECT_DIR="$d" env -u GATES_SPEC_EXEC \
+        bash "$d/.specify/gates/verify.sh" --boundary ci >/dev/null 2>&1 || rc=$?
+    if [[ "$rc" -eq 2 ]]; then
+        record errexit blocked "spec gate rejected an accept block that fails before its last line" 0
+    else
+        record errexit accepted "verify.sh exit $rc on an accept block that fails before its last line — the spec gate judged only its last command" 1
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # Contract canary (feature 003): a synced sandbox contract whose effective
 # policy is then tampered must be rejected by the sandboxed contract gate.
 # The fixture baseline lives inside the sandbox (plain-path git remote) --
@@ -697,6 +730,7 @@ for id in $CANARY_SET; do
         branding) run_branding_canary ;;
         pr) run_pr_canary ;;
         spec) run_spec_canary ;;
+        errexit) run_errexit_canary ;;
         contract) run_contract_canary ;;
     esac
 done
