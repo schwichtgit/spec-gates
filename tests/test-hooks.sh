@@ -972,6 +972,33 @@ if have_node_linters; then
         | CLAUDE_PROJECT_DIR="$FMT" "$HOOKS/post-edit.sh" >/dev/null 2>&1 || true
     check "post-edit: file is prettier-clean afterwards" 0 "$PRETTIER" --check "$FMT/doc.md"
 
+    # A tracked file that .gitignore lists is formatted, as the gate checks
+    # it (#204); an untracked ignored file and a .prettierignore entry are
+    # left alone.
+    GI="$WORKDIR/fmt-gitignored"
+    mkdir -p "$GI"
+    git -C "$GI" init -q -b main
+    project_runtime "$GI" "true"
+    printf '%s' "$NONE_MD" >"$GI/.specify/gates/policy.json"
+    printf '*.md\n' >"$GI/.gitignore"
+    printf 'kept.md\n' >"$GI/.prettierignore"
+    for f in tracked.md untracked.md kept.md; do
+        printf '#Bad md\n\n\n- x\n' >"$GI/$f"
+    done
+    git -C "$GI" add -f tracked.md kept.md
+    # From the project directory, as Claude Code runs the hook: prettier
+    # resolves its default ignore files against the working directory.
+    for f in tracked.md untracked.md kept.md; do
+        (cd "$GI" && echo "{\"tool_input\":{\"file_path\":\"$GI/$f\"}}" \
+            | CLAUDE_PROJECT_DIR="$GI" "$HOOKS/post-edit.sh") >/dev/null 2>&1 || true
+    done
+    check "post-edit: tracked file listed in .gitignore is formatted (#204)" 0 \
+        "$PRETTIER" --check --ignore-path /dev/null "$GI/tracked.md"
+    check "post-edit: untracked gitignored file is left alone" 1 \
+        "$PRETTIER" --check --ignore-path /dev/null "$GI/untracked.md"
+    check "post-edit: tracked file in .prettierignore is left alone" 1 \
+        "$PRETTIER" --check --ignore-path /dev/null "$GI/kept.md"
+
     # format-changed (Stop): formats tracked files that changed.
     FC="$WORKDIR/fchanged"
     mkdir -p "$FC"

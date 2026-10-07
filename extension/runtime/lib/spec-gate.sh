@@ -210,6 +210,9 @@ gates_spec_dir_state() { # <kind> <root> <dir> <scratch> <list>
     local rels=() xs=()
     while IFS= read -r -d '' path; do
         rel="${path#"$dir"/}"
+        # info/refs is the dumb-transport ref list that git gc and
+        # update-server-info rewrite; it steers nothing (#213).
+        [[ "$kind" == info && "$rel" == refs ]] && continue
         if [[ -L "$path" ]]; then
             printf '%s\tlink:%s\t%s\n' "$kind" "$(readlink "$path" 2>/dev/null || true)" "$rel"
             continue
@@ -258,6 +261,7 @@ gates_spec_wt_branches() { # <admin-dir> <name> <keep>
 #         hooks`, which follows core.hooksPath): exec bit and content hash.
 #   info  the same for the info directory (attributes, exclude,
 #         sparse-checkout): attributes can switch filters and diff drivers.
+#         info/refs is left out: git gc and update-server-info rewrite it.
 #   idx   one per index entry flagged skip-worktree or assume-unchanged
 #         (`git ls-files -v`): the flag and a content hash, since status
 #         no longer reports edits to a flagged file (#197).

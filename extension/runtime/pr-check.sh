@@ -302,38 +302,132 @@ protected_range_check() { # -> 0 pass/skip, 1 violations, 2 setup error
     BODY_DECLARED="$(printf '%s\n' "$BODY" | gates_trailer_values protected-change)"
     BODY_APPROVERS="$(printf '%s\n' "$BODY" | gates_trailer_values approved-by)"
 
+    # The range is read in a few passes over all commits, not a handful of
+    # processes per commit (#221): one rev-list with parents, one diff-tree
+    # for every commit's paths, one cat-file for the policy blobs, one
+    # rev-list naming the commits that may carry trailers.
+    local tmp
+    tmp="$(mktemp -d 2>/dev/null || mktemp -d -t gates-range)" || return 2
     # Merge commits included (#123): a merge is judged on its own edits.
-    COMMITS="$(git rev-list --reverse "$BASE..$HEAD_REF")"
+    git rev-list --reverse --parents "$BASE..$HEAD_REF" >"$tmp/revs" 2>/dev/null
+    local -a commits=() merges=() pkeys=() trl=()
+    local c rest line n=0 i
+    while read -r c rest; do
+        [[ -z "$c" ]] && continue
+        commits[n]="$c"
+        merges[n]=0
+        [[ "$rest" == *" "* ]] && merges[n]=1
+        n=$((n + 1))
+    done <"$tmp/revs"
+    # One header line per commit (--always), then its paths. With the
+    # parents given, -c is the combined diff for a merge and the plain diff
+    # otherwise: for a merge, the paths whose result differs from every
+    # parent. A path equal to one parent came from the base or from a
+    # commit in this range, checked on its own.
+    # pairs: "<commit index><TAB><path>"; c.<index>: that commit's paths.
+    git diff-tree --stdin -r --root -c --name-only --no-renames --always \
+        --format=$'\001%H' <"$tmp/revs" 2>/dev/null \
+        | awk 'BEGIN { i = -1 } /^\001/ { i++; next } i >= 0 && $0 != "" { print i "\t" $0 }' >"$tmp/pairs"
+    awk -F'\t' -v d="$tmp" 'NR == 1 || $1 != last { if (f != "") close(f); last = $1; f = d "/c." $1 }
+        { print substr($0, length($1) + 2) > f }' "$tmp/pairs"
+    # The protected list per commit is the union of the policies at the
+    # base, the commit's parent and the commit. It depends only on the
+    # policy blobs there, so it is built once per distinct set of blobs.
+    if [[ "$FULL_LIST" == "true" ]]; then
+        {
+            for c in "$BASE" "${commits[@]+"${commits[@]}"}"; do
+                [[ "$c" != "$BASE" ]] && printf '%s^:.specify/gates/policy.json\n%s^:.specify/gates/policy.effective.json\n' "$c" "$c"
+                printf '%s:.specify/gates/policy.json\n%s:.specify/gates/policy.effective.json\n' "$c" "$c"
+            done
+        } | git cat-file --batch-check='%(objectname)' >"$tmp/blobs" 2>/dev/null
+        local -a keys=()
+        local k=0 key
+        while read -r line; do
+            [[ "$line" == *" missing" ]] && line="-"
+            keys[k]="$line"
+            k=$((k + 1))
+        done <"$tmp/blobs"
+        i=0
+        while [[ $i -lt $n ]]; do
+            # base | parent | commit; an incomplete read is never cached.
+            key="${keys[0]:-?},${keys[1]:-?}|${keys[2 + 4 * i]:-?},${keys[3 + 4 * i]:-?}|${keys[4 + 4 * i]:-?},${keys[5 + 4 * i]:-?}"
+            [[ "$key" == *"?"* ]] && key="?$i"
+            pkeys[i]="$key"
+            i=$((i + 1))
+        done
+    fi
+    # Only a message that names a trailer key can yield its values. If the
+    # search fails, every message is parsed.
+    if git rev-list --regexp-ignore-case --fixed-strings --grep=protected-change \
+        --grep=approved-by "$BASE..$HEAD_REF" >"$tmp/trl" 2>/dev/null; then
+        i=0
+        while read -r line; do
+            trl[i]="$line"
+            i=$((i + 1))
+        done < <(awk 'FILENAME == ARGV[1] { t[$1] = 1; next } NF { print (($1 in t) ? 1 : 0) }' "$tmp/trl" "$tmp/revs")
+    fi
+
+    # The protected list of each commit (one of set_vals), then each
+    # distinct path matched once per list: a long range changes the same
+    # paths over and over. gates_match_protected reads paths with `read`,
+    # which trims blanks, so the paths are trimmed the same way first.
+    local -a set_keys=() set_vals=() prot=()
+    local idx j key patterns changed protected trailers declared approvers path
+    for ((idx = 0; idx < n; idx++)); do
+        key="${pkeys[idx]:-all}"
+        for ((j = 0; j < ${#set_keys[@]}; j++)); do
+            [[ "${set_keys[j]}" == "$key" ]] && break
+        done
+        if [[ $j -eq ${#set_keys[@]} ]]; then
+            if [[ "$FULL_LIST" == "true" ]]; then
+                patterns="$(gates_protected_list "$BASE" "${commits[idx]}^" "${commits[idx]}" 2>/dev/null)"$'\n'"$ALWAYS_PROTECTED"
+            else
+                patterns="$ALWAYS_PROTECTED"
+            fi
+            set_keys[j]="$key"
+            set_vals[j]="$patterns"
+        fi
+        printf '%s\t%s\n' "$idx" "$j"
+    done >"$tmp/psets"
+    awk -F'\t' 'FILENAME == ARGV[1] { s[$1] = $2; next }
+        { p = substr($0, length($1) + 2); gsub(/^[ \t]+|[ \t]+$/, "", p)
+          if (p != "") print $1 "\t" s[$1] "\t" p }' "$tmp/psets" "$tmp/pairs" >"$tmp/keyed"
+    for ((j = 0; j < ${#set_keys[@]}; j++)); do
+        awk -F'\t' -v j="$j" '$2 == j && !seen[$3]++ { print $3 }' "$tmp/keyed" \
+            | gates_match_protected "${set_vals[j]}" | awk -v j="$j" '{ print j "\t" $0 }'
+    done >"$tmp/matched"
+    while IFS=$'\t' read -r idx path; do
+        prot[idx]="${prot[idx]:-}$path"$'\n'
+    done < <(awk -F'\t' 'FILENAME == ARGV[1] { m[$0] = 1; next } (($2 "\t" $3) in m) { print $1 "\t" $3 }' \
+        "$tmp/matched" "$tmp/keyed")
+
     CHECKED=0
     TOUCHING=0
     VIOLATIONS=0
-    RANGE_CHANGED=""
-    while IFS= read -r c; do
-        [[ -z "$c" ]] && continue
+    : >"$tmp/changed"
+    for ((idx = 0; idx < n; idx++)); do
+        c="${commits[idx]}"
         CHECKED=$((CHECKED + 1))
-        if git rev-parse -q --verify "$c^2" >/dev/null 2>&1; then
-            # A merge: the protected candidates are the paths whose result
-            # differs from every parent. A path equal to one parent came from
-            # the base or from a commit in this range, checked on its own.
+        changed=""
+        if [[ "${merges[idx]}" == 1 ]]; then
             # Declarations may name anything the merge brought in relative
             # to its first parent.
-            candidates="$(git diff-tree -r -c --no-commit-id --name-only --no-renames "$c")"
             changed="$(git diff --name-only --no-renames "$c^1" "$c")"
-        else
-            changed="$(git diff-tree -r --root --no-commit-id --name-only --no-renames "$c")"
-            candidates="$changed"
+            printf '%s\n' "$changed" >>"$tmp/changed"
         fi
-        RANGE_CHANGED="$RANGE_CHANGED"$'\n'"$changed"
-        if [[ "$FULL_LIST" == "true" ]]; then
-            patterns="$(gates_protected_list "$BASE" "$c^" "$c" 2>/dev/null)"$'\n'"$ALWAYS_PROTECTED"
-        else
-            patterns="$ALWAYS_PROTECTED"
+        protected="${prot[idx]:-}"
+        protected="${protected%$'\n'}"
+        declared=""
+        approvers=""
+        if [[ "${trl[idx]:-1}" == 1 ]]; then
+            trailers="$(git log -1 --format=%B "$c" | git interpret-trailers --parse --no-divider 2>/dev/null)"
+            declared="$(printf '%s\n' "$trailers" | gates_trailer_values protected-change)"
+            approvers="$(printf '%s\n' "$trailers" | gates_trailer_values approved-by)"
         fi
-        protected="$(printf '%s\n' "$candidates" | gates_match_protected "$patterns")"
-        trailers="$(git log -1 --format=%B "$c" | git interpret-trailers --parse --no-divider 2>/dev/null)"
-        declared="$(printf '%s\n' "$trailers" | gates_trailer_values protected-change)"
-        approvers="$(printf '%s\n' "$trailers" | gates_trailer_values approved-by)"
         [[ -z "$protected" && -z "$declared" ]] && continue
+        if [[ "${merges[idx]}" != 1 && -f "$tmp/c.$idx" ]]; then
+            changed="$(cat "$tmp/c.$idx")"
+        fi
         [[ -n "$protected" ]] && TOUCHING=$((TOUCHING + 1))
         # Description declarations cover every commit; whether they name a real
         # change is judged once against the whole range below.
@@ -346,10 +440,13 @@ protected_range_check() { # -> 0 pass/skip, 1 violations, 2 setup error
             printf '%s\n' "$out" | sed 's/^/  /' >&2
             VIOLATIONS=$((VIOLATIONS + rc))
         fi
-    done <<<"$COMMITS"
+    done
 
     if [[ -n "$BODY_DECLARED" ]]; then
-        out="$(gates_protected_check "" "$RANGE_CHANGED" "$BODY_DECLARED" "x" 2>&1)"
+        # Every path the range changes: each commit's own, and for a merge
+        # everything it brought in relative to its first parent.
+        cut -f2- "$tmp/pairs" >>"$tmp/changed"
+        out="$(gates_protected_check "" "$(cat "$tmp/changed")" "$BODY_DECLARED" "x" 2>&1)"
         rc=$?
         if [[ "$rc" -ne 0 ]]; then
             echo "pull/merge request description:" >&2
@@ -357,6 +454,7 @@ protected_range_check() { # -> 0 pass/skip, 1 violations, 2 setup error
             VIOLATIONS=$((VIOLATIONS + rc))
         fi
     fi
+    rm -rf "$tmp"
 
     echo "pr-check: $RANGE -- $CHECKED commit(s) checked, $TOUCHING touching protected paths, $VIOLATIONS violation(s)"
     [[ "$VIOLATIONS" -gt 0 ]] && return 1
