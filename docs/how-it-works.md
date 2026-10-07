@@ -670,7 +670,8 @@ tool gates and before `parity`:
    repository root under `bash -eo pipefail`, so a failing command or
    pipeline stage on any line fails the block, not just the last one
    (#236). A `!`-negated command is exempt from errexit, which is why the
-   parser refuses one that is followed by another command line;
+   parser refuses one that is followed by another command line (the
+   body and terminator of a heredoc it feeds are not command lines, #237);
    `test -z "$(...)"`, `if ...; then exit 1; fi` and `! cmd || exit 1`
    fail the block wherever they stand. Output is captured (shown only on
    failure), with a per-block watchdog (`spec.timeout_s`, default 30s) that stops the

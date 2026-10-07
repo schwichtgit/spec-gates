@@ -26,6 +26,11 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   command before the last command line is a parse error naming the forms
   that fail the block. Behavior change: a block that relied on an earlier
   line failing unnoticed now fails. A new `errexit` canary guards it.
+- **A `!` command feeding a heredoc can end an accept block** (#237).
+  The rule from #236 counted heredoc body and terminator lines as further
+  commands, so `! grep -q x <<EOF`, its body and `EOF` as the last lines
+  were refused. Heredoc lines (`<<`, `<<-`, quoted or not) no longer
+  count; a command after the terminator still does.
 - **Doctor names the pending upgrade item** (#214). Whenever
   `project.sh --check` exited 1, doctor advised running `project.sh`,
   which reports "no changes" for pending hook-manager wiring, a pending

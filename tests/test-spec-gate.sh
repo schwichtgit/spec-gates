@@ -443,6 +443,73 @@ mkfeature "$D" 210-neglast Complete <<'EOF'
 EOF
 expect "#236: a ! command on the last line, or with || exit 1, passes" "$(gate "$D")" 0
 
+# #237: heredoc body and terminator lines are not commands after the `!`.
+D="$WORKDIR/neg-heredoc"
+project "$D" "$MINIMAL"
+mkfeature "$D" 210-neghd Complete <<'EOF'
+- [x] T001 Task
+
+  ```accept
+  ! grep -q needle <<END
+  text
+  true
+  END
+  ```
+
+- [x] T002 Task
+
+  ```accept
+  ! grep -q needle <<'END'
+  $(false)
+  END
+  ```
+
+- [x] T003 Task
+
+  ```accept
+  cat >/dev/null <<A <<-"B"
+  ! x
+  A
+	! y
+	B
+  ! grep -q needle <<-END
+	text
+	END
+  ```
+EOF
+expect "#237: a ! command feeding a heredoc on the last line passes" "$(gate "$D")" 0
+
+D="$WORKDIR/neg-heredoc-after"
+project "$D" "$MINIMAL"
+mkfeature "$D" 210-neghd2 Draft <<'EOF'
+- [x] T001 Task
+
+  ```accept
+  ! grep -q needle <<END
+  text
+  END
+  true
+  ```
+EOF
+OUT="$(gate_out "$D")"
+expect_contains "#237: a command after the heredoc still makes the ! non-last" "$OUT" \
+    "specs/210-neghd2/tasks.md:4: a ! command other than the last one"
+
+D="$WORKDIR/neg-not-heredoc"
+project "$D" "$MINIMAL"
+mkfeature "$D" 210-neghd3 Draft <<'EOF'
+- [x] T001 Task
+
+  ```accept
+  echo "<<END" '<<END' $((1<<2)) <<< x # <<END
+  ! grep -q needle README
+  true
+  ```
+EOF
+OUT="$(gate_out "$D")"
+expect_contains "#237: quoted, arithmetic, here-string and comment << open no heredoc" \
+    "$OUT" "specs/210-neghd3/tasks.md:5: a ! command other than the last one"
+
 # --- timeout (R4) and mutation (R5) ---
 echo ""
 echo "=== timeout and mutation detection ==="
