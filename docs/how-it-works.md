@@ -118,7 +118,8 @@ or a path relative to a
 a modification from a read by the command text is a heuristic, so it asks
 rather than blocks; a read-only command such as `grep -n rm <path>` and
 the literal message of a `git commit -m` do not count as a change), when a Bash command names a secret file the file hook
-refuses (`cat .env`), when it bypasses the git hooks (`--no-verify`,
+refuses (`cat .env`; a read that only names a sensitive directory, such
+as `ls ~/.ssh/`, runs), when it bypasses the git hooks (`--no-verify`,
 `git commit -n`, a `core.hooksPath` setting, or a hook manager's skip
 variable such as `HUSKY=0`, `LEFTHOOK=0` or `SKIP=`), when it creates
 commits that git runs no commit hook for (`git cherry-pick`, `git rebase`,

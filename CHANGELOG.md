@@ -83,6 +83,15 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   their output is unchanged. In bash 3.2, `${file##*/}` in
   `gates_forbidden_path` and `${arg#["']}`-style quote stripping were
   quadratic on a long word too; they now use a regex and substrings.
+- **Agent hooks: no false asks on reads, fewer false refusals** (#229).
+  validate-bash no longer asks on a read-only command that only names a
+  sensitive directory (`ls ~/.ssh/`, `cat ~/.aws/config`); a write there,
+  a glob over it or a secret name in it still asks. Without python3,
+  validate-pr now asks on `gh api "$EP"` as the parser does, and with it
+  a non-PR `gh api` behind a wrapper option it cannot read
+  (`sudo --odd bob gh api user`) runs instead of being refused. The hooks
+  check and run local rules with the running bash (`$BASH`), so a
+  restricted PATH without bash no longer turns them into refusals.
 
 ## 0.4.0 — 2026-10-06
 

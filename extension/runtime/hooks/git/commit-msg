@@ -180,7 +180,7 @@ fi
 # Each rule gets the message file as $1, like the hook itself.
 if compgen -G "$PROJECT_ROOT/.specify/gates/hooks.local.d/commit-msg/*.sh" >/dev/null; then
     LLIB="$PROJECT_ROOT/.specify/gates/lib/local-hooks.sh"
-    if [[ -f "$LLIB" ]] && bash -n "$LLIB" 2>/dev/null; then
+    if [[ -f "$LLIB" ]] && "$BASH" -n "$LLIB" 2>/dev/null; then
         # shellcheck source=/dev/null disable=SC1090
         source "$LLIB"
         if ! gates_run_local "$PROJECT_ROOT" commit-msg "$MSG_FILE"; then
