@@ -8,7 +8,29 @@ never touches `.specify/gates/policy.json`. New policy keys take the
 defaults stated here until you set them. Releases before 0.3.3 are
 described in their [GitHub release notes](https://github.com/schwichtgit/spec-gates/releases).
 
-## [Unreleased]
+## 0.4.1 — 2026-10-07
+
+### Upgrading
+
+- Upgrade as for 0.4.0 (README "Upgrade"): one `project.sh` run, then
+  commit `.specify/gates/.projected.sha256` with the upgrade. 0.4.0
+  projections carry their manifest, so only real local edits stop the
+  run.
+- Accept blocks now run with errexit and pipefail (#236). A block that
+  relied on an earlier failing line being ignored now fails, and a
+  `!`-negated command that is not the block's last line is a parse error;
+  use `test -z "$(...)"`, `if ...; then exit 1; fi` or `! cmd || exit 1`.
+- The forbidden-file list is now one list for the agent hooks, pre-commit
+  and pr-check (#221): the git and CI boundaries also refuse `*.jks`,
+  `credentials`, `credentials.yml`/`.yaml`, `.netrc`, `.pypirc`,
+  `gcloud-*.json` and top-level `.ssh/`, `.gnupg/`, `.aws/`, `.gcloud/`.
+- A `ci:<step>` hold is reported as a `[rec]` naming what it gives up
+  instead of `[ok]` (#235); `project.sh` prints a standalone `pr` step for
+  GitHub, GitLab and Jenkins.
+- A sensitive directory named without a trailing slash (`.ssh`, `.gnupg`,
+  `.aws`, `.gcloud`) is refused like the slash form, so a file literally
+  named `.aws` can no longer be committed (#238).
+- The canary suite has 16 canaries (new: errexit).
 
 ### Fixed
 
