@@ -42,6 +42,16 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   validate-pr without python3 asks on `gh api -H "Accept: x" "$EP"`, and
   with it no longer refuses `gh api user -f title=$T`: fields are
   checked only on a pulls endpoint or one it cannot read.
+- **Agent hooks read command text as bytes** (#238). In a UTF-8 locale a
+  command holding bytes that are not UTF-8 aborted BWK awk or stopped
+  BSD tr and sed, so in raw mode (no jq) every such command asked instead
+  of being checked, and non-ASCII text such as `ÉNV=1` lowercased by GNU
+  tr turned the protected-path check off. validate-bash and protect-files
+  now run their text tools under `LC_ALL=C`, and the rules apply to such
+  commands as to any other. A sensitive directory named without its
+  trailing slash (`~/.ssh`, `.aws`) now counts like `~/.ssh/` at every
+  boundary, and the symlink resolution of `ln` and of changed paths is
+  linear on a long path component.
 - **Doctor names the pending upgrade item** (#214). Whenever
   `project.sh --check` exited 1, doctor advised running `project.sh`,
   which reports "no changes" for pending hook-manager wiring, a pending

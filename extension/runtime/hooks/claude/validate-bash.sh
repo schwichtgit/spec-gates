@@ -62,6 +62,15 @@ for _tool in grep sed tr awk; do
     command -v "$_tool" >/dev/null 2>&1 \
         || ask "$_tool not found, so validate-bash cannot check this command; run /speckit.gates.doctor"
 done
+# The text tools read the command as bytes (#238): every pattern here is
+# ASCII, and in a UTF-8 locale a byte sequence that is not UTF-8 aborts
+# BWK awk ("towc: multibyte conversion failure"), stops BSD tr and sed
+# ("Illegal byte sequence") and turns GNU grep -o into "Binary file
+# matches". bash itself keeps the caller's locale.
+awk() { LC_ALL=C command awk "$@"; }
+sed() { LC_ALL=C command sed "$@"; }
+tr() { LC_ALL=C command tr "$@"; }
+grep() { LC_ALL=C command grep "$@"; }
 
 INPUT=$(cat /dev/stdin)
 DEGRADED=""
@@ -1162,6 +1171,18 @@ base_name() {
     fi
     BN="${1##*/}"
 }
+# dir_name <path>: set DN to <path> without its last component, as
+# ${path%/*} does, which is quadratic in bash 3.2 in a UTF-8 locale on a
+# long last component (#238); <path> itself when it has no slash.
+dir_name() {
+    if [[ "$1" == */* ]]; then
+        base_name "$1"
+        DN="${1:0:${#1}-${#BN}-1}"
+    else
+        DN="$1"
+    fi
+    return 0
+}
 # protected_globs: the extra glob entries with no literal prefix
 # (`**/*.lock.md`), which protected_prefixes cannot match by text.
 protected_globs() {
@@ -1250,10 +1271,22 @@ ln_resolve() { # <path> [<real directory a relative path starts from>]
     while [[ -n "$todo" ]]; do
         while [[ "$todo" == /* ]]; do todo="${todo#/}"; done
         [[ -n "$todo" ]] || break
-        if [[ "$todo" == */* ]]; then comp="${todo%%/*}"; todo="${todo#*/}"; else comp="$todo"; todo=""; fi
+        # A regex and substrings, as ${todo#*/} is quadratic in bash 3.2
+        # on a long first component (#238); the expansions stay for text
+        # the regex cannot read.
+        if [[ "$todo" =~ ^[^/]*/ ]]; then
+            comp="${BASH_REMATCH[0]:0:${#BASH_REMATCH[0]}-1}"
+            todo="${todo:${#BASH_REMATCH[0]}}"
+        elif [[ "$todo" == */* ]]; then
+            comp="${todo%%/*}"
+            todo="${todo#*/}"
+        else
+            comp="$todo"
+            todo=""
+        fi
         case "$comp" in
             . | '') continue ;;
-            ..) out="${out%/*}"; continue ;;
+            ..) dir_name "$out"; out="$DN"; continue ;;
         esac
         if [[ -L "$out/$comp" ]]; then
             LN_VIA=1
@@ -1304,7 +1337,8 @@ if [[ -n "$LN_SEGS" ]]; then
         read -r -a _largs <<<"$_seg"
         _last="${_largs[${#_largs[@]} - 1]}"
         [[ "$_last" == /* ]] || _last="$CWD/$_last"
-        _bases=("$CWD" "${_last%/*}")
+        dir_name "$_last"
+        _bases=("$CWD" "$DN")
         [[ -d "$_last" ]] && _bases+=("$_last")
         for _a in "${_largs[@]}"; do
             [[ "$_a" == \~/* ]] && _a="$HOME/${_a#\~/}"
@@ -1418,25 +1452,14 @@ if [[ "$SECRETS_LIB" == ok ]]; then
     SECRET_FILE=""
     shopt -s nocasematch
     while IFS= read -r _t; do
-        # The directory itself, without a trailing slash, for a command
-        # that reads every file under it (`tar cf - ~/.ssh`).
-        if [[ "$READS_TREE" -eq 1 ]]; then
-            case "/$_t" in
-                */.ssh | */.gnupg | */.aws | */.gcloud)
-                    GATES_FORBIDDEN_WHAT="sensitive directory read in full"
-                    SECRET_FILE="$_t"
-                    break
-                    ;;
-            esac
-        fi
         if gates_forbidden_path "$_t"; then
             # A read-only command that names a sensitive directory
-            # (`ls ~/.ssh/`, `cat ~/.aws/config`) runs: only the directory
+            # (`ls ~/.ssh`, `cat ~/.aws/config`) runs: only the directory
             # matched, not a secret name. A write there, a glob that could
             # read every key in it (`cat ~/.ssh/*`, #229), or a command that
             # reads every file under it (`grep -r x ~/.ssh/`, `tar cf -
             # ~/.ssh/`, #238) still asks.
-            if [[ "$GATES_FORBIDDEN_WHAT" == "file in a sensitive directory" && "$MUTATES" -eq 0 \
+            if [[ "$GATES_FORBIDDEN_WHAT" == *"sensitive directory" && "$MUTATES" -eq 0 \
                 && "$WRITE_REDIRECT" -eq 0 && "$READS_TREE" -eq 0 && "$_t" != *[*?[]* ]]; then
                 continue
             fi
