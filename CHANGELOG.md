@@ -122,6 +122,14 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   (`sudo --odd bob gh api user`) runs instead of being refused. The hooks
   check and run local rules with the running bash (`$BASH`), so a
   restricted PATH without bash no longer turns them into refusals.
+- **validate-bash is fast on large multi-line commands** (#233). The git
+  scan read every line of a command in bash, so 200 KB of short lines or
+  a large heredoc file write took 5-7 s under macOS bash 3.2; it now reads
+  only the lines that change directory, run git or name a hook skip
+  variable, about half the time. `${t%%[mFcCt]*}` on `git commit` option
+  words, `${_t##*/}` for protected glob entries and the built-in secret
+  check's basename were quadratic on a long word (up to two minutes on
+  200 KB); they now use a regex and substrings. Results are unchanged.
 
 ## 0.4.0 — 2026-10-06
 

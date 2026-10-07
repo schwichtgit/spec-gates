@@ -1352,6 +1352,34 @@ if [[ -x /usr/bin/awk ]] && ! grep -q 'GNU Awk' <<<"$(/usr/bin/awk --version 2>&
 else
     echo "SKIP: 200 KB command under BWK awk (/usr/bin/awk is absent or GNU awk)"
 fi
+# Large multi-line commands and long option words stay fast under macOS
+# /bin/bash 3.2 and /usr/bin/awk (#233): the git scan read every line in
+# bash, and ${t%%[mFcCt]*}, ${_t##*/} and the built-in secret check's
+# basename were quadratic on a long word (a minute and more on 200 KB).
+if [[ -x /usr/bin/awk && -x /bin/bash ]]; then
+    BL="$WORKDIR/big-lines"
+    mkdir -p "$BL/p/.specify/gates" "$BL/g/.specify/gates" "$BL/lone" "$BL/none"
+    echo '{"hooks":{}}' >"$BL/p/.specify/gates/policy.json"
+    echo '{"hooks":{},"protected_files":{"extra":["**/*.lock"]}}' >"$BL/g/.specify/gates/policy.json"
+    cp "$HOOKS/validate-bash.sh" "$BL/lone/"
+    awk 'BEGIN { for (i = 0; i < 14000; i++) print "echo line " i }' >"$BL/lines.txt"
+    { printf "cat > notes.txt <<'EOF'\n"; awk 'BEGIN { for (i = 0; i < 12000; i++) print "text " i " here" }'; printf 'EOF'; } >"$BL/heredoc.txt"
+    head -c 200000 /dev/zero | tr '\0' x >"$BL/x.txt"
+    { printf 'git commit -n'; cat "$BL/x.txt"; } >"$BL/commit.txt"
+    { printf 'rm '; cat "$BL/x.txt"; } >"$BL/rm.txt"
+    { printf 'cat '; cat "$BL/x.txt"; } >"$BL/cat.txt"
+    for f in lines heredoc commit rm cat; do
+        jq -n --rawfile c "$BL/$f.txt" '{tool_input:{command:$c}}' >"$BL/$f.json"
+    done
+    BP="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+    check "200 KB of short lines is allowed in time" 0 bounded 20 bash -c "out=\$(PATH='$BP' CLAUDE_PROJECT_DIR='$BL/p' '$HOOKS/validate-bash.sh' <'$BL/lines.json') && [[ -z \"\$out\" ]]"
+    check "a 200 KB heredoc file write is allowed in time" 0 bounded 20 bash -c "out=\$(PATH='$BP' CLAUDE_PROJECT_DIR='$BL/p' '$HOOKS/validate-bash.sh' <'$BL/heredoc.json') && [[ -z \"\$out\" ]]"
+    check "git commit -n with a 200 KB option word asks in time" 0 bounded 20 bash -c "out=\$(PATH='$BP' CLAUDE_PROJECT_DIR='$BL/p' '$HOOKS/validate-bash.sh' <'$BL/commit.json') && grep -q 'permissionDecision\":\"ask' <<<\"\$out\""
+    check "rm of a 200 KB word with a protected glob is allowed in time" 0 bounded 20 bash -c "out=\$(PATH='$BP' CLAUDE_PROJECT_DIR='$BL/g' '$HOOKS/validate-bash.sh' <'$BL/rm.json') && [[ -z \"\$out\" ]]"
+    check "a 200 KB word without lib/secrets.sh asks in time" 0 bounded 20 bash -c "out=\$(PATH='$BP' CLAUDE_PROJECT_DIR='$BL/none' '$BL/lone/validate-bash.sh' <'$BL/cat.json') && grep -q 'secrets.sh cannot load' <<<\"\$out\""
+else
+    echo "SKIP: large commands under /bin/bash and /usr/bin/awk (one is absent)"
+fi
 rule protect-files 10-no-vendor.sh 'if grep -q "\"vendor/"; then echo "vendor/ is generated" >&2; exit 1; fi'
 check "protect-files local rule refuses" 2 bash -c "printf '%s' '{\"tool_input\":{\"file_path\":\"vendor/x.go\"}}' | CLAUDE_PROJECT_DIR='$LR' '$HOOKS/protect-files.sh'"
 check "protect-files local rule refuses before an ask" 2 bash -c "printf '%s' '{\"tool_input\":{\"file_path\":\"vendor/secret_util.go\"}}' | CLAUDE_PROJECT_DIR='$LR' '$HOOKS/protect-files.sh'"
