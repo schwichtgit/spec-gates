@@ -392,7 +392,15 @@ the branch's `pre-commit` hook for merge commits instead; on a branch
 with no gates runtime at all it does nothing. Rolling back to 0.3.x
 (reinstalling that release and restoring `.specify/gates` from the step 1
 backup) also means removing the new stub:
-`rm "$(git rev-parse --git-path hooks)/pre-merge-commit"`.
+`rm "$(git rev-parse --git-path hooks)/pre-merge-commit"`. When husky,
+lefthook or the pre-commit framework owns the git hooks, step 5 puts the
+`pre-merge-commit` entry in that tool's configuration instead
+(`.husky/pre-merge-commit`, a `pre-merge-commit:` block in `lefthook.yml`,
+or a `.pre-commit-config.yaml` item with that stage). The entry calls
+`.specify/gates/hooks/pre-merge-commit` directly, which a 0.3.x runtime
+does not have, so merge commits fail while it is there: rolling back also
+means removing that entry from the configuration. The hook the tool
+generated for it then runs nothing, or remove it with the same `rm`.
 
 **No cosign on this machine** (a locked-down workstation, say): the
 checksum check is still required, and the signature can be checked

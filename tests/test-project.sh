@@ -407,6 +407,13 @@ printf '.specify/memory/\nxspecify/\n.claude/\n' >"$D/.prettierignore"
 rc_is "a sibling or look-alike entry is no parent" 0 "$D" --skip-canary
 ok "uncovered .specify paths still named" bash -c "grep -q '^project:   .specify/gates/\$' <<<\"\$1\" && grep -q '^project:   .specify/extensions/\$' <<<\"\$1\"" _ "$OUT"
 ok "the covered .claude path is not named" bash -c "! grep -q '^project:   .claude/hooks/gates/\$' <<<\"\$1\"" _ "$OUT"
+# CRLF line endings (a file saved on Windows) still match (#226).
+printf '.specify/\r\n.claude/\r\n' >"$D/.prettierignore"
+rc_is "CRLF .prettierignore entries: quiet" 0 "$D" --skip-canary
+ok "CRLF parent entries cover all three paths" bash -c "! grep -q prettierignore <<<\"\$1\"" _ "$OUT"
+before="$(cksum <"$D/.prettierignore")"
+rc_is "--add-lint-ignores under CRLF entries" 0 "$D" --skip-canary --add-lint-ignores
+ok "no duplicate lines added under CRLF entries" test "$before" = "$(cksum <"$D/.prettierignore")"
 
 echo ""
 echo "=== git probe in the proof (#74) ==="

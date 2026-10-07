@@ -368,6 +368,9 @@ uses_prettier() {
     return 1
 }
 if uses_prettier; then
+    # Without carriage returns, so a CRLF file matches line by line.
+    PIGN_TEXT=""
+    [[ -f "$PIGN" ]] && PIGN_TEXT="$(tr -d '\r' <"$PIGN")"
     for lp in .specify/gates/ .specify/extensions/ .claude/hooks/gates/; do
         # An entry for the path or any parent directory (.specify/,
         # .claude/**) excludes it too (#217).
@@ -376,7 +379,7 @@ if uses_prettier; then
             IFS=/ read -r -a lparts <<<"${lp%/}"
             for lpart in "${lparts[@]}"; do
                 lpre="${lpre:+$lpre/}$lpart"
-                if grep -qxE "/?${lpre//./\\.}(/|/\*|/\*\*)?" "$PIGN"; then
+                if grep -qxE "/?${lpre//./\\.}(/|/\*|/\*\*)?" <<<"$PIGN_TEXT"; then
                     lcov=1
                     break
                 fi

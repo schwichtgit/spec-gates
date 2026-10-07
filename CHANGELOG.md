@@ -92,6 +92,13 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   machine. The report, per-commit attribution and merge handling are
   unchanged. A projected `lib/secrets.sh` older than `pr-check.sh` is a
   setup error (exit 2).
+- **Small output and docs fixes** (#226). `verify.sh --accept <unknown>`
+  lists the features without a stray space before the parenthesis.
+  `project.sh` reads a `.prettierignore` with CRLF line endings. Doctor
+  names a stale or missing hold once, in the holds check, and still
+  fails (exit 1). The README rollback note for 0.3.x branches covers
+  husky, lefthook and the pre-commit framework, whose `pre-merge-commit`
+  entry lives in their own configuration.
 
 ## 0.4.0 — 2026-10-06
 
