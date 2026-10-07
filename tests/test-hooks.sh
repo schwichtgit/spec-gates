@@ -1304,6 +1304,46 @@ done
 jq -n --rawfile c "$WORKDIR/rule-big.txt" '{tool_input:{command:$c}}' >"$WORKDIR/rule-big.json"
 check "a rule ignoring a 200 KB tool call allows it" 0 \
     bash -c "CLAUDE_PROJECT_DIR='$LR' '$HOOKS/validate-bash.sh' <'$WORKDIR/rule-big.json'"
+# A 200 KB command stays fast under BWK awk, macOS's /usr/bin/awk (#231):
+# its passes were quadratic there and took minutes. The hook is stopped at
+# the bound, so a regression fails here instead of hanging the run.
+# shellcheck disable=SC2329  # both run through check
+killtree() { # <pid>: stop the process and everything under it
+    local c
+    for c in $(pgrep -P "$1" 2>/dev/null); do killtree "$c"; done
+    kill "$1" 2>/dev/null || true
+}
+# shellcheck disable=SC2329
+bounded() { # <secs> <cmd>...: run <cmd>, stop it after <secs>; 124 when stopped
+    local secs="$1" pid t=0
+    shift
+    "$@" &
+    pid=$!
+    while kill -0 "$pid" 2>/dev/null; do
+        if [[ "$t" -ge $((secs * 10)) ]]; then
+            killtree "$pid"
+            wait "$pid" 2>/dev/null || true
+            return 124
+        fi
+        sleep 0.1
+        t=$((t + 1))
+    done
+    wait "$pid"
+}
+if [[ -x /usr/bin/awk ]] && ! grep -q 'GNU Awk' <<<"$(/usr/bin/awk --version 2>&1)"; then
+    BW="$WORKDIR/bwk-awk"
+    mkdir -p "$BW/.specify/gates"
+    echo '{"hooks":{}}' >"$BW/.specify/gates/policy.json"
+    { printf 'echo '; head -c 200000 /dev/zero | tr '\0' x; printf ' notes.{md,txt}'; } >"$BW/word.txt"
+    { printf 'git commit -m "'; head -c 200000 /dev/zero | tr '\0' x | fold -w 70; printf '" && rm -rf /'; } >"$BW/msg.txt"
+    for f in word msg; do
+        jq -n --rawfile c "$BW/$f.txt" '{tool_input:{command:$c}}' >"$BW/$f.json"
+    done
+    check "a 200 KB command under BWK awk is allowed in time" 0 bounded 20 bash -c "out=\$(PATH='/usr/bin:/bin:/usr/sbin:/sbin:$PATH' CLAUDE_PROJECT_DIR='$BW' '$HOOKS/validate-bash.sh' <'$BW/word.json') && [[ -z \"\$out\" ]]"
+    check "a 200 KB commit message under BWK awk still blocks rm -rf / in time" 2 bounded 20 bash -c "PATH='/usr/bin:/bin:/usr/sbin:/sbin:$PATH' CLAUDE_PROJECT_DIR='$BW' '$HOOKS/validate-bash.sh' <'$BW/msg.json'"
+else
+    echo "SKIP: 200 KB command under BWK awk (/usr/bin/awk is absent or GNU awk)"
+fi
 rule protect-files 10-no-vendor.sh 'if grep -q "\"vendor/"; then echo "vendor/ is generated" >&2; exit 1; fi'
 check "protect-files local rule refuses" 2 bash -c "printf '%s' '{\"tool_input\":{\"file_path\":\"vendor/x.go\"}}' | CLAUDE_PROJECT_DIR='$LR' '$HOOKS/protect-files.sh'"
 check "protect-files local rule refuses before an ask" 2 bash -c "printf '%s' '{\"tool_input\":{\"file_path\":\"vendor/secret_util.go\"}}' | CLAUDE_PROJECT_DIR='$LR' '$HOOKS/protect-files.sh'"

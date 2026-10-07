@@ -74,6 +74,13 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   and CI boundaries now also refuse `*.jks`, `credentials`,
   `credentials.yml`/`.yaml`, `.netrc`, `.pypirc`, `gcloud-*.json` and a
   top-level `.ssh/`, `.gnupg/`, `.aws/` or `.gcloud/`.
+- **validate-bash is fast on large commands with macOS awk** (#231). With
+  BWK awk (`/usr/bin/awk`) a 200 KB command took minutes: a basename by
+  `sub(/.*\//)`, the brace-expansion `match()` and appending output one
+  word or character at a time were quadratic there. The passes now skip
+  what cannot apply (no `<<`, no commit message or `gh` text), find a
+  brace group before matching its word, and walk a character array once;
+  their output is unchanged.
 
 ## 0.4.0 — 2026-10-06
 
