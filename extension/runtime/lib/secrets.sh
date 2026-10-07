@@ -9,6 +9,9 @@
 #   gates_secret_scan             # stdin: NUL-separated "<rev>:<path>"
 #                                 # entries; report on stdout; 0 clean,
 #                                 # 1 findings, 2 content unreadable
+#   gates_secret_scan_range       # stdin: commit ids, one per line,
+#                                 # oldest first; the files each adds or
+#                                 # changes; report and exit as above
 #
 # The agent-boundary hooks (protect-files.sh, validate-bash.sh) source this
 # file too and call gates_forbidden_path, so the forbidden-name list has one
@@ -92,6 +95,27 @@ _gates_secret_rule() { # <i> <fail-file> --cached | <rev>...
         && [[ ! -e "$fail" ]]
 }
 
+# Print the report lines on stdin, each "<rev>\t<line>": an empty <rev>
+# (the index) prints the line bare; a commit's lines are grouped under a
+# "commit <hash> <subject>:" line and indented.
+_gates_secret_print() {
+    local line rev last=""
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        rev="${line%%$'\t'*}"
+        line="${line#*$'\t'}"
+        if [[ -z "$rev" ]]; then
+            printf '%s\n' "$line"
+            continue
+        fi
+        if [[ "$rev" != "$last" ]]; then
+            echo "commit $(git log -1 --format='%h %s' "$rev"):"
+            last="$rev"
+        fi
+        printf '  %s\n' "$line"
+    done
+}
+
 # Scan the entries on stdin, each "<rev>:<path>" (NUL-separated, grouped
 # by revision): an empty <rev> means the staged copy in the index, a
 # commit means that commit's copy. A forbidden path is reported and not
@@ -102,7 +126,7 @@ _gates_secret_rule() { # <i> <fail-file> --cached | <rev>...
 # Commit entries are grouped under a "commit <hash> <subject>:" line and
 # indented; index entries print bare, as pre-commit always has.
 gates_secret_scan() {
-    local entry rev last="" verdicts="" hits="" tmp i rc=0 report line
+    local entry rev last="" verdicts="" hits="" tmp i rc=0 report
     local -a revs=() paths=()
     while IFS= read -r -d '' entry; do
         rev="${entry%%:*}"
@@ -146,21 +170,95 @@ gates_secret_scan() {
             if ($1 == "F") print rev "\tBLOCKED: forbidden file: " name
             else if (key in hit) print rev "\t  SECRET: " hit[key] " in " name
         }')"
-    last=""
-    while IFS= read -r line; do
-        [[ -z "$line" ]] && continue
-        rev="${line%%$'\t'*}"
-        line="${line#*$'\t'}"
-        if [[ -z "$rev" ]]; then
-            printf '%s\n' "$line"
-            continue
+    _gates_secret_print <<<"$report"
+
+    [[ "$rc" -ne 0 ]] && return "$rc"
+    [[ -n "$report" ]] && return 1
+    return 0
+}
+
+# Scan the commits on stdin (one id per line, oldest first) for the files
+# each adds or changes, with the report gates_secret_scan gives for the
+# same "<commit>:<path>" entries. One `git diff-tree --stdin` pass lists
+# every commit's changed paths with their blob ids (a merge: the paths
+# whose result differs from every parent, -c; a rename under its new
+# name). Each distinct blob is scanned once per rule, through a temporary
+# index whose entries are named by blob id, and a hit is mapped back to
+# every commit and path that added that blob (issue #228): the time
+# follows the distinct content the range adds, not commits x files. Only
+# regular files are read, as git grep over a commit skips symlinks and
+# submodules.
+gates_secret_scan_range() {
+    local tmp p i rc=0 report
+    tmp="$(mktemp -d 2>/dev/null || mktemp -d -t gates-scan)" || return 2
+    if ! git diff-tree --stdin -r --root -c --no-renames --raw -z --diff-filter=ACMRT >"$tmp/raw"; then
+        rm -rf "$tmp"
+        return 2
+    fi
+    # Records "<commit>\0" and ":<modes> <blobs> <status>\0<path>\0": one
+    # colon per parent, then a mode and a blob id per parent plus the
+    # commit's own (the last of each), then the status. awk turns them
+    # into "<commit>\t<mode>\t<blob>\t<path>" lines; a newline inside a
+    # path travels as \001 and is restored where the path is used. A bash
+    # read loop over the stream would read it a byte at a time.
+    tr '\n\0' '\001\n' <"$tmp/raw" | awk '
+        want { print commit "\t" mode "\t" blob "\t" $0; want = 0; next }
+        /^:/ {
+            sub(/^:+/, ""); n = split($0, f, " ")
+            mode = f[(n - 1) / 2]; blob = f[n - 1]; want = 1; next
+        }
+        { commit = $0 }' >"$tmp/all"
+    # The forbidden-name check once per distinct path.
+    cut -f4- "$tmp/all" | LC_ALL=C sort -u | while IFS= read -r p; do
+        if gates_forbidden_path "${p//$'\001'/$'\n'}"; then
+            printf '%s\n' "$p"
         fi
-        if [[ "$rev" != "$last" ]]; then
-            echo "commit $(git log -1 --format='%h %s' "$rev"):"
-            last="$rev"
+    done >"$tmp/forbidden"
+    # Per entry: F (forbidden, not scanned) or S (a regular file to scan),
+    # and the distinct blobs to scan.
+    awk -F'\t' -v forb="$tmp/forbidden" -v blobs="$tmp/blobs" '
+        FILENAME == forb { bad[$0] = 1; next }
+        {
+            p = $0
+            for (k = 0; k < 3; k++) p = substr(p, index(p, "\t") + 1)
+            if (p in bad) print "F\t" $1 "\t\t" p
+            else if ($2 ~ /^100/) {
+                print "S\t" $1 "\t" $3 "\t" p
+                if (!($3 in seen)) { seen[$3] = 1; print "100644 " $3 "\t" $3 >blobs }
+            }
+        }' "$tmp/forbidden" "$tmp/all" >"$tmp/entries"
+    touch "$tmp/blobs"
+
+    : >"$tmp/hits"
+    if [[ -s "$tmp/blobs" ]]; then
+        if ! GIT_INDEX_FILE="$tmp/index" git -c core.splitIndex=false update-index --add --index-info <"$tmp/blobs"; then
+            rm -rf "$tmp"
+            return 2
         fi
-        printf '  %s\n' "$line"
-    done <<<"$report"
+        for i in "${!GATES_SECRET_PATTERNS[@]}"; do
+            GIT_INDEX_FILE="$tmp/index" git grep --cached --no-color --full-name -l -z -E \
+                "${GATES_SECRET_FLAGS[$i]}" -e "${GATES_SECRET_PATTERNS[$i]}" -- ':(top)' >"$tmp/hit"
+            if [[ "$?" -gt 1 ]]; then
+                rc=2
+                break
+            fi
+            tr '\0' '\n' <"$tmp/hit" | awk -v l="${GATES_SECRET_LABELS[$i]}" 'NF { print l "\t" $0 }' >>"$tmp/hits"
+        done
+    fi
+
+    # Per entry, in input order: the forbidden-file refusal, or the first
+    # rule its blob matched. The path is everything after the third tab.
+    report="$(awk -F'\t' -v hits="$tmp/hits" '
+        FILENAME == hits { if (!($2 in hit)) hit[$2] = $1; next }
+        {
+            p = $0
+            for (k = 0; k < 3; k++) p = substr(p, index(p, "\t") + 1)
+            gsub("\001", "\n", p)
+            if ($1 == "F") print $2 "\tBLOCKED: forbidden file: " p
+            else if ($3 in hit) print $2 "\t  SECRET: " hit[$3] " in " p
+        }' "$tmp/hits" "$tmp/entries")"
+    rm -rf "$tmp"
+    _gates_secret_print <<<"$report"
 
     [[ "$rc" -ne 0 ]] && return "$rc"
     [[ -n "$report" ]] && return 1

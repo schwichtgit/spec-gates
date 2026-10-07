@@ -117,6 +117,10 @@ if [[ ! -f "$SECRETS_LIB" ]]; then
 fi
 # shellcheck source=/dev/null disable=SC1091
 source "$SECRETS_LIB"
+if ! command -v gates_secret_scan_range >/dev/null 2>&1; then
+    echo "pr-check: $SECRETS_LIB predates pr-check.sh -- re-project the runtime (/speckit.gates.upgrade)" >&2
+    exit 2
+fi
 FAILED=0
 
 BODY=""
@@ -481,25 +485,17 @@ protected_range_check() { # -> 0 pass/skip, 1 violations, 2 setup error
 # rename is listed under its new name (--no-renames), as in pre-commit. A
 # merge commit is scanned for the paths whose result differs from every
 # parent, so merging the base in does not re-scan the base's files.
+# gates_secret_scan_range reads each distinct blob the range adds once per
+# rule (#228).
 secret_range_check() { # -> 0 pass/skip, 1 findings, 2 setup error
     if [[ "$RANGE_RC" -eq 1 ]]; then
         echo "pr-check: secret scan skipped -- no pull/merge request range (pass --range or set GATES_COMMIT_RANGE)"
         return 0
     fi
     [[ "$RANGE_RC" -eq 0 ]] || return 2
-    local entries c n=0 p out src=0
-    entries="$(mktemp 2>/dev/null || mktemp -t gates-entries)" || return 2
-    while IFS= read -r c; do
-        [[ -z "$c" ]] && continue
-        n=$((n + 1))
-        if git rev-parse -q --verify "$c^2" >/dev/null 2>&1; then
-            git diff-tree -r -c --no-commit-id --name-only -z --no-renames --diff-filter=ACMRT "$c"
-        else
-            git diff-tree -r --root --no-commit-id --name-only -z --no-renames --diff-filter=ACMRT "$c"
-        fi | while IFS= read -r -d '' p; do printf '%s:%s\0' "$c" "$p"; done >>"$entries"
-    done < <(git rev-list --reverse "$BASE..$HEAD_REF")
-    out="$(gates_secret_scan <"$entries")" || src=$?
-    rm -f "$entries"
+    local n out src=0
+    n="$(git rev-list --count "$BASE..$HEAD_REF")" || return 2
+    out="$(git rev-list --reverse "$BASE..$HEAD_REF" | gates_secret_scan_range)" || src=$?
     if [[ "$src" -eq 2 ]]; then
         echo "pr-check: ERROR -- cannot read the range's content for the secret scan (git grep failed)" >&2
         return 2
