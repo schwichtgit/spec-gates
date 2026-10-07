@@ -48,6 +48,32 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   about 75 s. It now reads the range in a few git passes, builds the
   protected list once per distinct policy, and matches each distinct path
   once. The report is unchanged.
+- **The PR hook reads PR commands behind keywords and wrappers** (#223).
+  With python3, `if …; then gh pr create …; fi`, `env -i gh pr create`
+  and `sudo -u bob gh pr create` passed unchecked; they are now checked,
+  and `eval` or `xargs` before a PR command is refused. `gh api "$EP"`
+  asks, since the endpoint may be a pulls endpoint. pr-check names the
+  missing fetcher (curl or python3's urllib) instead of asking for
+  `GATES_GITLAB_TOKEN` when no fetcher exists.
+- **`sort -o` and `rg --pre` count as changes** (#205). validate-bash
+  asks when `sort -o` writes a protected path, and when `rg --pre <cmd>`
+  names one or runs inside the project, where its command reaches every
+  file rg searches.
+- **validate-bash follows existing links; raw mode reads a multi-line
+  `extra`** (#211). With `pol.json -> .specify/gates/policy.json` in
+  place, `echo x > pol.json` and `rm gdir/policy.json` were allowed; a
+  redirect or change target is now resolved first, as protect-files
+  does. Without jq, protect-files asked on every Write because it could
+  not read the multi-line `protected_files.extra` that `policy-infer.sh`
+  writes; it now reads it and asks only when it cannot.
+- **One secret-file list at every boundary** (#221). protect-files and
+  validate-bash kept their own copy of the forbidden names; they now read
+  it from `lib/secrets.sh`, as `pre-commit` and `pr-check.sh` do. When it
+  cannot load, `.env` files, private keys and certificates still block
+  and every other edit asks. The list is the union of the old ones, so the git
+  and CI boundaries now also refuse `*.jks`, `credentials`,
+  `credentials.yml`/`.yaml`, `.netrc`, `.pypirc`, `gcloud-*.json` and a
+  top-level `.ssh/`, `.gnupg/`, `.aws/` or `.gcloud/`.
 
 ## 0.4.0 — 2026-10-06
 

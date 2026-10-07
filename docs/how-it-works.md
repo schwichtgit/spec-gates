@@ -31,7 +31,8 @@ spec-gates uses four of them:
 - `PreToolUse(Write|Edit)` → `protect-files.sh`: refuses edits to `.env`
   files, private keys and certificates, exact credential file names
   (`credentials.json`, `.netrc`, cloud service-account files), sensitive
-  directories, lock files, the project's own rules in
+  directories (the same secret-file list `pre-commit` and `pr-check.sh`
+  use, read from `lib/secrets.sh`), lock files, the project's own rules in
   `.specify/gates/hooks.local.d/`, `.specify/gates/policy.json` (always,
   whatever the policy says), and every `protected_files.extra` entry. A
   Write or Edit to `.specify/memory/constitution.md` asks instead, under
@@ -73,7 +74,10 @@ spec-gates uses four of them:
   read literally: a variable, a command substitution (except the
   `"$(cat <<'EOF' … EOF)"` heredoc), a glob, a flag given twice, a
   clustered short flag such as `-tfeat`, `gh api --input`, or a PR
-  command inside `sh -c` or `eval`.
+  command inside `sh -c`, behind `eval` or behind `xargs`. A PR command
+  after a shell keyword (`if …; then gh pr create …`) or a wrapper and
+  its options (`env -i`, `sudo -u bob`) is checked; `gh api "$EP"`, whose
+  endpoint only the shell knows, asks.
 - `PostToolUse(Write|Edit)` → `post-edit.sh`: formats the touched file per
   policy.
 - `Stop` → `format-changed.sh` + `verify-quality.sh`: a stop while
@@ -96,10 +100,15 @@ permission mode. The hooks ask when a file name merely contains a word
 such as `secret` or `token` (a test like `test_no_secret_leak.py` is not a
 credential), when a Bash command appears to modify a protected path
 (`rm`, `mv`, `sed -i` or `--in-place`, a redirect (also `>|`), an
-`--out`/`--output` option, `tee`, `find -delete`, `git rm`, also as
+`--out`/`--output` option, `tee`, `find -delete`, `git rm`, `sort -o`,
+`rg --pre` (which also asks anywhere inside the project, since its
+command runs on every file rg searches), also as
 `/bin/rm`, `\rm`, `xargs rm`, inside `sh -c` or `eval`, or an
 interpreter one-liner such as `python3 -c`, or an `ln` whose target or
-link resolves to, contains or lies under one, naming one, its parent
+link resolves to, contains or lies under one, or a redirect or changed
+argument that reaches one through a link that already exists
+(`echo x > pol.json` with `pol.json -> .specify/gates/policy.json`),
+naming one, its parent
 directory, a brace, backslash or split-quote spelling of it, a variable
 the same command assigns, a variable or substitution it cannot resolve
 in front of the file name, a glob `extra` entry such as `**/*.lock.md`,
@@ -119,7 +128,9 @@ cannot evaluate. A project rule in `hooks.local.d` runs before any of
 these questions, so its refusal wins. They never
 silently allow. Without jq, or for input that is not valid JSON, they read
 the field in a raw mode that keeps every built-in block rule and still
-checks `policy.json`, the constitution and the project's rules; an
+checks `policy.json`, the constitution and the project's rules. It reads
+`protected_files.extra` when it is a list of plain strings, on one line
+or many, and matches it as the jq path does; an
 internal error, an undecodable, missing or repeated field, or a
 `protected_files.extra` it cannot read asks. A malformed or invalid
 `policy.json` cannot say what it protects either, so with jq the Write/Edit

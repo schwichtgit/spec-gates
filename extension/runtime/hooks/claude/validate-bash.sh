@@ -873,6 +873,9 @@ MUTATE_VERB="$VERB_START"'(rm|rmdir|unlink|shred|mv|cp|ln|install|truncate|tee|c
 MUTATE_EDIT="$VERB_START"'(sed|perl)[[:space:]]+([^;&|]*[[:space:]])?(-[a-zA-Z]*i|--in-place)|'"$VERB_START"'git[[:space:]]+(rm|mv|checkout|restore|reset|clean|stash)([[:space:]]|$)'
 MUTATE_FIND="$VERB_START"'find[[:space:]]([^;&|]*[[:space:]])?-(delete|exec|execdir|ok|okdir)([[:space:]]|$)'
 MUTATE_INTERP="$VERB_START"'(python[0-9.]*|perl|ruby|node|deno|bun)[[:space:]]+([^;&|]*[[:space:]])?-[a-zA-Z]*[ce]([[:space:]]|$)'
+# `sort -o <file>` writes the file; `rg --pre <cmd>` runs <cmd> on every
+# file it searches (#205).
+MUTATE_TOOL="$VERB_START"'sort[[:space:]]+([^;&|]*[[:space:]])?(-[a-zA-Z]*o|--output)|'"$VERB_START"'rg[[:space:]]+([^;&|]*[[:space:]])?--pre([=[:space:]]|$)'
 # The command with path spellings normalized, lowercased. The project root
 # is stripped as given and as its real path (/tmp vs /private/tmp, a
 # symlinked checkout; #165).
@@ -908,7 +911,7 @@ WRITE_REDIRECT=1
 grep -q '>' <<<"$(sed -E -e 's#[0-9]*>>?[[:space:]]*/dev/(null|stdout|stderr|tty)##g' \
     -e 's#[0-9]*>&[0-9-]+##g' -e 's#&>>?[[:space:]]*/dev/null##g' <<<"$BCMD")" || WRITE_REDIRECT=0
 MUTATES=0
-if grep -qE "$MUTATE_VERB|$MUTATE_EDIT|$MUTATE_FIND|$MUTATE_INTERP" <<<"$PCMD"; then
+if grep -qE "$MUTATE_VERB|$MUTATE_EDIT|$MUTATE_FIND|$MUTATE_INTERP|$MUTATE_TOOL" <<<"$PCMD"; then
     MUTATES=1
 fi
 if [[ "$EXTRA_UNREAD" -eq 1 ]] && [[ "$MUTATES" -eq 1 || "$WRITE_REDIRECT" -eq 1 ]]; then
@@ -932,6 +935,12 @@ for _c in "${CWD%/}" "$_creal"; do
         break 2
     done
 done
+# rg searches the working directory when no path is named, so a --pre
+# command run inside the project may reach any protected file (#205).
+if grep -qE "$VERB_START"'rg[[:space:]]+([^;&|]*[[:space:]])?--pre([=[:space:]]|$)' <<<"$PCMD" \
+    && [[ -n "$CWD_REL" || "${CWD%/}" == "$LROOT" || ( -n "$LREAL" && "$_creal" == "$LREAL" ) ]]; then
+    defer_ask "rg --pre runs its command on every file it searches, protected ones included; confirm the command changes no file"
+fi
 # The texts the paths are matched in (#194): NCMD, NCMD with its quotes
 # removed as the shell does ("pol""icy.json", pol''icy.json), and that with
 # the command's own simple assignments expanded (f=.specify/gates; rm
@@ -986,7 +995,7 @@ pp_spelled() {
         # && rm build/x` stays allowed.
         if [[ "$dir" != "$sp" && "$MUTATES" -eq 1 ]] \
             && PAT="$TOKEN_START$e(/[^[:space:];&|]*[*?[][^[:space:];&|]*)?/?$TOKEN_END" \
-                MUT="$MUTATE_VERB|$MUTATE_EDIT|$MUTATE_FIND|$MUTATE_INTERP" awk '
+                MUT="$MUTATE_VERB|$MUTATE_EDIT|$MUTATE_FIND|$MUTATE_INTERP|$MUTATE_TOOL" awk '
                     { n = split($0, part, /&&|\|\||;|&/)
                       for (k = 1; k <= n; k++) if (part[k] ~ ENVIRON["PAT"] && part[k] ~ ENVIRON["MUT"]) hit = 1 }
                     END { exit !hit }' <<<"$PCMD"; then
@@ -1089,9 +1098,14 @@ fi
 # resolved from the cwd and from the link's directory; it asks when it is,
 # contains or lies under a protected path, or cannot be resolved ($VAR,
 # `cmd`, a glob, ~user).
-# ln_real <absolute path>: every symlink resolved, as protect-files does.
-ln_real() {
-    local todo="$1" out="" comp link hops=0
+# ln_resolve <absolute path>: every symlink resolved, as protect-files
+# does, into LN_OUT; LN_VIA is 1 when a link was followed. No subshell, so
+# the caller sees both. ln_real prints the path.
+ln_resolve() { # <path> [<real directory a relative path starts from>]
+    local todo="$1" out="${2:-}" comp link hops=0
+    [[ "$todo" != /* ]] || out=""
+    LN_VIA=0
+    LN_OUT=""
     while [[ -n "$todo" ]]; do
         while [[ "$todo" == /* ]]; do todo="${todo#/}"; done
         [[ -n "$todo" ]] || break
@@ -1101,6 +1115,7 @@ ln_real() {
             ..) out="${out%/*}"; continue ;;
         esac
         if [[ -L "$out/$comp" ]]; then
+            LN_VIA=1
             hops=$((hops + 1))
             [[ "$hops" -le 40 ]] && link="$(readlink "$out/$comp" 2>/dev/null)" && [[ -n "$link" ]] || return 1
             [[ "$link" == /* ]] && out=""
@@ -1109,7 +1124,20 @@ ln_real() {
             out="$out/$comp"
         fi
     done
-    printf '%s' "${out:-/}"
+    LN_OUT="${out:-/}"
+}
+ln_real() { ln_resolve "$1" && printf '%s' "$LN_OUT"; }
+# lprot_init: _lprot, the protected paths with their own links resolved,
+# read once and only when a check needs it.
+_lroot="${LREAL:-$LROOT}"
+_lprot=()
+_lprot_done=0
+lprot_init() {
+    [[ "$_lprot_done" -eq 0 ]] || return 0
+    _lprot_done=1
+    while IFS= read -r _pp; do
+        [[ -n "$_pp" ]] && _lprot+=("$(ln_real "$_lroot/$_pp" || printf '%s' "$_lroot/$_pp")")
+    done < <(protected_prefixes)
 }
 # One line per ln command: its operands, unquoted (options dropped). ln
 # counts as the command word, after a wrapper (sudo, env, xargs, ...) or
@@ -1129,11 +1157,7 @@ LN_SEGS="$(printf '%s\n' "$COMMAND" | tr ';&|()' '\n' | awk '
       }
       if (on && out != "") print out }')"
 if [[ -n "$LN_SEGS" ]]; then
-    _lroot="${LREAL:-$LROOT}"
-    _lprot=()
-    while IFS= read -r _pp; do
-        [[ -n "$_pp" ]] && _lprot+=("$(ln_real "$_lroot/$_pp" || printf '%s' "$_lroot/$_pp")")
-    done < <(protected_prefixes)
+    lprot_init
     shopt -s nocasematch
     while IFS= read -r _seg; do
         read -r -a _largs <<<"$_seg"
@@ -1168,23 +1192,100 @@ if [[ -n "$LN_SEGS" ]]; then
     shopt -u nocasematch
 fi
 
+# Links that already exist (#211): with pol.json -> policy.json or gdir ->
+# .specify/gates in place, `echo x > pol.json` and `rm gdir/policy.json`
+# name no protected path. Each redirect target, and for a command that
+# changes files each argument, is resolved from the cwd in its original
+# case; one that reaches a protected path through a link asks. Quoted
+# heredoc bodies are data and are left out; a word with a variable,
+# substitution or glob is the business of the checks above.
+if [[ "$MUTATES" -eq 1 || "$WRITE_REDIRECT" -eq 1 ]]; then
+    _ocmd="$(printf '%s\n' "$COMMAND" | awk "$(quoted_heredoc_awk)" | awk -v mode=b "$INERT_AWK")"
+    _lwords="$({ grep -oE "${WRITE_TO}[^[:space:];&|]+" <<<"$_ocmd" || true; } | sed -E "s/^$WRITE_TO//")"
+    if [[ "$MUTATES" -eq 1 ]]; then
+        _lwords="$_lwords"$'\n'"$(tr '<>|;&()=,`' '          ' <<<"$_ocmd" | tr -s ' \t' '\n')"
+    fi
+    shopt -s nocasematch
+    while IFS= read -r _a; do
+        _a="${_a//[\"\']/}"
+        case "$_a" in
+            '' | -* | *'$'* | *'`'* | *'*'* | *'?'* | *'['* | '~'* | /dev/*) continue ;;
+        esac
+        _lw="$_a"
+        # From the cwd's real path ($_creal), so only the word's own
+        # components are walked; a cwd inside a link is CWD_REL's case.
+        [[ "$_a" == /* || -n "$_creal" ]] || _a="$CWD/$_a"
+        if ! ln_resolve "$_a" "$_creal"; then
+            defer_ask "cannot resolve the symlinks in $_lw; confirm this command changes no protected path"
+            break
+        fi
+        [[ "$LN_VIA" -eq 1 ]] || continue
+        lprot_init
+        for _p in "${_lprot[@]}"; do
+            if [[ "$LN_OUT" == "$_p" || "$LN_OUT" == "$_p/"* ]] \
+                || { [[ "$MUTATES" -eq 1 ]] && [[ "$LN_OUT" == / || "$_p" == "$LN_OUT/"* ]]; }; then
+                defer_ask "this command appears to modify the protected path ${_p#"$_lroot"/} through the link $_lw; a human or a reviewed change makes that edit"
+                break 2
+            fi
+        done
+    done < <(awk 'NF && !seen[$0]++' <<<"$_lwords")
+    shopt -u nocasematch
+fi
+
 # Secret files (#130): protect-files refuses Write/Edit of these; a command
 # that names one (`cat .env`, `cp id_rsa x`) asks, since reading it puts
-# the secret in the transcript. Same names and allowlist as protect-files.
-SECRET_FILE="$(printf '%s\n' "$COMMAND" | tr '<>|;&()=,' '         ' | awk '
-    { for (i = 1; i <= NF; i++) {
-        t = $i; gsub(/["'"'"'`]/, "", t)
-        n = split(t, parts, "/"); b = tolower(parts[n])
-        if (b ~ /\.(example|sample|template)$/) continue
-        if (b == ".env" || b ~ /^\.env\./ || b ~ /^(id_rsa|id_ed25519|id_ecdsa)/ \
-            || b == "authorized_keys" || b == "known_hosts" \
-            || b ~ /\.(pem|key|crt|p12|pfx|jks|keystore)$/ \
-            || b ~ /^(credentials|credentials\.json|credentials\.yml|credentials\.yaml|\.netrc|\.pypirc|aws-credentials)$/ \
-            || b ~ /^(gcloud-.*|service-account.*)\.json$/) { if (found == "") found = t }
-    } }
-    END { print found }')"
-if [[ -n "$SECRET_FILE" ]]; then
-    defer_ask "this command names the secret file $SECRET_FILE; confirm it does not expose a credential"
+# the secret in the transcript. The names and allowlist are the ones
+# pre-commit and pr-check refuse (lib/secrets.sh, #221), matched ignoring
+# case; the project's lib, the one this hook was projected beside, or the
+# one in the extension's own layout. Without one, a core name still names
+# its file in the question, and any other command asks.
+# gates_core_secret <path>: the core of the secret-file list, built in,
+# for when lib/secrets.sh cannot load: environment files, private keys,
+# certificates and key stores, as 0.4.0 blocked them. The rest of the list
+# then asks.
+gates_core_secret() {
+    case "${1##*/}" in
+        *.example | *.sample | *.template) return 1 ;;
+        .env | .env.* | id_rsa* | id_ed25519* | id_ecdsa* | *.pem | *.key | *.crt | *.p12 | *.pfx | *.jks | *.keystore)
+            return 0
+            ;;
+    esac
+    return 1
+}
+SECRETS_LIB=missing
+for _sl in "$LROOT/.specify/gates/lib/secrets.sh" "${BASH_SOURCE[0]%/*}/../../../.specify/gates/lib/secrets.sh" \
+    "${BASH_SOURCE[0]%/*}/../../lib/secrets.sh"; do
+    [[ -f "$_sl" ]] || continue
+    # shellcheck source=/dev/null disable=SC1090
+    if "$BASH" -n "$_sl" 2>/dev/null && source "$_sl" 2>/dev/null \
+        && command -v gates_forbidden_path >/dev/null 2>&1; then
+        SECRETS_LIB=ok
+    fi
+    break
+done
+if [[ "$SECRETS_LIB" == ok ]]; then
+    SECRET_FILE=""
+    shopt -s nocasematch
+    while IFS= read -r _t; do
+        if gates_forbidden_path "$_t"; then
+            SECRET_FILE="$_t"
+            break
+        fi
+    done < <(printf '%s\n' "$COMMAND" | tr '<>|;&()=,' '         ' | awk '
+        { for (i = 1; i <= NF; i++) { t = $i; gsub(/["'"'"'`]/, "", t); if (t != "" && !seen[t]++) print t } }')
+    shopt -u nocasematch
+    if [[ -n "$SECRET_FILE" ]]; then
+        defer_ask "this command names the secret file $SECRET_FILE (${GATES_FORBIDDEN_WHAT:-a forbidden name}); confirm it does not expose a credential"
+    fi
+else
+    while IFS= read -r _t; do
+        if gates_core_secret "$(tr '[:upper:]' '[:lower:]' <<<"$_t")"; then
+            defer_ask "this command names the secret file $_t; confirm it does not expose a credential"
+            break
+        fi
+    done < <(printf '%s\n' "$COMMAND" | tr '<>|;&()=,' '         ' | awk '
+        { for (i = 1; i <= NF; i++) { t = $i; gsub(/["'"'"'`]/, "", t); if (t != "" && !seen[t]++) print t } }')
+    defer_ask "lib/secrets.sh cannot load, so this command cannot be checked for secret files; run /speckit.gates.doctor"
 fi
 
 # Project-owned rules (#71) run once every shipped rule allowed, so they

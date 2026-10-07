@@ -181,42 +181,22 @@ builtin_rules() {
     BASENAME="${1##*/}"
     allowlisted "$BASENAME" && return 0
 
-    # Environment files
-    if [[ "$BASENAME" == ".env" ]] || [[ "$BASENAME" == .env.* ]]; then
-        BLOCKED="Environment file"
+    # Secret files: environment files, SSH keys, certificates and key
+    # stores, credential files, cloud credentials and sensitive directories,
+    # from the list pre-commit and pr-check use (lib/secrets.sh, #221).
+    if [[ "$SECRETS_LIB" == ok ]] && gates_forbidden_path "$FILE_PATH"; then
+        BLOCKED="Secret file: ${GATES_FORBIDDEN_WHAT:-a forbidden name} (lib/secrets.sh)"
+    elif [[ "$SECRETS_LIB" != ok ]] && gates_core_secret "$FILE_PATH"; then
+        BLOCKED="Secret file (the built-in core list; lib/secrets.sh cannot load)"
     fi
 
-    # SSH keys
-    case "$BASENAME" in
-        id_rsa*|id_ed25519*|id_ecdsa*|authorized_keys|known_hosts)
-            BLOCKED="SSH key/config file"
-            ;;
-    esac
-
-    # Certificates and key stores
-    case "$BASENAME" in
-        *.pem|*.key|*.crt|*.p12|*.pfx|*.jks|*.keystore)
-            BLOCKED="Certificate/key file"
-            ;;
-    esac
-
     # Credentials (#71): an exact credential file name is strong evidence and
-    # blocks. A sensitive word that merely appears in the name (a test such as
-    # test_no_secret_leak.py, a token parser) asks the human instead: blocking
-    # it outright left no way to edit such files at all.
-    case "$BASENAME" in
-        credentials|credentials.json|credentials.yml|credentials.yaml|.netrc|.pypirc)
-            BLOCKED="Credentials file"
-            ;;
-    esac
+    # blocks (above). A sensitive word that merely appears in the name (a
+    # test such as test_no_secret_leak.py, a token parser) asks the human
+    # instead: blocking it outright left no way to edit such files at all.
     if [[ -z "$BLOCKED" && -z "$NAMEASK" ]]; then
         _word="$(echo "$BASENAME" | grep -oiE 'credentials|secret|password|token|keystore' | head -n 1 || true)"
         [[ -n "$_word" ]] && NAMEASK="the file name contains '$_word'; confirm $FILE_PATH does not hold a credential"
-    fi
-
-    # Cloud configs
-    if grep -qiE '^(gcloud-.*\.json|service-account.*\.json|aws-credentials)$' <<<"$BASENAME"; then
-        BLOCKED="Cloud credentials file"
     fi
 
     # The project's own rules (#95): hooks.local.d holds the refusals the
@@ -266,19 +246,44 @@ builtin_rules() {
             BLOCKED="Lock file (auto-generated)"
             ;;
     esac
-
-    # Sensitive directories
-    if grep -qiE '(^|/)(\.ssh|\.gnupg|\.aws|\.gcloud)/' <<<"$FILE_PATH"; then
-        BLOCKED="File in sensitive directory"
-    fi
     return 0
 }
+
+# The secret-file list (#221): the project's lib, the one this hook was
+# projected beside (.claude/hooks/gates -> .specify/gates/lib, also when
+# CLAUDE_PROJECT_DIR points elsewhere), or the one in the extension's own
+# layout. Without one the core list still blocks and the rest asks below,
+# once no other rule has blocked.
+# gates_core_secret <path>: the core of the secret-file list, built in,
+# for when lib/secrets.sh cannot load: environment files, private keys,
+# certificates and key stores, as 0.4.0 blocked them. The rest of the list
+# then asks.
+gates_core_secret() {
+    case "${1##*/}" in
+        *.example | *.sample | *.template) return 1 ;;
+        .env | .env.* | id_rsa* | id_ed25519* | id_ecdsa* | *.pem | *.key | *.crt | *.p12 | *.pfx | *.jks | *.keystore)
+            return 0
+            ;;
+    esac
+    return 1
+}
+PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+SECRETS_LIB=missing
+for _sl in "$PROJECT_ROOT/.specify/gates/lib/secrets.sh" "${BASH_SOURCE[0]%/*}/../../../.specify/gates/lib/secrets.sh" \
+    "${BASH_SOURCE[0]%/*}/../../lib/secrets.sh"; do
+    [[ -f "$_sl" ]] || continue
+    # shellcheck source=/dev/null disable=SC1090
+    if "$BASH" -n "$_sl" 2>/dev/null && source "$_sl" 2>/dev/null \
+        && command -v gates_forbidden_path >/dev/null 2>&1; then
+        SECRETS_LIB=ok
+    fi
+    break
+done
 builtin_rules "$FILE_PATH"
 [[ -n "$BLOCKED" || "$REAL_PATH" == "$FILE_PATH" ]] || builtin_rules "$REAL_PATH"
 
 # A hard link shares no path with the file it aliases: compare an existing
 # target with the project's own protected files by device and inode.
-PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 if [[ -z "$BLOCKED" && -z "$CONSTASK" && -f "$REAL_PATH" ]]; then
     for _pf in "$PROJECT_ROOT"/.specify/gates/policy.json "$PROJECT_ROOT"/.specify/gates/baseline.json \
         "$PROJECT_ROOT"/.specify/gates/baseline.lock.json "$PROJECT_ROOT"/.specify/gates/policy.effective.json \
@@ -294,6 +299,21 @@ if [[ -z "$BLOCKED" && -z "$CONSTASK" && -f "$REAL_PATH" ]]; then
     fi
 fi
 
+# raw_extra <policy>: protected_files.extra without jq, one entry per line,
+# the same reader as validate-bash's: a flat array of plain strings, on one
+# line or many (#211). Returns 2 when the policy declares an extra this
+# cannot read (escapes, values that are not strings, another layout).
+raw_extra() {
+    local flat body
+    flat="$(tr '\n' ' ' <"$1")"
+    grep -qE '"extra"[[:space:]]*:' <<<"$flat" || return 0
+    body="$(sed -nE 's/.*"protected_files"[[:space:]]*:[[:space:]]*\{[^{}]*"extra"[[:space:]]*:[[:space:]]*\[([^]]*)\].*/=\1/p' <<<"$flat")"
+    [[ -n "$body" ]] || return 2
+    body="${body#=}"
+    grep -qE '^[[:space:]]*("[^"\\]*"[[:space:]]*(,[[:space:]]*"[^"\\]*"[[:space:]]*)*)?$' <<<"$body" || return 2
+    { grep -oE '"[^"\\]*"' <<<"$body" || true; } | sed -e 's/^"//' -e 's/"$//'
+}
+
 # Policy-declared extra protected paths (protected_files.extra). Matched against
 # both the project-relative path and the basename so exact entries and globs
 # (e.g. ".specify/memory/constitution.md", "docs/**") both work.
@@ -301,12 +321,20 @@ ASK=""
 if [[ -z "$BLOCKED" && -z "$CONSTASK" ]]; then
     POLICY_LIB="$PROJECT_ROOT/.specify/gates/lib/policy.sh"
     POLICY_FILE="$PROJECT_ROOT/.specify/gates/policy.json"
+    EXTRA=""
     if [[ -n "$DEGRADED" ]]; then
-        # The policy reader needs jq. With entries declared, the edit may be
-        # protected and nothing here can tell: ask rather than guess.
-        if [[ -f "$POLICY_FILE" ]] \
-            && grep -qE '"extra"[[:space:]]*:[[:space:]]*\[[[:space:]]*"' <<<"$(tr '\n' ' ' <"$POLICY_FILE")"; then
-            ASK="policy protected_files.extra cannot be checked ($DEGRADED); confirm $FILE_PATH is not protected"
+        # Without jq the entries come from raw_extra, matched with the
+        # library's glob matcher (plain bash). What it cannot read asks.
+        if [[ -f "$POLICY_FILE" ]]; then
+            rc=0
+            EXTRA="$(raw_extra "$POLICY_FILE")" || rc=$?
+            # shellcheck source=/dev/null disable=SC1090
+            if [[ "$rc" -ne 0 ]]; then
+                ASK="policy protected_files.extra cannot be read ($DEGRADED); confirm $FILE_PATH is not protected"
+            elif [[ -n "$EXTRA" ]] && { [[ ! -f "$POLICY_LIB" ]] || ! "$BASH" -n "$POLICY_LIB" 2>/dev/null \
+                || ! source "$POLICY_LIB" 2>/dev/null || ! command -v gates_glob_match >/dev/null 2>&1; }; then
+                ASK="policy protected_files.extra cannot be checked: the gates policy library failed to load; confirm $FILE_PATH is not protected"
+            fi
         fi
     elif [[ -f "$POLICY_LIB" ]]; then
         # shellcheck source=/dev/null disable=SC1091
@@ -324,6 +352,9 @@ if [[ -z "$BLOCKED" && -z "$CONSTASK" ]]; then
         if [[ -f "$_pf" ]] && ! gates_validate_policy "$_pf" >/dev/null 2>&1; then
             ask "$_pf is invalid (verify.sh refuses it), so protected_files.extra cannot be checked; run /speckit.gates.doctor"
         fi
+        EXTRA="$(gates_policy_section_list protected_files extra)"
+    fi
+    if [[ -n "$EXTRA" && -z "$ASK" ]]; then
         REL="$FILE_PATH"
         # A case-insensitive match (nocasematch), so the cut is by length.
         [[ "$FILE_PATH" == "$PROJECT_ROOT/"* ]] && REL="${FILE_PATH:$((${#PROJECT_ROOT} + 1))}"
@@ -345,7 +376,7 @@ if [[ -z "$BLOCKED" && -z "$CONSTASK" ]]; then
                 BLOCKED="Protected by policy (protected_files.extra: $entry)"
                 break
             fi
-        done < <(gates_policy_section_list protected_files extra)
+        done <<<"$EXTRA"
     fi
 fi
 
@@ -374,6 +405,8 @@ if compgen -G "$LROOT/.specify/gates/hooks.local.d/protect-files/*.sh" >/dev/nul
     fi
 fi
 
+[[ "$SECRETS_LIB" == ok ]] \
+    || ask "lib/secrets.sh cannot load, so this edit cannot be checked against the secret-file list; run /speckit.gates.doctor"
 [[ -n "$CONSTASK" ]] && ask "$CONSTASK"
 [[ -n "$ASK" ]] && ask "$ASK"
 [[ -n "$NAMEASK" ]] && ask "$NAMEASK"

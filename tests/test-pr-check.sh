@@ -178,6 +178,21 @@ expect "no curl, no python3: truncated description fails closed (exit 1)" \
     "$(run "${GL[@]}" PATH="$NOFETCH" CI_MERGE_REQUEST_DESCRIPTION="Adds a." CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED=true GATES_GITLAB_TOKEN=t)" 1
 expect "no curl, no python3: says the full text could not be fetched" \
     "$(grep -c 'could not be fetched' "$WORKDIR/out.txt")" 1
+# With a token set, the missing piece is the fetcher, not the token (#223).
+expect "no curl, no python3: the failure names the missing fetcher" \
+    "$(grep -c "neither curl nor python3's urllib is available" "$WORKDIR/out.txt")" 1
+expect "no curl, no python3: the failure does not ask for the token" \
+    "$(grep -c 'set GATES_GITLAB_TOKEN' "$WORKDIR/out.txt")" 0
+expect "no curl, no python3, no token: truncated description fails closed (exit 1)" \
+    "$(run "${GL[@]}" PATH="$NOFETCH" CI_MERGE_REQUEST_DESCRIPTION="Adds a." CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED=true)" 1
+expect "no curl, no python3, no token: the failure names the fetcher and the token" \
+    "$(grep -c "install curl or python3 and set GATES_GITLAB_TOKEN" "$WORKDIR/out.txt")" 1
+mr_api "Adds a."
+expect "no curl, no python3, GitLab < 16.7: notice, title checked (exit 0)" \
+    "$(run "${GL[@]}" PATH="$NOFETCH" GATES_GITLAB_TOKEN=t)" 0
+expect "no curl, no python3, GitLab < 16.7: the notice names the missing fetcher" \
+    "$(grep -c "neither curl nor python3's urllib is available" "$WORKDIR/out.txt")" 1
+mr_api "Adds a."$'\n\n'"Tail line: I have made this seamless."
 # Without jq the protected list came out empty and an undeclared protected
 # change passed (#121); pr-check now refuses to run and names jq.
 NOJQ="$WORKDIR/path-nojq"

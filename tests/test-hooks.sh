@@ -185,7 +185,8 @@ for c in "gh pr create -t 'feat: x' -b y" "cd x && gh pr create -t 'feat: x' -b 
     'echo "$(gh pr create -t x)"' 'x=`gh pr create -t x`' $'echo x\ngh pr create -t x' 'if true; then gh pr create; fi' \
     'eval gh pr create' '{ gh pr create; }' 'xargs gh pr create' 'env -i gh pr edit 5' 'gh -R o/r pr new' \
     'glab --repo g/p mr update 3' 'gh api repos/o/r/pulls -f title=x' "gh api repos/o/r/pu''lls -f title=x" \
-    'gh api -X PATCH repos/o/r/pulls/5 -f body=x'; do
+    'gh api -X PATCH repos/o/r/pulls/5 -f body=x' 'sudo -u bob gh pr create' 'env -u FOO gh pr edit 5' \
+    'nice -n 5 gh pr create'; do
     vpn "PR hook: no python3 -> still refused: $c" 2 "$c"
 done
 for c in 'git commit -m "fix: handle gh pr create"' 'gh api repos/o/r/issues -f title=anything' \
@@ -305,8 +306,22 @@ check "raw mode allows .env.example" 0 bash -c "printf '%s' '{\"tool_input\":{\"
 check "raw mode allows a plain file (no policy)" 0 bash -c "printf '%s' '{\"tool_input\":{\"file_path\":\"src/a.ts\"}}' | PATH='$NOJQ' CLAUDE_PROJECT_DIR='$WORKDIR/none' '$HOOKS/protect-files.sh'"
 PX="$WORKDIR/protect-nojq"
 project_runtime "$PX" "true"
+# The multi-line layout policy-infer.sh writes is read without jq (#211):
+# a path it lists is refused, any other is allowed, not asked.
+printf '{\n  "hooks": {},\n  "protected_files": {\n    "extra": [\n      "docs/internal.md",\n      "spec/**"\n    ]\n  }\n}\n' \
+    >"$PX/.specify/gates/policy.json"
+for f in README.md src/a.ts; do
+    check "raw mode: a path a multi-line extra does not list is allowed: $f" 0 bash -c "out=\$(printf '%s' \"\$1\" | PATH='$NOJQ' CLAUDE_PROJECT_DIR='$PX' '$HOOKS/protect-files.sh') && [[ -z \"\$out\" ]]" _ "{\"tool_input\":{\"file_path\":\"$f\"}}"
+done
+for f in docs/internal.md spec/a/b.md "$PX/docs/internal.md"; do
+    check "raw mode: a path a multi-line extra lists is refused: $f" 2 bash -c "printf '%s' \"\$1\" | PATH='$NOJQ' CLAUDE_PROJECT_DIR='$PX' '$HOOKS/protect-files.sh'" _ "{\"tool_input\":{\"file_path\":\"$f\"}}"
+done
+check "raw mode validate-bash: a change to a multi-line extra path asks" 0 bash -c "printf '%s' \"\$1\" | PATH='$NOJQ' CLAUDE_PROJECT_DIR='$PX' '$HOOKS/validate-bash.sh' | grep -q 'docs/internal.md'" _ '{"tool_input":{"command":"rm docs/internal.md"}}'
+check "raw mode validate-bash: a change elsewhere allowed with a multi-line extra" 0 bash -c "out=\$(printf '%s' \"\$1\" | PATH='$NOJQ' CLAUDE_PROJECT_DIR='$PX' '$HOOKS/validate-bash.sh') && [[ -z \"\$out\" ]]" _ '{"tool_input":{"command":"rm src/a.ts"}}'
+# An extra the raw reader cannot read (an escape) still asks.
+printf '%s' '{ "hooks": {}, "protected_files": { "extra": ["docs\\u002einternal.md"] } }' >"$PX/.specify/gates/policy.json"
+askcheck "raw mode: an extra the raw reader cannot read asks" '{"tool_input":{"file_path":"src/a.ts"}}' protect-files.sh PATH="$NOJQ" CLAUDE_PROJECT_DIR="$PX"
 printf '%s' '{ "hooks": {}, "protected_files": { "extra": ["docs/internal.md"] } }' >"$PX/.specify/gates/policy.json"
-askcheck "raw mode: declared protected_files.extra asks" '{"tool_input":{"file_path":"src/a.ts"}}' protect-files.sh PATH="$NOJQ" CLAUDE_PROJECT_DIR="$PX"
 check "raw mode: built-in rule still blocks with extra declared" 2 bash -c "printf '%s' '{\"tool_input\":{\"file_path\":\".env\"}}' | PATH='$NOJQ' CLAUDE_PROJECT_DIR='$PX' '$HOOKS/protect-files.sh'"
 askcheck "raw mode: \\u escape in the path asks" '{"tool_input":{"file_path":"\u002eenv"}}' protect-files.sh PATH="$NOJQ" CLAUDE_PROJECT_DIR="$PX"
 # Two file_path keys: the sed match takes the last, Claude Code may act on
@@ -1153,6 +1168,65 @@ done
 check "a plain file is allowed" 0 bash -c "printf '%s' '{\"tool_input\":{\"file_path\":\"src/app.ts\"}}' | CLAUDE_PROJECT_DIR='$WORKDIR/none' '$HOOKS/protect-files.sh'"
 
 echo ""
+echo "=== one forbidden-name list at every boundary (#221) ==="
+# pre-commit and pr-check refuse every name the agent hooks refuse.
+for f in release.jks credentials credentials.yml credentials.yaml .netrc .pypirc gcloud-x.json .ssh/config \
+    .gnupg/k aws-credentials CREDENTIALS.JSON; do
+    want=0
+    [[ "$f" == CREDENTIALS.JSON ]] && want=1 # git paths are matched as spelled
+    check "secrets.sh forbids: $f" "$want" bash -c "source '$FF'; gates_forbidden_path '$f'"
+done
+# The agent hooks read the list from lib/secrets.sh: a name added there is
+# refused at the agent boundary too, and a lib that cannot load asks.
+DR="$WORKDIR/drift"
+project_runtime "$DR" "true"
+printf '{ "hooks": {} }\n' >"$DR/.specify/gates/policy.json"
+sed 's/aws-credentials)/aws-credentials | *.drift)/' "$FF" >"$DR/.specify/gates/lib/secrets.sh"
+check "a name added to lib/secrets.sh is refused by protect-files" 2 bash -c \
+    "printf '%s' '{\"tool_input\":{\"file_path\":\"x.drift\"}}' | CLAUDE_PROJECT_DIR='$DR' '$HOOKS/protect-files.sh'"
+askcheck "a name added to lib/secrets.sh asks in validate-bash" '{"tool_input":{"command":"cat x.drift"}}' \
+    validate-bash.sh CLAUDE_PROJECT_DIR="$DR"
+mkdir -p "$WORKDIR/lonehooks"
+cp "$HOOKS/protect-files.sh" "$HOOKS/validate-bash.sh" "$WORKDIR/lonehooks/"
+printf 'gates_forbidden_path() {\n' >"$DR/.specify/gates/lib/secrets.sh"
+for hk in protect-files.sh validate-bash.sh; do
+    case "$hk" in
+        protect-files.sh) pl='{"tool_input":{"file_path":"src/a.ts"}}' ;;
+        *) pl='{"tool_input":{"command":"ls src"}}' ;;
+    esac
+    check "$hk: a lib/secrets.sh that cannot load asks" 0 bash -c \
+        "printf '%s' '$pl' | CLAUDE_PROJECT_DIR='$DR' '$HOOKS/$hk' | grep -q 'lib/secrets.sh cannot load'"
+    check "$hk: no lib/secrets.sh anywhere asks" 0 bash -c \
+        "printf '%s' '$pl' | CLAUDE_PROJECT_DIR='$WORKDIR/none' '$WORKDIR/lonehooks/$hk' | grep -q 'lib/secrets.sh cannot load'"
+done
+check "a project rule still blocks before the secrets-lib question" 2 bash -c \
+    "printf '%s' '{\"tool_input\":{\"file_path\":\".specify/gates/policy.json\"}}' | CLAUDE_PROJECT_DIR='$DR' '$HOOKS/protect-files.sh'"
+# Without any lib the built-in core still blocks, never weaker than 0.4.0
+# (the canary runs the hook with CLAUDE_PROJECT_DIR at an empty sandbox).
+mkdir -p "$WORKDIR/emptyproj"
+for f in .env .env.local config/id_rsa server.pem release.jks .ENV; do
+    check "no lib/secrets.sh: the core list still blocks $f" 2 bash -c \
+        "printf '%s' '{\"tool_input\":{\"file_path\":\"$f\"}}' | CLAUDE_PROJECT_DIR='$WORKDIR/emptyproj' '$WORKDIR/lonehooks/protect-files.sh'"
+done
+check "no lib/secrets.sh: a name outside the core asks" 0 bash -c \
+    "printf '%s' '{\"tool_input\":{\"file_path\":\".netrc\"}}' | CLAUDE_PROJECT_DIR='$WORKDIR/emptyproj' '$WORKDIR/lonehooks/protect-files.sh' | grep -q 'lib/secrets.sh cannot load'"
+check "no lib/secrets.sh: validate-bash names a core secret file" 0 bash -c \
+    "printf '%s' '{\"tool_input\":{\"command\":\"cat .env\"}}' | CLAUDE_PROJECT_DIR='$WORKDIR/emptyproj' '$WORKDIR/lonehooks/validate-bash.sh' | grep -q 'names the secret file .env'"
+# A projected install (.claude/hooks/gates beside .specify/gates/lib) finds
+# its lib through the hook's own path when CLAUDE_PROJECT_DIR points
+# elsewhere, as in the canary sandbox.
+PJ="$WORKDIR/projected-layout"
+mkdir -p "$PJ/.claude/hooks/gates" "$PJ/.specify/gates/lib"
+cp "$HOOKS/protect-files.sh" "$HOOKS/validate-bash.sh" "$PJ/.claude/hooks/gates/"
+sed 's/aws-credentials)/aws-credentials | *.drift)/' "$FF" >"$PJ/.specify/gates/lib/secrets.sh"
+check "projected layout: protect-files reads the lib beside it" 2 bash -c \
+    "printf '%s' '{\"tool_input\":{\"file_path\":\"x.drift\"}}' | CLAUDE_PROJECT_DIR='$WORKDIR/emptyproj' '$PJ/.claude/hooks/gates/protect-files.sh'"
+check "projected layout: validate-bash reads the lib beside it" 0 bash -c \
+    "printf '%s' '{\"tool_input\":{\"command\":\"cat x.drift\"}}' | CLAUDE_PROJECT_DIR='$WORKDIR/emptyproj' '$PJ/.claude/hooks/gates/validate-bash.sh' | grep -q 'names the secret file x.drift'"
+check "projected layout: validate-bash asks no lib question" 0 bash -c \
+    "out=\$(printf '%s' '{\"tool_input\":{\"command\":\"ls src\"}}' | CLAUDE_PROJECT_DIR='$WORKDIR/emptyproj' '$PJ/.claude/hooks/gates/validate-bash.sh') && [[ -z \"\$out\" ]]"
+
+echo ""
 echo "=== bulk staging (git.block_bulk_staging, #71) ==="
 BK="$WORKDIR/bulk"
 mkdir -p "$BK/.specify/gates" "$BK/src"
@@ -1713,6 +1787,36 @@ done
 for c in 'ln -s src/a.ts b.ts' 'ln -s ../elsewhere/lib lib' 'git commit -m "explain the ln usage"' 'ls -l gdir'; do
     check "ln elsewhere allowed: $c" 0 bash -c "out=\$(printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$SL' '$HOOKS/validate-bash.sh') && [[ -z \"\$out\" ]]" _ "$(sl_vb "$c")"
 done
+# Links that already exist (#211): the redirect or mutation target is
+# resolved before it is matched.
+for c in 'echo x > pol.json' 'printf x >>con.md' 'rm gdir/policy.json' 'rm -rf sp' 'sed -i s/a/b/ pol.json' \
+    'cp /tmp/x gdir/baseline.json' 'echo x > "c1/policy.json"' 'mv a.txt hl/x.sh'; do
+    askcheck "a change through an existing link asks: $c" "$(sl_vb "$c")" validate-bash.sh CLAUDE_PROJECT_DIR="$SL"
+    askcheck "a change through an existing link asks without jq: $c" "$(sl_vb "$c")" validate-bash.sh PATH="$NOJQ" CLAUDE_PROJECT_DIR="$SL"
+done
+for c in 'cat pol.json' 'echo x > ok.ts' 'rm ok.ts' 'echo x > new.txt' 'wc -l gdir/policy.json > /tmp/n.txt'; do
+    check "a link to an ordinary file, or a read, allowed: $c" 0 bash -c "out=\$(printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$SL' '$HOOKS/validate-bash.sh') && [[ -z \"\$out\" ]]" _ "$(sl_vb "$c")"
+done
+askcheck "a link loop in a change target asks" "$(sl_vb 'rm l1/x')" validate-bash.sh CLAUDE_PROJECT_DIR="$SL"
+
+echo ""
+echo "=== validate-bash: sort -o and rg --pre on protected paths (#205) ==="
+# shellcheck disable=SC2016  # literal command text under test
+for c in 'sort -o .specify/gates/policy.json x.txt' 'sort -uo .specify/gates/policy.json x.txt' \
+    'sort --output=.specify/memory/constitution.md x.txt' 'cd .specify/gates && sort -o policy.json a' \
+    "rg --pre 'sed -i s/a/b/' x .specify/gates" 'rg --pre=./conv.sh x' 'rg -n --pre cat x src'; do
+    askcheck "sort -o or rg --pre that may change a protected path asks: $c" "$(vb_payload "$c")" validate-bash.sh CLAUDE_PROJECT_DIR="$VB"
+done
+askcheck "rg --pre naming a protected path asks from outside the project" \
+    "$(jq -nc --arg c "rg --pre cat x $VB/.specify/gates/policy.json" '{cwd:"/tmp",tool_input:{command:$c}}')" \
+    validate-bash.sh CLAUDE_PROJECT_DIR="$VB"
+for c in 'sort -o sorted.txt a.txt' 'rg x .specify/gates/policy.json' \
+    'rg --pre-glob "*.gz" x src' 'sort -n a.txt'; do
+    vb_allows "sort or rg that changes no protected path allowed: $c" "$c"
+done
+check "rg --pre outside the project, naming no protected path, allowed" 0 bash -c \
+    "out=\$(printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$VB' '$HOOKS/validate-bash.sh') && [[ -z \"\$out\" ]]" _ \
+    "$(jq -nc '{cwd:"/tmp",tool_input:{command:"rg --pre cat x /tmp/logs"}}')"
 
 # ===========================================================================
 # Part M: command variants the agent hooks used to miss (#170)
@@ -1779,6 +1883,33 @@ vp "gh -R o/r pr edit with an AI-ism refused" 2 "gh -R o/r pr edit 5 --body 'Gen
 vp "glab -R g/p mr update non-conventional title refused" 2 "glab -R g/p mr update 3 --title 'add stuff'"
 vp "gh -R o/r pr list is not a PR command" 0 "gh -R o/r pr list"
 vp "a PR alias inside sh -c refused" 2 "sh -c 'gh -R o/r pr new -t x -b y'"
+
+echo ""
+echo "=== validate-pr: PR commands behind keywords, wrappers, eval, xargs (#223) ==="
+for p in 'if true; then gh pr create' '! gh pr create' 'env -i gh pr create' 'env -u FOO gh pr create' \
+    'sudo -u bob gh pr create' 'nice -n 5 gh pr create' 'time -p gh pr create'; do
+    bad="$p -t 'add stuff' -b 'Adds a parser.'" ok="$p -t 'feat: x' -b 'Adds a parser.'"
+    [[ "$p" == if* ]] && bad="$bad; fi" ok="$ok; fi"
+    vp "wrapped PR command refused: $bad" 2 "$bad"
+    vp "wrapped PR command allowed: $ok" "$PR_OK" "$ok"
+done
+for c in "eval gh pr create -t 'feat: x' -b 'Adds a parser.'" "xargs gh pr create -t 'feat: x' -b 'Adds a parser.'" \
+    "xargs -I{} gh pr create -t 'feat: x' -b 'Adds a parser.'" "sudo --odd bob gh pr create -t 'feat: x' -b 'Adds a parser.'"; do
+    vp "a PR command through eval, xargs or an unread wrapper option refused: $c" 2 "$c"
+done
+vp "eval of a non-PR gh api call allowed" 0 "eval gh api user"
+if [[ "$PR_OK" -eq 0 ]]; then
+    # shellcheck disable=SC2016  # literal command text under test
+    askcheck "gh api with a variable endpoint asks" "$(pp_payload 'gh api "$EP" -f title=x')" validate-pr.sh CLAUDE_PROJECT_DIR="$RT"
+    # shellcheck disable=SC2016
+    askcheck "gh api with a variable endpoint asks after a checked PR command" \
+        "$(pp_payload 'gh pr create -t "feat: x" -b "Adds a parser."; gh api "repos/o/r/$P"')" validate-pr.sh CLAUDE_PROJECT_DIR="$RT"
+    # shellcheck disable=SC2016
+    vp "a bad title is refused before the variable endpoint asks" 2 'gh api "$EP"; gh pr create -t "add stuff" -b "x"'
+else
+    echo "SKIP: gh api with a variable endpoint asks (this host lacks python3)"
+fi
+vp "gh api with a literal non-pulls endpoint allowed" 0 'gh api "repos/{owner}/{repo}/issues"'
 
 echo ""
 echo "=== validate-bash: destructive git, protected-path and staging variants (#170) ==="

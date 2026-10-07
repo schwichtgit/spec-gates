@@ -13,6 +13,15 @@ set -euo pipefail
 REPO_OPT='([[:space:]]+(-R|--repo)([[:space:]]+|=)?[^[:space:]]+)*'
 PR_RE="(gh${REPO_OPT}[[:space:]]+pr[[:space:]]+(create|new|edit)|glab${REPO_OPT}[[:space:]]+mr[[:space:]]+(create|new|update)|gh[[:space:]]+api[[:space:]])"
 
+# ask <reason>: hand the decision to the human (PreToolUse "ask"), for a
+# command this hook cannot tell from a PR command (#223).
+ask() {
+    local r="${1//\\/\\\\}"
+    r="${r//\"/\\\"}"
+    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"%s"}}\n' "gates: $r"
+    exit 0
+}
+
 # refuse <reason...>: block the PR command (exit 2) with a reason the agent
 # can act on.
 refuse() {
@@ -52,7 +61,8 @@ fi
 might_be_pr() { # <command>
     local start pre
     start="(^|[;&|(){}\`'\"!]|(^|[[:space:]])(then|do|else|elif|if|while|until|eval))[[:space:]]*"
-    pre='(([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*|-[^[:space:]]*|sudo|env|command|exec|nohup|time|nice|xargs)[[:space:]]+)*([^[:space:]]*/)?'
+    # A wrapper option may take a value (`sudo -u bob`, `env -u NAME`).
+    pre='(([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*|-[^[:space:]]*([[:space:]]+[^-[:space:]][^[:space:]]*)?|sudo|env|command|exec|nohup|time|nice|xargs)[[:space:]]+)*([^[:space:]]*/)?'
     grep -qE "$start$pre(gh${REPO_OPT}[[:space:]]+pr[[:space:]]+(create|new|edit)|glab${REPO_OPT}[[:space:]]+mr[[:space:]]+(create|new|update))" <<<"$1" \
         && return 0
     grep -qE "$start${pre}gh[[:space:]]+api([[:space:]]|$)" <<<"$1" || return 1
@@ -198,6 +208,20 @@ def lex(s):
 
 ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 WRAPPERS = {"sudo", "env", "command", "exec", "nohup", "time", "nice"}
+# Shell keywords a command may follow in the same segment: `if gh pr
+# create ...; then`, `then gh pr create ...` (#223).
+KEYWORDS = {"if", "then", "else", "elif", "do", "while", "until", "!", "{"}
+# Wrapper options that take a value: `env -u NAME`, `sudo -u bob`.
+WRAP_VALUE = {
+    "env": {"-u", "--unset", "-C", "--chdir"},
+    "sudo": {"-u", "--user", "-g", "--group", "-h", "--host", "-p", "--prompt",
+             "-C", "--close-from", "-D", "--chdir", "-r", "--role", "-t", "--type",
+             "-U", "--other-user"},
+    "nice": {"-n", "--adjustment"},
+    "time": {"-o", "--output", "-f", "--format"},
+    "xargs": {"-I", "-i", "-n", "--max-args", "-L", "--max-lines", "-P", "--max-procs",
+              "-d", "--delimiter", "-E", "-e", "-s", "--max-chars", "-a", "--arg-file"},
+}
 API_PULLS = re.compile(r"(^|/)repos/[^/\s]+/[^/\s]+/pulls(/[^/\s]+)?/?$")
 
 
@@ -217,12 +241,24 @@ PR_SUBS = {
 
 
 def find_pr(seg):
-    """Return (kind, args) when the segment runs a PR command."""
-    i = 0
-    while i < len(seg) and (ASSIGN.match(seg[i][0]) or seg[i][0] in WRAPPERS):
-        i += 1
+    """Return (kind, args, via) when the segment runs a PR command; via is
+    "eval" or "xargs" when one of them runs it."""
+    i, wrapper, via = 0, None, None
+    while i < len(seg):
+        w = seg[i][0]
+        if ASSIGN.match(w) or w in KEYWORDS:
+            i += 1
+        elif w in WRAPPERS or w in ("eval", "xargs"):
+            wrapper = w
+            if w in ("eval", "xargs"):
+                via = w
+            i += 1
+        elif wrapper and w.startswith("-") and len(w) > 1:
+            i += 2 if w in WRAP_VALUE.get(wrapper, ()) else 1
+        else:
+            break
     if i >= len(seg) or seg[i][0].split("/")[-1] not in ("gh", "glab"):
-        return None, None
+        return None, None, None
     tool = seg[i][0].split("/")[-1]
     i += 1
     # The global repository flag may come before the subcommand (#192):
@@ -234,14 +270,14 @@ def find_pr(seg):
         elif a.startswith("--repo=") or (a.startswith("-R") and len(a) > 2):
             i += 1
         else:
-            return None, None
+            return None, None, None
     w = [t[0] for t in seg[i:i + 2]]
     group, actions = PR_SUBS[tool]
     if len(w) == 2 and w[0] == group and w[1] in actions:
-        return tool, seg[i + 2:]
+        return tool, seg[i + 2:], via
     if tool == "gh" and w[:1] == ["api"]:
-        return "api", seg[i + 1:]
-    return None, None
+        return "api", seg[i + 1:], via
+    return None, None, None
 
 
 FLAGS = {
@@ -291,7 +327,7 @@ def parse_pr(kind, args):
 
 
 def parse_api(args):
-    endpoint = None
+    endpoint, elit = None, True
     found = {}
     i = 0
     while i < len(args):
@@ -326,7 +362,14 @@ def parse_api(args):
                 found[key] = v
             continue
         if not a.startswith("-") and endpoint is None:
-            endpoint = a
+            endpoint, elit = a, alit
+    if endpoint is not None and not elit and re.search(r"[$`]", endpoint) \
+            and not API_PULLS.search(endpoint):
+        # `gh api "$EP"`: the shell picks the endpoint, so whether it is a
+        # pulls endpoint is unknown here (#223).
+        return {"ask": "gh api %s: the endpoint is not literal text, so this hook cannot tell "
+                       "whether it creates or edits a pull request; confirm it"
+                       % re.sub(r"[\x00-\x1f]", " ", endpoint)}
     if endpoint is None or not API_PULLS.search(endpoint):
         return None
     if "input" in found:
@@ -339,29 +382,59 @@ def parse_api(args):
 repo_opt = r"(\s+(-R|--repo)(\s+|=)?\S+)*"
 pr_re = re.compile(r"(gh" + repo_opt + r"\s+pr\s+(create|new|edit)|glab" + repo_opt
                    + r"\s+mr\s+(create|new|update)|gh\s+api\b)")
-result = None
+result, ask = None, None
 for seg in lex(command):
-    kind, args = find_pr(seg)
+    kind, args, via = find_pr(seg)
     if kind is None:
         # A PR command inside a shell string (sh -c, eval) is not read here.
         words = [t[0] for t in seg]
         for k, t in enumerate(words):
-            if pr_re.search(t) and k > 0 and (words[k - 1] == "-c" or "eval" in words[:k]):
+            if pr_re.search(t) and k > 0 and (words[k - 1] in ("-c", "-S", "--split-string")
+                                              or "eval" in words[:k]):
                 refuse("ERROR: a PR command inside a shell string (sh -c, eval) cannot be checked.")
+            # A PR command behind a wrapper or keyword this cannot step
+            # over (an option it does not know takes a value).
+            if k > 0 and words[0] in WRAPPERS | KEYWORDS | {"eval", "xargs"} \
+                    and find_pr(seg[k:])[0] is not None:
+                refuse("ERROR: cannot read the words before the PR command (%s); run it on its own."
+                       % " ".join(words[:k]))
         continue
     parts = parse_api(args) if kind == "api" else parse_pr(kind, args)
     if parts is None:
+        continue
+    # eval splits and expands the words again, and xargs adds arguments
+    # read from its input: neither runs the text checked here (#223).
+    if via == "eval":
+        refuse("ERROR: a PR command run through eval cannot be checked.")
+    if via == "xargs":
+        refuse("ERROR: a PR command run through xargs cannot be checked: xargs adds arguments from its input.")
+    if "ask" in parts:
+        ask = ask or parts["ask"]
         continue
     if result is not None:
         refuse("ERROR: more than one PR command in one call; run them one at a time.")
     result = parts
 
 if result is None:
-    out(pr=False)
+    out(pr=False, ask=ask or "")
 out(pr=True, title=result.get("title") or "", body=result.get("body") or "",
-    body_file=result.get("body_file") or "")
+    body_file=result.get("body_file") or "", ask=ask or "")
 PYEOF
 }
+# Project-owned rules (#71) run once every shipped check allowed, so they
+# can add a refusal but never remove one.
+run_local_rules() {
+    compgen -G "$PROJECT_ROOT/.specify/gates/hooks.local.d/validate-pr/*.sh" >/dev/null || return 0
+    local llib="$PROJECT_ROOT/.specify/gates/lib/local-hooks.sh"
+    if [[ ! -f "$llib" ]] || ! bash -n "$llib" 2>/dev/null; then
+        refuse "ERROR: local rules exist in hooks.local.d/validate-pr, but lib/local-hooks.sh cannot load." \
+            "  Run /speckit.gates.doctor."
+    fi
+    # shellcheck source=/dev/null disable=SC1090
+    source "$llib"
+    GATES_LOCAL_STDIN="$INPUT" gates_run_local "$PROJECT_ROOT" validate-pr || refuse "$GATES_LOCAL_MSG"
+}
+
 PARTS=$(pr_parts "$COMMAND")
 
 PARSE_ERROR=$(printf '%s' "$PARTS" | jq -r '.error // empty')
@@ -369,7 +442,9 @@ if [[ -n "$PARSE_ERROR" ]]; then
     refuse "$PARSE_ERROR" "  A title or body this hook cannot read is one it cannot check. Pass each once," \
         "  as quoted text (--title \"...\" --body '...') or with --body-file <path>."
 fi
+ASK=$(printf '%s' "$PARTS" | jq -r '.ask // empty')
 if [[ "$(printf '%s' "$PARTS" | jq -r '.pr')" != "true" ]]; then
+    [[ -z "$ASK" ]] || { run_local_rules; ask "$ASK"; }
     exit 0 # the match was text, not a PR command (e.g. a commit message)
 fi
 TITLE=$(printf '%s' "$PARTS" | jq -r '.title')
@@ -415,22 +490,9 @@ if [[ -n "$BODY_FILE" ]]; then
     BODY="${BODY:+$BODY$'\n\n'}$(cat "$RESOLVED")"
 fi
 
-# Project-owned rules (#71) run once every shipped check allowed, so they
-# can add a refusal but never remove one.
-run_local_rules() {
-    compgen -G "$PROJECT_ROOT/.specify/gates/hooks.local.d/validate-pr/*.sh" >/dev/null || return 0
-    local llib="$PROJECT_ROOT/.specify/gates/lib/local-hooks.sh"
-    if [[ ! -f "$llib" ]] || ! bash -n "$llib" 2>/dev/null; then
-        refuse "ERROR: local rules exist in hooks.local.d/validate-pr, but lib/local-hooks.sh cannot load." \
-            "  Run /speckit.gates.doctor."
-    fi
-    # shellcheck source=/dev/null disable=SC1090
-    source "$llib"
-    GATES_LOCAL_STDIN="$INPUT" gates_run_local "$PROJECT_ROOT" validate-pr || refuse "$GATES_LOCAL_MSG"
-}
-
 if [[ -z "$TITLE" && -z "$BODY" ]]; then
     run_local_rules
+    [[ -z "$ASK" ]] || ask "$ASK"
     exit 0
 fi
 
@@ -441,4 +503,5 @@ if ! VIOLATIONS=$(gates_message_check pr "$TITLE"$'\n\n'"$BODY" 2>&1); then
 fi
 
 run_local_rules
+[[ -z "$ASK" ]] || ask "$ASK"
 exit 0

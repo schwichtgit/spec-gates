@@ -9,29 +9,42 @@
 #   gates_secret_scan             # stdin: NUL-separated "<rev>:<path>"
 #                                 # entries; report on stdout; 0 clean,
 #                                 # 1 findings, 2 content unreadable
+#
+# The agent-boundary hooks (protect-files.sh, validate-bash.sh) source this
+# file too and call gates_forbidden_path, so the forbidden-name list has one
+# source at every boundary (issue #221). They run it under nocasematch.
 
 # Template/example files are meant to be committed even when the base name
 # looks sensitive (.env.example, config.sample, .env.template); that check
-# comes before the .env.* rule and mirrors protect-files.sh, so the agent
-# and git boundaries agree. Parameter expansion and case, no subprocess:
-# this runs once per file (issue #133).
+# comes before the .env.* rule. Parameter expansion and case, no
+# subprocess: this runs once per file (issue #133). GATES_FORBIDDEN_WHAT
+# names the rule that matched.
 gates_forbidden_path() { # <path>
     local file="$1"
     local basename="${file##*/}"
+    GATES_FORBIDDEN_WHAT=""
 
     case "$basename" in
         *.example | *.sample | *.template) return 1 ;;
     esac
 
     case "$basename" in
-        .env | .env.*) return 0 ;;
-        id_rsa* | id_ed25519* | id_ecdsa* | authorized_keys | known_hosts) return 0 ;;
-        *.pem | *.key | *.crt | *.p12 | *.pfx | *.keystore) return 0 ;;
-        credentials.json | service-account*.json | aws-credentials) return 0 ;;
+        .env | .env.*) GATES_FORBIDDEN_WHAT="environment file" ;;
+        id_rsa* | id_ed25519* | id_ecdsa* | authorized_keys | known_hosts) GATES_FORBIDDEN_WHAT="SSH key or config" ;;
+        *.pem | *.key | *.crt | *.p12 | *.pfx | *.jks | *.keystore) GATES_FORBIDDEN_WHAT="certificate or key store" ;;
+        credentials | credentials.json | credentials.yml | credentials.yaml | .netrc | .pypirc)
+            GATES_FORBIDDEN_WHAT="credentials file"
+            ;;
+        gcloud-*.json | service-account*.json | aws-credentials) GATES_FORBIDDEN_WHAT="cloud credentials file" ;;
     esac
+    [[ -z "$GATES_FORBIDDEN_WHAT" ]] || return 0
 
-    case "$file" in
-        */.ssh/* | */.gnupg/* | */.aws/* | */.gcloud/*) return 0 ;;
+    # A leading slash, so a top-level .ssh/ matches as well.
+    case "/$file" in
+        */.ssh/* | */.gnupg/* | */.aws/* | */.gcloud/*)
+            GATES_FORBIDDEN_WHAT="file in a sensitive directory"
+            return 0
+            ;;
     esac
 
     return 1
