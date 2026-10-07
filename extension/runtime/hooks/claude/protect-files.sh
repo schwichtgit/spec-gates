@@ -340,7 +340,7 @@ if [[ -z "$BLOCKED" && -z "$CONSTASK" ]]; then
         # shellcheck source=/dev/null disable=SC1091
         # A syntax error in a sourced file aborts the whole hook, so check it
         # first (bash -n parses without running).
-        if ! bash -n "$POLICY_LIB" 2>/dev/null \
+        if ! "$BASH" -n "$POLICY_LIB" 2>/dev/null \
             || ! source "$POLICY_LIB" 2>/dev/null \
             || ! command -v gates_policy_section_list >/dev/null 2>&1; then
             ask "the gates policy library failed to load, so protected_files.extra cannot be checked; run /speckit.gates.doctor"
@@ -393,7 +393,7 @@ fi
 LROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 if compgen -G "$LROOT/.specify/gates/hooks.local.d/protect-files/*.sh" >/dev/null; then
     LLIB="$LROOT/.specify/gates/lib/local-hooks.sh"
-    if [[ ! -f "$LLIB" ]] || ! bash -n "$LLIB" 2>/dev/null; then
+    if [[ ! -f "$LLIB" ]] || ! "$BASH" -n "$LLIB" 2>/dev/null; then
         ask "local rules exist in hooks.local.d/protect-files, but lib/local-hooks.sh cannot load; run /speckit.gates.doctor"
     fi
     # shellcheck source=/dev/null disable=SC1090

@@ -113,6 +113,15 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   fails (exit 1). The README rollback note for 0.3.x branches covers
   husky, lefthook and the pre-commit framework, whose `pre-merge-commit`
   entry lives in their own configuration.
+- **Agent hooks: no false asks on reads, fewer false refusals** (#229).
+  validate-bash no longer asks on a read-only command that only names a
+  sensitive directory (`ls ~/.ssh/`, `cat ~/.aws/config`); a write there,
+  a glob over it or a secret name in it still asks. Without python3,
+  validate-pr now asks on `gh api "$EP"` as the parser does, and with it
+  a non-PR `gh api` behind a wrapper option it cannot read
+  (`sudo --odd bob gh api user`) runs instead of being refused. The hooks
+  check and run local rules with the running bash (`$BASH`), so a
+  restricted PATH without bash no longer turns them into refusals.
 
 ## 0.4.0 — 2026-10-06
 

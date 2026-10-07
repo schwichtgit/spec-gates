@@ -867,7 +867,7 @@ elif [[ -f "$POLICY" ]]; then
     if ! jq -e '(.protected_files.extra // []) | type == "array" and all(type == "string")' \
         "$POLICY" >/dev/null 2>&1; then
         EXTRA_UNREAD=1
-    elif [[ -f "$_plib" ]] && bash -n "$_plib" 2>/dev/null \
+    elif [[ -f "$_plib" ]] && "$BASH" -n "$_plib" 2>/dev/null \
         && ! (
             # shellcheck source=/dev/null disable=SC1090
             source "$_plib" && _pf="$(gates_policy_file)" \
@@ -1302,6 +1302,14 @@ if [[ "$SECRETS_LIB" == ok ]]; then
     shopt -s nocasematch
     while IFS= read -r _t; do
         if gates_forbidden_path "$_t"; then
+            # A read-only command that names a sensitive directory
+            # (`ls ~/.ssh/`, `cat ~/.aws/config`) runs: only the directory
+            # matched, not a secret name. A write there, or a glob that
+            # could read every key in it (`cat ~/.ssh/*`), still asks (#229).
+            if [[ "$GATES_FORBIDDEN_WHAT" == "file in a sensitive directory" && "$MUTATES" -eq 0 \
+                && "$WRITE_REDIRECT" -eq 0 && "$_t" != *[*?[]* ]]; then
+                continue
+            fi
             SECRET_FILE="$_t"
             break
         fi
@@ -1327,7 +1335,7 @@ fi
 # project refusal is stronger than a question.
 if compgen -G "$LROOT/.specify/gates/hooks.local.d/validate-bash/*.sh" >/dev/null; then
     LLIB="$LROOT/.specify/gates/lib/local-hooks.sh"
-    if [[ ! -f "$LLIB" ]] || ! bash -n "$LLIB" 2>/dev/null; then
+    if [[ ! -f "$LLIB" ]] || ! "$BASH" -n "$LLIB" 2>/dev/null; then
         ask "local rules exist in hooks.local.d/validate-bash, but lib/local-hooks.sh cannot load; run /speckit.gates.doctor"
     fi
     # shellcheck source=/dev/null disable=SC1090
