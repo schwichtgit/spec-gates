@@ -105,7 +105,9 @@ inert_awk() {
     # command substitution other than the quoted heredoc, a heredoc, a
     # comment) and a command that feeds a shell, eval or xargs print the
     # command unchanged.
-    function base(w) { sub(/.*\//, "", w); return w }
+    # The last path component; split, as sub(/.*\//) is quadratic on a
+    # long word in BWK awk (macOS, #231).
+    function base(w,    n, p) { n = split(w, p, "/"); return n ? p[n] : "" }
     function endword(   o) {
         if (!inw) return
         o = rw
@@ -124,17 +126,19 @@ inert_awk() {
             else if (wt ~ /^--(body|title|notes)=/) { o = wt; sub(/=.*/, "=''", o) }
         }
         if (base(wt) ~ /^(sh|bash|zsh|dash|ksh|fish|eval|xargs|source|parallel)$/) guard = 1
-        seg = seg o; prev = wt
+        emit(o); prev = wt
         inw = 0; rw = ""; wt = ""; wlit = 1
     }
-    function endseg() {
+    # The output is a list of pieces, printed at the end: appending to one
+    # string per word is quadratic in BWK awk (#231). ro marks the pieces
+    # of read-only segments, which mode=p leaves out.
+    function endseg(   k) {
         endword()
-        bout = bout seg
-        if (cmd !~ /^(grep|egrep|fgrep|cat|head|tail|wc|ls|stat|diff|cmp|echo|printf|type|which|cd|pushd|popd|true)$/)
-            pout = pout seg
-        seg = ""; cmd = ""; sub_ = ""; pend = 0; prev = ""; redir = 0
+        if (cmd ~ /^(grep|egrep|fgrep|cat|head|tail|wc|ls|stat|diff|cmp|echo|printf|type|which|cd|pushd|popd|true)$/)
+            for (k = s0; k <= np; k++) ro[k] = 1
+        s0 = np + 1; cmd = ""; sub_ = ""; pend = 0; prev = ""; redir = 0
     }
-    function emit(c) { seg = seg c }
+    function emit(c) { pc[++np] = c }
     # A "$(cat <<'X' ... X)" heredoc at position p of s: its end, or 0.
     # An unquoted delimiter counts only when the body expands nothing.
     function heredoc(p,    r, d, q, e, body, k) {
@@ -159,49 +163,65 @@ inert_awk() {
     }
     { s = s (NR > 1 ? "\n" : "") $0 }
     END {
-        n = length(s); i = 1; wlit = 1
+        # mode=b changes only a commit message or a gh text, so without
+        # "commit" or "gh" (quotes and backslashes aside) it prints the
+        # command as it is, walking nothing (#231).
+        if (mode == "b") {
+            t = s; gsub(/["'\\]/, "", t)
+            if (!index(t, "commit") && !index(t, "gh")) { print s; exit }
+        }
+        # Characters from an array split once, runs of plain ones copied
+        # with one substr: substr per character is quadratic in BWK awk.
+        n = split(s, ch, ""); i = 1; wlit = 1; s0 = 1
         while (i <= n) {
-            c = substr(s, i, 1)
+            c = ch[i]
             if (c == "'") {
-                j = index(substr(s, i + 1), "'")
-                if (j == 0) { bail = 1; break }
-                rw = rw substr(s, i, j + 1); wt = wt substr(s, i + 1, j - 1); inw = 1
-                i += j + 1; continue
+                j = i + 1
+                while (j <= n && ch[j] != "'") j++
+                if (j > n) { bail = 1; break }
+                rw = rw substr(s, i, j - i + 1); wt = wt substr(s, i + 1, j - i - 1); inw = 1
+                i = j + 1; continue
             }
             if (c == "\"") {
                 inw = 1; rw = rw c; i++
-                while (i <= n && substr(s, i, 1) != "\"") {
-                    c = substr(s, i, 1)
-                    if (c == "$" && substr(s, i + 1, 1) == "(") {
+                while (i <= n && ch[i] != "\"") {
+                    c = ch[i]
+                    if (c == "$" && ch[i + 1] == "(") {
                         e = heredoc(i)
                         if (!e) { bail = 1; break }
                         rw = rw substr(s, i, e - i + 1); wt = wt "x"; i = e + 1; continue
                     }
-                    if (c == "`" || (c == "$" && substr(s, i + 1, 1) == "{")) { bail = 1; break }
+                    if (c == "`" || (c == "$" && ch[i + 1] == "{")) { bail = 1; break }
                     if (c == "$" || c == "\\") wlit = 0
                     if (c == "\\") { rw = rw substr(s, i, 2); wt = wt substr(s, i + 1, 1); i += 2; continue }
-                    rw = rw c; wt = wt c; i++
+                    j = i + 1
+                    while (j <= n && index("\"$`\\", ch[j]) == 0) j++
+                    rw = rw substr(s, i, j - i); wt = wt substr(s, i, j - i); i = j
                 }
                 if (bail || i > n) { bail = 1; break }
                 rw = rw "\""; i++; continue
             }
             if (c == "\\") { rw = rw substr(s, i, 2); wt = wt substr(s, i + 1, 1); wlit = 0; inw = 1; i += 2; continue }
             if (c == " " || c == "\t") { endword(); emit(c); i++; continue }
-            if (c == "`" || (c == "#" && !inw) || (c == "$" && substr(s, i + 1, 1) ~ /[('{]/) \
-                || (c == "<" && substr(s, i + 1, 1) ~ /[(<]/) || (c == ">" && substr(s, i + 1, 1) == "(")) {
+            if (c == "`" || (c == "#" && !inw) || (c == "$" && ch[i + 1] ~ /[('{]/) \
+                || (c == "<" && ch[i + 1] ~ /[(<]/) || (c == ">" && ch[i + 1] == "(")) {
                 bail = 1; break
             }
             if (c == "\n" || c == ";" || c == "&" || c == "|" || c == "(" || c == ")") {
-                endseg(); bout = bout c; pout = pout c; i++; continue
+                endseg(); emit(c); s0 = np + 1; i++; continue
             }
             if (c == "<" || c == ">") { endword(); emit(c); redir = 1; i++; continue }
             if (c == "$") wlit = 0
-            rw = rw c; wt = wt c; inw = 1; i++
+            j = i + 1
+            while (j <= n && index("'\"\\ \t`#$<>\n;&|()", ch[j]) == 0) j++
+            rw = rw substr(s, i, j - i); wt = wt substr(s, i, j - i); inw = 1; i = j
         }
         if (!bail) endseg()
         if (bail || guard) print s
-        else if (mode == "p") print pout
-        else print bout
+        else {
+            for (k = 1; k <= np; k++) if (mode != "p" || !ro[k]) printf "%s", pc[k]
+            printf "\n"
+        }
     }
 AWK
 }
@@ -217,18 +237,23 @@ quoted_heredoc_awk() {
     cat <<'AWK'
     # One pass over the lines; a body is the lines after the line that
     # holds its operator, up to the terminator line.
-    { ln[++n] = $0 }
+    # Without a "<<" there is no body, and the lines print as they are.
+    # Characters come from an array split once per line: substr per
+    # character is quadratic in BWK awk (#231).
+    { ln[++n] = $0; if (index($0, "<<")) hd = 1 }
     END {
+        if (!hd) { for (j = 1; j <= n; j++) print ln[j]; exit }
         q = ""; nb = ""; k = 1
         while (k <= n) {
-            s = ln[k]; m = length(s); np = 0; i = 1
+            s = ln[k]; m = split(s, ch, ""); np = 0; i = 1
             while (i <= m) {
-                c = substr(s, i, 1)
+                c = ch[i]
                 if (q == "'") { if (c == "'") q = ""; i++; continue }
                 if (c == "\\") { i += 2; continue }
                 if (q == "\"") { if (c == "\"") q = ""; i++; continue }
                 if (c == "'" || c == "\"") { q = c; i++; continue }
-                if (c == "<" && substr(s, i + 1, 1) == "<" && substr(s, i + 2, 1) != "<" && substr(s, i - 1, 1) != "<") {
+                # ch[1] at the start, as substr(s, 0, 1) gives the first
+                if (c == "<" && ch[i + 1] == "<" && ch[i + 2] != "<" && ch[i > 1 ? i - 1 : 1] != "<") {
                     r = substr(s, i + 2); t = 0
                     if (substr(r, 1, 1) == "-") { t = 1; r = substr(r, 2) }
                     match(r, /^[ \t]*/); r = substr(r, RLENGTH + 1)
@@ -258,7 +283,7 @@ quoted_heredoc_awk() {
         if (q != "" || nb ~ /(^|[\n;&|(`])[ \t]*\.[ \t]/) all = 1
         m = all ? 0 : split(nb, w, /[^A-Za-z0-9_.\/-]+/)
         for (j = 1; j <= m; j++) {
-            x = w[j]; sub(/.*\//, "", x)
+            x = w[j]; nx = split(x, p, "/"); x = p[nx]  # as in base(), #231
             if (x ~ /^(sh|bash|zsh|dash|ksh|ash|mksh|fish|eval|exec|xargs|source|parallel|ssh|su|python[0-9.]*|perl|ruby|node|deno|bun|php|osascript)$/) all = 1
         }
         for (j = 1; j <= n; j++) if (all || !drop[j]) print ln[j]
@@ -302,8 +327,10 @@ if [[ -z "$BLOCKED" ]]; then
                     ;;
                 '>'* | '<'* | '&>'* | [0-9]'>'* | [0-9]'<'*) continue ;;
             esac
-            _arg="${_arg#[\"\']}"
-            _arg="${_arg%[\"\']}"
+            # One quote off each end; by substring, as ${_arg#[\"\']} and
+            # ${_arg%[\"\']} are quadratic in bash 3.2 on a long word (#231).
+            case "$_arg" in [\"\']*) _arg="${_arg:1}" ;; esac
+            case "${_arg: -1}" in [\"\']) _arg="${_arg:0:${#_arg}-1}" ;; esac
             # The quoted $TMPDIR patterns are literal on purpose: they match
             # the unexpanded command text.
             # shellcheck disable=SC2016
@@ -438,8 +465,8 @@ git_scan() {
         [[ "$n" -gt 0 ]] || continue
         if [[ "${w[0]}" == cd || "${w[0]}" == pushd ]]; then
             t="${w[1]:-}"
-            t="${t#[\"\']}"
-            t="${t%[\"\']}"
+            case "$t" in [\"\']*) t="${t:1}" ;; esac # not ${t#[\"\']}, #231
+            case "${t: -1}" in [\"\']) t="${t:0:${#t}-1}" ;; esac
             # shellcheck disable=SC2016  # literal command text
             case "$t" in
                 '' | '~'* | *'$'* | *'`'* | -*) scwd="" ;;
@@ -504,8 +531,8 @@ git_scan() {
         esac
         base="$scwd"
         if [[ -n "$cdir" ]]; then
-            cdir="${cdir#[\"\']}"
-            cdir="${cdir%[\"\']}"
+            case "$cdir" in [\"\']*) cdir="${cdir:1}" ;; esac # as above, #231
+            case "${cdir: -1}" in [\"\']) cdir="${cdir:0:${#cdir}-1}" ;; esac
             if [[ "$cdir" == /* ]]; then base="$cdir"; elif [[ -n "$scwd" ]]; then base="$scwd/$cdir"; fi
         fi
         if [[ "$xa" -eq 1 && ( "$sub" == add || "$sub" == stage ) ]]; then
@@ -894,7 +921,14 @@ normalize() { printf '%s\n' "$1" | awk -v root="$LROOT" -v rroot="${LREAL:-$LROO
     | awk '
         # Brace expansion, as the shell does it: policy.{json,x} names
         # policy.json (#170). One group per pass, a bounded number of passes.
-        { for (k = 0; k < 20 && match($0, /[^[:space:]{}"'"'"'`]*\{[^{}[:space:]]*,[^{}[:space:]]*\}[^[:space:]{}"'"'"'`]*/); k++) {
+        # The first group is found alone and its word matched from where
+        # it starts: match() with the word around it tries every position
+        # and is quadratic in BWK awk (macOS) on a long line (#231).
+        { for (k = 0; k < 20 && match($0, /\{[^{}[:space:]]*,[^{}[:space:]]*\}/); k++) {
+              b = RSTART; nw = split(substr($0, 1, b - 1), wp, /[[:space:]{}"'"'"'`]/)
+              b -= length(wp[nw])
+              match(substr($0, b), /[^[:space:]{}"'"'"'`]*\{[^{}[:space:]]*,[^{}[:space:]]*\}[^[:space:]{}"'"'"'`]*/)
+              RSTART += b - 1
               w = substr($0, RSTART, RLENGTH); o = index(w, "{"); c = index(w, "}")
               pre = substr(w, 1, o - 1); post = substr(w, c + 1)
               m = split(substr(w, o + 1, c - o - 1), alt, ","); out = ""
