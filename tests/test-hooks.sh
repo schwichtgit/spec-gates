@@ -441,8 +441,8 @@ check "secret scan: constitution.sh:178 prose line passes" 0 \
 check "secret scan: api_key = \"AKIA...\" blocked" 1 \
     bash -c "cd '$GF' && printf 'api_key = \"%s\"\n' AKIAabcdefgh >k1.txt && git add k1.txt && git commit -q -m 'chore: k1'"
 ( cd "$GF" && git reset -q -- . >/dev/null 2>&1; rm -f k1.txt )
-check "secret scan: token: '<10 chars>' blocked" 1 \
-    bash -c "cd '$GF' && printf \"token: '%s'\\n\" abcdefgh12 >k2.txt && git add k2.txt && git commit -q -m 'chore: k2'"
+check "secret scan: token: '<10 chars>' blocked as a credential assignment" 0 \
+    bash -c "cd '$GF' && printf \"token: '%s'\\n\" abcdefgh12 >k2.txt && git add k2.txt && ! git commit -q -m 'chore: k2' 2>'$WORKDIR/k2.err' && grep -q 'SECRET: Possible credential assignment in k2.txt' '$WORKDIR/k2.err'"
 ( cd "$GF" && git reset -q -- . >/dev/null 2>&1; rm -f k2.txt )
 
 # The scan reads the staged blobs in one batch per rule (issue #133): a name
