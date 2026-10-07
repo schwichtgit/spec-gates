@@ -413,6 +413,116 @@ adoption PR), the PR's own copy runs and the log says so. A base whose
 libraries, so this protection starts with the first base that carries a
 release supporting it.
 
+#### Adopting only the pr step
+
+A pipeline that runs the gates step but not the rest of the template can
+add the `pr` step on its own, without the hardened workflow. A
+`ci:pr` hold instead leaves PR titles, descriptions and Protected-Change
+declarations unchecked in CI, and doctor reports it as a `[rec]` saying
+so. When `project.sh` reports the `pr` step missing or held, it prints
+the step for the platforms the gates run on; it never writes a pipeline
+file. Each form runs the same commands as the template: it extracts the
+base revision's `.specify/gates` with `git archive` and runs that
+`pr-check.sh` with `GATES_RUNTIME_DIR`, so a PR cannot replace the
+check that judges it. Add it to the pipeline file that runs
+`verify.sh --boundary ci`: doctor looks for the step there.
+
+GitHub: a step in the job that runs `verify.sh --boundary ci`, so the
+required `gates` check covers it. That job checks out with
+`fetch-depth: 0` (without full history the base revision cannot be
+read), and the workflow runs on `pull_request` with `edited` among its
+types.
+
+```yaml
+# spec-gates pr step (GitHub): add under steps: of the job that runs
+# verify.sh --boundary ci, so its required check covers it. That job
+# checks out with fetch-depth: 0, and the workflow runs on
+# pull_request with types: [opened, synchronize, reopened, edited].
+- name: Check the pull request (text, protected changes, secrets)
+  if: github.event_name == 'pull_request'
+  env:
+    GATES_PR_TITLE: ${{ github.event.pull_request.title }}
+    GATES_PR_BODY: ${{ github.event.pull_request.body }}
+  run: |
+    base="origin/$GITHUB_BASE_REF"
+    if git cat-file -e "$base:.specify/gates/pr-check.sh" 2>/dev/null; then
+      rt="$(mktemp -d)"
+      git archive "$base" .specify/gates | tar -x -C "$rt"
+      echo "pr-check: running the base revision's pr-check.sh ($base)"
+      GATES_RUNTIME_DIR="$rt/.specify/gates" bash "$rt/.specify/gates/pr-check.sh"
+    else
+      echo "pr-check: the base ($base) has no pr-check.sh (adoption PR); running the pull request's own copy"
+      bash .specify/gates/pr-check.sh
+    fi
+```
+
+GitLab: a job of its own, with full history (`GIT_DEPTH: "0"`) and the
+tools `pr-check.sh` needs, in merge request pipelines. With "Pipelines
+must succeed" set, a failure blocks the merge.
+
+```yaml
+# spec-gates pr step (GitLab): add as a job to the pipeline file that
+# runs verify.sh --boundary ci. pr-check.sh needs bash, git, jq and
+# python3 (curl fetches a truncated description). Editing an MR title
+# or description starts no pipeline; re-run it after such edits.
+gates-pr:
+  stage: test
+  image: node:26-slim
+  timeout: 10m
+  variables:
+    GIT_DEPTH: "0"
+  before_script:
+    - apt-get update -q && apt-get install -y -q jq git python3 curl
+  script:
+    - |
+      set -e
+      base="${CI_MERGE_REQUEST_DIFF_BASE_SHA:-}"
+      if [ -z "$base" ]; then
+        bash .specify/gates/pr-check.sh
+      elif git cat-file -e "$base:.specify/gates/pr-check.sh" 2>/dev/null; then
+        rt="$(mktemp -d)"
+        git archive "$base" .specify/gates | tar -x -C "$rt"
+        echo "pr-check: running the base revision's pr-check.sh ($base)"
+        GATES_RUNTIME_DIR="$rt/.specify/gates" bash "$rt/.specify/gates/pr-check.sh"
+      else
+        echo "pr-check: the base ($base) has no pr-check.sh (adoption MR); running the merge request's own copy"
+        bash .specify/gates/pr-check.sh
+      fi
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+```
+
+Jenkins: a stage in the declarative pipeline's `stages`, on an agent with
+bash, git and jq and a full-history checkout. Only the title is checked
+(Jenkins exposes no description).
+
+```groovy
+// spec-gates pr step (Jenkins): add as a stage to the Jenkinsfile that
+// runs verify.sh --boundary ci. The agent needs bash, git and jq, and a
+// full-history checkout; outside PR builds the check skips itself.
+stage('PR check') {
+    steps {
+        sh '''
+            set -e
+            if [ -z "${CHANGE_TARGET:-}" ]; then
+                bash .specify/gates/pr-check.sh
+                exit 0
+            fi
+            base="origin/$CHANGE_TARGET"
+            if git cat-file -e "$base:.specify/gates/pr-check.sh" 2>/dev/null; then
+                rt="$(mktemp -d)"
+                git archive "$base" .specify/gates | tar -x -C "$rt"
+                echo "pr-check: running the base revision's pr-check.sh ($base)"
+                GATES_RUNTIME_DIR="$rt/.specify/gates" bash "$rt/.specify/gates/pr-check.sh"
+            else
+                echo "pr-check: the base ($base) has no pr-check.sh (adoption PR); running the pull request's own copy"
+                bash .specify/gates/pr-check.sh
+            fi
+        '''
+    }
+}
+```
+
 ## One entrypoint
 
 `verify.sh --boundary agent|git|ci [--json] [--dry-run]`
@@ -851,7 +961,11 @@ A pipeline that calls `verify.sh` but has no proven gates step fails, and
 the line names what to change; a repository with no such pipeline at all
 gets a recommendation. `verify.sh` itself refuses a repeated `--boundary`.
 A `ci:<step>` hold for a step the pipeline runs is stale and fails; one
-naming no template step gets a recommendation to remove it.
+naming no template step gets a recommendation to remove it. A hold for a
+step the pipeline lacks is a `[rec]`, not an `[ok]`, naming the check CI
+gives up (for `pr`: PR titles, descriptions and Protected-Change
+declarations are not checked in CI); the `pr` step can be added on its
+own (see "Adopting only the pr step" above).
 
 The check reads files, so it has limits. Read as live: a GitHub
 `if:`, `continue-on-error:` or event filter (`branches:`, `paths:`)

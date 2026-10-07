@@ -467,6 +467,38 @@ report_side() {
         printf '%s\n' "$missing" | sed 's/^/project:   /'
         say "  add them from .specify/extensions/gates/ci/, or record a deliberate omission as ci:<step> in $GATES_HOLDS_REL"
     fi
+    # A ci: hold keeps a check out of CI: name what it gives up (#235). A
+    # hold for a step that runs, or for no template step, is doctor's.
+    local cid present held="" wantpr=0
+    if gates_ci_files "$ROOT" >/dev/null; then
+        present="$(gates_ci_present "$ROOT")"
+        while IFS= read -r cid; do
+            [[ -n "$cid" && -n "$(gates_ci_step_re "$cid")" ]] || continue
+            [[ -n "$present" ]] && grep -qxF "$cid" <<<"$present" && continue
+            held="$held $cid"
+            say "[rec] CI step '$cid' held (ci:$cid in $GATES_HOLDS_REL): $(gates_ci_step_omitted "$cid")"
+        done <<<"$(gates_holds_ci "$ROOT")"
+    fi
+    grep -qxF pr <<<"$missing" && wantpr=1
+    case " $held " in *" pr "*) wantpr=1 ;; esac
+    # The pr step adopted on its own, for each platform the gates run on;
+    # printed only, never written into a pipeline file.
+    if [[ "$wantpr" -eq 1 ]]; then
+        local kinds="" f k
+        while IFS= read -r f; do
+            [[ -n "$f" ]] || continue
+            k="$(_gates_ci_kind "$ROOT/$f")"
+            case " $kinds " in *" $k "*) ;; *) kinds="$kinds $k" ;; esac
+        done <<<"$(gates_ci_files "$ROOT")"
+        for k in $kinds; do
+            if gates_ci_pr_snippet "$k" >/dev/null; then
+                say "  the pr step on its own ($k), without the rest of the template:"
+                gates_ci_pr_snippet "$k" | sed 's/^/project:     /'
+            else
+                say "  the pr step on its own: see \"Adopting only the pr step\" in .specify/extensions/gates/commands/speckit.gates.ci.md"
+            fi
+        done
+    fi
     # Callers written for 0.3.6 (#216): verify.sh still runs them, with a
     # deprecation warning.
     local unbounded

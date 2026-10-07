@@ -12,6 +12,14 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
 
 ### Fixed
 
+- **A `ci:<step>` hold says what CI gives up** (#235). Doctor reported a
+  held step as `[ok] ... omitted on purpose`; for `ci:pr` that hid that PR
+  titles, descriptions and Protected-Change declarations were no longer
+  checked in CI. Doctor and `project.sh` now report each held step as a
+  `[rec]` naming the check it gives up (exit codes unchanged). The `pr`
+  step can be adopted on its own: `project.sh` prints it for GitHub,
+  GitLab or Jenkins when the step is missing or held, and
+  `docs/how-it-works.md` documents it.
 - **Doctor names the pending upgrade item** (#214). Whenever
   `project.sh --check` exited 1, doctor advised running `project.sh`,
   which reports "no changes" for pending hook-manager wiring, a pending
