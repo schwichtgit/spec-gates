@@ -31,8 +31,7 @@ required together; see Rules).
 - `jq` available. If missing, point at `/speckit.gates.doctor` and STOP.
 - Resolve `CORPUS` as the `constitution/` directory under this command's
   extension root (e.g. `.specify/extensions/gates/constitution/`). It is read
-  in place, never projected. A remote registry may be fetched via the 003
-  fetch machinery (tag/commit pinned) if the user names one.
+  in place, never projected.
 
 ## Steps
 

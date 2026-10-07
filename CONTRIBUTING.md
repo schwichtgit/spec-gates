@@ -50,12 +50,18 @@ authoritative version; the short form:
    bash tests/run.sh
    ```
 
+   With the git hook stubs installed in your clone, the stubs run
+   `.specify/gates/hooks/<name>`, so copy those too
+   (`mkdir -p .specify/gates/hooks && cp extension/runtime/hooks/git/* .specify/gates/hooks/`)
+   and list `.specify/gates/hooks/` in `.git/info/exclude`.
+
 4. Commits follow Conventional Commits: no emoji, subject ≤ 72 characters.
 5. Fill in the pull request template; CI must be green (gate, canaries,
    suites, the macOS bash 3.2 job) before review. Each PR also gets a
    **unit test results** check and a comment with per-suite counts and the
    runtime's line coverage (measured with bashcov; it reports and never
-   blocks). Check your PR text with
+   blocks; locally, as root in a Linux container with bashcov installed:
+   `bash scripts/coverage.sh`). Check your PR text with
    `bash .specify/gates/pr-check.sh --title "…" --body-file <file>`
    before opening it.
 

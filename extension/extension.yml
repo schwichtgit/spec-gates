@@ -7,9 +7,10 @@ extension:
   description: >-
     Deterministic quality enforcement for Spec Kit projects at three
     boundaries: the agent boundary (Claude Code PreToolUse/PostToolUse/Stop
-    hooks), the git boundary (pre-commit / commit-msg), and the CI boundary
-    (projected GitHub Actions / GitLab CI / Jenkins pipelines). One policy
-    file, one verify entrypoint, identical results at every boundary.
+    hooks), the git boundary (pre-commit / pre-merge-commit / commit-msg),
+    and the CI boundary (projected GitHub Actions / GitLab CI / Jenkins
+    pipelines). One policy file, one verify entrypoint, identical results
+    at every boundary.
   author: schwichtgit
   repository: https://github.com/schwichtgit/spec-gates
   license: MIT
@@ -21,7 +22,9 @@ requires:
   speckit_version: ">=0.12.0"
   # Tools the runtime needs (doctor checks each one). python3 needs the
   # json module: the PR hook parses commands with it and refuses every PR
-  # command without it. project.sh refuses to run without cmp.
+  # command without it. project.sh refuses to run without cmp. Not listed:
+  # sha256sum or shasum (either one), which project.sh and the contract
+  # gate need; doctor fails when neither is installed.
   tools:
     - name: jq
       required: true

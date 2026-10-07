@@ -18,7 +18,7 @@ unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_PREFIX GIT_COMMON_DIR \
 # read as probes nor written (FR-006): all probes live under mktemp -d and
 # are removed on every exit path.
 #
-# v1 canary set:
+# The canaries, in run order:
 #   format  -- prettier-dirty file    -> verify.sh format gate     (exit 2)
 #   markdown -- MD018 heading         -> verify.sh markdownlint gate (exit 2)
 #   shell   -- SC2086-class script    -> verify.sh shellcheck gate (exit 2)

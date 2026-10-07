@@ -84,8 +84,9 @@ SHA256SUMS`) and `cosign verify-blob` with the identity and issuer
 
 ## Rules
 
-- NEVER write `.specify/gates/policy.json`. If the release adds policy
-  fields, list them and point at `/speckit.gates.propose`.
+- NEVER write `.specify/gates/policy.json`. If `project.sh` lists new
+  policy settings, show them; adopting one is the user's reviewed change
+  (a protected-file commit with `Protected-Change` and `Approved-By`).
 - NEVER copy runtime files by hand or `chmod` them yourself: that is
   `project.sh`'s job, and doing it file by file is what the single
   reviewable step replaces.
@@ -97,7 +98,7 @@ SHA256SUMS`) and `cosign verify-blob` with the identity and issuer
   decision.
 - If `project.sh` reports `.prettierignore` entries missing for the
   vendored paths, offer `--add-lint-ignores` (see `/speckit.gates.init`
-  step 3c); markdownlint `ignores` stay a manual offer.
+  step 4b); markdownlint `ignores` stay a manual offer.
 - Project rules in `.specify/gates/hooks.local.d/` are never touched by an
   upgrade; there is nothing to migrate.
 - Tell the user that `.git/hooks` is shared by every branch while the

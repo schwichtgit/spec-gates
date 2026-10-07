@@ -28,11 +28,10 @@ An agentic workflow has exactly three such places.
 While the agent is working. Claude Code exposes lifecycle hooks, and
 spec-gates uses four of them:
 
-- `PreToolUse(Write|Edit)` → `protect-files.sh`: refuses edits to `.env`
-  files, private keys and certificates, exact credential file names
-  (`credentials.json`, `.netrc`, cloud service-account files), sensitive
-  directories (the same secret-file list `pre-commit` and `pr-check.sh`
-  use, read from `lib/secrets.sh`), lock files, the project's own rules in
+- `PreToolUse(Write|Edit)` → `protect-files.sh`: refuses edits to the
+  forbidden files (`.env` files, keys, certificates, credential files and
+  sensitive directories: the list `pre-commit` and `pr-check.sh` use, see
+  the git boundary), lock files, the project's own rules in
   `.specify/gates/hooks.local.d/`, `.specify/gates/policy.json` (always,
   whatever the policy says), and every `protected_files.extra` entry. A
   Write or Edit to `.specify/memory/constitution.md` asks instead, under
@@ -66,7 +65,9 @@ spec-gates uses four of them:
   behind `env`, `command`, `sudo`, variable assignments and git's global
   options (`-C`, `--no-pager`, …). An argument it cannot resolve (`"$f"`,
   a backtick substitution, arguments from `xargs`, a path after a `cd` it
-  cannot follow) asks. `validate-pr.sh`: checks the title and body of
+  cannot follow) asks. Explicit files, `-p`, and the forms that stage
+  only tracked changes (`git add -u`, `--renormalize`, `git commit -a`)
+  stay allowed. `validate-pr.sh`: checks the title and body of
   `gh pr create|new|edit`, `glab mr create|new|update` (also with `-R` or
   `--repo` before the subcommand) and `gh api` calls on a
   `repos/<owner>/<repo>/pulls` endpoint with the commit-message rules. It
@@ -96,49 +97,54 @@ rather than stopped cold.
 **Block, ask, allow.** The file and command hooks block on a rule match,
 ask the human when they cannot judge, and allow everything else. "Ask" is
 the PreToolUse `permissionDecision: ask` answer, which prompts in every
-permission mode. The hooks ask when a file name merely contains a word
-such as `secret` or `token` (a test like `test_no_secret_leak.py` is not a
-credential), when a Bash command appears to modify a protected path
-(`rm`, `mv`, `sed -i` or `--in-place`, a redirect (also `>|`), an
-`--out`/`--output` option, `tee`, `find -delete`, `git rm`, `sort -o`,
-`rg --pre` (which also asks anywhere inside the project, since its
-command runs on every file rg searches), also as
-`/bin/rm`, `\rm`, `xargs rm`, inside `sh -c` or `eval`, or an
-interpreter one-liner such as `python3 -c`, or an `ln` whose target or
-link resolves to, contains or lies under one, or a redirect or changed
-argument that reaches one through a link that already exists
-(`echo x > pol.json` with `pol.json -> .specify/gates/policy.json`),
-naming one, its parent
-directory, a brace, backslash or split-quote spelling of it, a variable
-the same command assigns, a variable or substitution it cannot resolve
-in front of the file name, a glob `extra` entry such as `**/*.lock.md`,
-or a path relative to a
-`cd` into one or to the session's working directory (the hook input
-`cwd`, which Claude Code keeps between calls); telling
-a modification from a read by the command text is a heuristic, so it asks
-rather than blocks; a read-only command such as `grep -n rm <path>` and
-the literal message of a `git commit -m` do not count as a change), when a Bash command names a secret file the file hook
-refuses (`cat .env`; a read that only names a sensitive directory, such
-as `ls ~/.ssh/`, runs, while a command that reads every file under one,
-such as `grep -r`, `rg`, `tar`, `zip`, `scp` or `xargs`, asks), when it
-bypasses the git hooks (`--no-verify`,
-`git commit -n`, a `core.hooksPath` setting, or a hook manager's skip
-variable such as `HUSKY=0`, `LEFTHOOK=0` or `SKIP=`), when it creates
-commits that git runs no commit hook for (`git cherry-pick`, `git rebase`,
-`git am`, `git revert`, see the git boundary), when it deletes a remote
-branch (`git push origin :main`, `--delete`), and in any state they
-cannot evaluate. A project rule in `hooks.local.d` runs before any of
-these questions, so its refusal wins. They never
-silently allow. Without jq, or for input that is not valid JSON, they read
-the field in a raw mode that keeps every built-in block rule and still
-checks `policy.json`, the constitution and the project's rules. It reads
-`protected_files.extra` when it is a list of plain strings, on one line
-or many, and matches it as the jq path does; an
+permission mode. The hooks ask:
+
+- when a file name merely contains a word such as `secret` or `token` (a
+  test like `test_no_secret_leak.py` is not a credential), and on a Write
+  or Edit to the constitution;
+- when a Bash command appears to modify a protected path: `rm`, `mv`,
+  `sed -i` or `--in-place`, a redirect (also `>|`), an `--out`/`--output`
+  option, `tee`, `find -delete`, `git rm`, `sort -o` or `rg --pre` (which
+  also asks anywhere inside the project, since its command runs on every
+  file rg searches), also as `/bin/rm`, `\rm`, `xargs rm`, inside `sh -c`
+  or `eval`, or in an interpreter one-liner such as `python3 -c`; an `ln`
+  whose target or link resolves to, contains or lies under one; or a
+  redirect or changed argument that reaches one through an existing link
+  (`echo x > pol.json` with `pol.json -> .specify/gates/policy.json`). The
+  path counts when the command names it, its parent directory, a brace,
+  backslash or split-quote spelling of it, a variable the same command
+  assigns, a variable or substitution it cannot resolve in front of the
+  file name, a glob `extra` entry such as `**/*.lock.md`, or a path
+  relative to a `cd` into one or to the session's working directory (the
+  hook input `cwd`, which Claude Code keeps between calls). A read-only
+  command such as `grep -n rm <path>` and the literal message of a
+  `git commit -m` do not count as a change;
+- when a Bash command names a secret file the file hook refuses
+  (`cat .env`). A read that only names a sensitive directory, such as
+  `ls ~/.ssh/`, runs; a command that reads every file under one
+  (`grep -r`, `rg`, `tar`, `zip`, `scp`, `xargs`) asks;
+- when it bypasses the git hooks (`--no-verify`, `git commit -n`, a
+  `core.hooksPath` setting, or a hook manager's skip variable such as
+  `HUSKY=0`, `LEFTHOOK=0` or `SKIP=`), or sets a variable that changes
+  what is enforced (see "Environment overrides are visible");
+- when it creates commits that git runs no commit hook for
+  (`git cherry-pick`, `git rebase`, `git am`, `git revert`, see the git
+  boundary), or deletes a remote branch (`git push origin :main`,
+  `--delete`);
+- in any state they cannot evaluate.
+
+A project rule in `hooks.local.d` runs before any of these questions, so
+its refusal wins. The hooks never silently allow. Without jq, or for input
+that is not valid JSON, they read the field in a raw mode that keeps every
+built-in block rule and still checks `policy.json`, the constitution and
+the project's rules. It reads `protected_files.extra` when it is a list of
+plain strings, on one line or many, and matches it as the jq path does; an
 internal error, an undecodable, missing or repeated field, or a
 `protected_files.extra` it cannot read asks. A malformed or invalid
-`policy.json` cannot say what it protects either, so with jq the Write/Edit
-hook asks before every edit and the Bash hook before every command that
-appears to change a file. Doctor keeps failing until jq is installed.
+`policy.json` cannot say what it protects either, so with jq the
+Write/Edit hook asks before every edit and the Bash hook before every
+command that appears to change a file. Doctor keeps failing until jq is
+installed.
 
 **The Bash checks are heuristics.** `validate-bash.sh` reads the command
 text, not what the shell will run. It recognises the common spellings
@@ -178,6 +184,19 @@ list is policy (`git.ai_branding.terms`); a legitimate phrase that contains
 a term, such as a product name a repository integrates, is allowed via
 `git.ai_branding.allow_phrases` (matched literally, ignoring case, like the
 terms).
+
+The forbidden-file list is one list, in `lib/secrets.sh`, read by the
+file and Bash hooks, `pre-commit` and `pr-check.sh` alike: `.env` and
+`.env.*` files, SSH keys (`id_rsa*`, `id_ed25519*`, `id_ecdsa*`,
+`authorized_keys`, `known_hosts`), keys and certificates (`*.pem`,
+`*.key`, `*.crt`, `*.p12`, `*.pfx`, `*.jks`, `*.keystore`), credential
+files (`credentials`, `credentials.json`/`.yml`/`.yaml`, `.netrc`,
+`.pypirc`, `gcloud-*.json`, `service-account*.json`, `aws-credentials`),
+and anything in or named `.ssh`, `.gnupg`, `.aws` or `.gcloud`, with or
+without a trailing slash. Names ending in `.example`, `.sample` or
+`.template` are exempt. The content scan looks for AWS, OpenAI, GitHub,
+GitLab and Slack key shapes and for a `password`, `secret`, `api_key` or
+`token` assignment of a quoted value of 8 or more characters.
 
 Subjects git writes itself are exempt from the Conventional Commits rule
 only: a merge commit (recognized by `MERGE_HEAD`, not by its subject) and
@@ -352,11 +371,20 @@ from the staged policy and `HEAD`'s, not the working tree, so an
 unstaged edit does not lift the refusal, and the commit that turns
 it off is still judged by the trailer rule: it passes with a
 `Protected-Change` trailer for each protected path it stages plus
-`Approved-By`, and the refusal applies from the next commit on. The one
-exception to the refusal is the commit
-`contract.sh sync --update` makes: on a `gates/baseline-<v>` branch,
-`policy.json` changing `extends.version` alone plus the three contract
-artifacts, consistent with the pin, passes (checked against the index).
+`Approved-By`, and the refusal applies from the next commit on.
+
+The one exception to the refusal is the commit `contract.sh sync --update`
+makes. `pre-commit` lets it through only when, read from the index, the
+branch is `gates/baseline-<v>` and the lock pins `<v>`, nothing is staged
+but `policy.json` and the three artifacts, `policy.json` differs from
+`HEAD` in `extends.version` alone, and the staged files pass the contract
+checks (snapshot digest equals the pin, declaration equals the lock,
+effective policy equals recomputation). Anything else stays refused. The
+exception follows the shape of the change, not who runs it: a hand-made
+commit of that exact shape passes too, and no hook can prove offline that
+the snapshot is what the source publishes. That proof is the review of the
+update branch, where `pr-check.sh` still requires the `Protected-Change`
+trailers the update commit carries.
 
 ### 3. The CI boundary
 
@@ -568,9 +596,9 @@ it. A bad `--boundary` value, a repeated `--boundary`, `--boundary` or
 name that is not a feature, is a usage error (exit `1`)
 refused before any gate runs.
 
-**A missing `--boundary` warns.** Without it, `verify.sh` runs as 0.3.6
-did: every gate, boundary `unspecified` in the report, the `--json` object
-and the attestation, and the exit code the gates decide. It prints one
+**A missing `--boundary` warns.** Without it, `verify.sh` runs every
+gate, with boundary `unspecified` in the report, the `--json` object and
+the attestation, and the exit code the gates decide. It prints one
 deprecation warning on stderr naming `--boundary agent|git|ci` (stdout,
 and so `--json`, is unchanged); a later release may refuse such a run.
 `project.sh` and doctor (`[rec]`) name the lines in `package.json`,
@@ -640,8 +668,8 @@ tree, is what gets caught. Probes never read or write user project files.
 An accepted probe fails the suite naming the gate; `project.sh` runs the
 suite after every projection, and CI runs it on every build.
 
-**Pins-based parity.** The parity property used to be an argument ("same
-script, same policy"); now it is checked. A synthetic `parity` gate inside
+**Pins-based parity.** "Same script, same policy" is an argument; the
+parity gate checks it. A synthetic `parity` gate inside
 `verify.sh` compares every tool's resolved version against the project's
 lockfile pin, and the record's policy hash captures policy identity, so
 agent, git and CI runs are proven equivalent transitively. The lockfile is
@@ -670,10 +698,10 @@ tool gates and before `parity`:
 3. **Execute**: for features whose `spec.md` says `**Status**: Complete`
    (and any feature named via `--accept`), blocks run serially from the
    repository root under `bash -eo pipefail`, so a failing command or
-   pipeline stage on any line fails the block, not just the last one
-   (#236). A `!`-negated command is exempt from errexit, which is why the
+   pipeline stage on any line fails the block, not just the last one.
+   A `!`-negated command is exempt from errexit, which is why the
    parser refuses one that is followed by another command line (the
-   body and terminator of a heredoc it feeds are not command lines, #237);
+   body and terminator of a heredoc it feeds are not command lines);
    `test -z "$(...)"`, `if ...; then exit 1; fi` and `! cmd || exit 1`
    fail the block wherever they stand. Output is captured (shown only on
    failure), with a per-block watchdog (`spec.timeout_s`, default 30s) that stops the

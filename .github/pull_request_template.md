@@ -10,7 +10,7 @@
 <!-- Delete any that do not apply. -->
 
 - [ ] Agent (Claude hooks: protect-files / validate-bash / verify-quality / …)
-- [ ] Git (pre-commit / commit-msg)
+- [ ] Git (pre-commit / pre-merge-commit / commit-msg)
 - [ ] CI (`extension/ci/` templates or `.github/workflows/`)
 - [ ] Runtime lib / `verify.sh`
 - [ ] Policy schema / template
