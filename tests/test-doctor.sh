@@ -650,12 +650,13 @@ printf '\n# newer upstream\n' >>"$U/.specify/extensions/gates/runtime/canary.sh"
 run_doctor "$U" >/dev/null
 has "a held file whose upstream changed is flagged" "$U" "[rec] held: .specify/gates/canary.sh — the installed extension changed this file since it was held"
 cp "$U/.specify/extensions/gates/runtime/canary.sh" "$U/.specify/gates/canary.sh"
-run_doctor "$U" >/dev/null
+rc="$(run_doctor "$U")"
 has "a hold equal to upstream is stale and fails" "$U" "[MISSING] stale hold: .specify/gates/canary.sh"
-# project.sh --check exits 1 on the stale hold alone: the upgrade-safety
-# line names the hold, not a re-projection that changes nothing (#214).
-has "a stale hold is the named pending item" "$U" "[MISSING] stale holds — remove the lines listed below from .specify/gates/.upgrade-holds"
+# project.sh --check exits 1 on the stale hold alone: not a re-projection
+# that changes nothing (#214), and the hold is reported once (#226).
 lacks "a stale hold is not called a stale projection" "$U" "the projection is not current"
+expect "a stale hold is one failure line" "$(grep -c '\[MISSING\].*stale hold' "$U/out.txt")" 1
+expect "doctor exits 1 on a stale hold" "$rc" "1"
 printf '.specify/gates/hooks.local.d/x/1.sh\n' >"$U/.specify/gates/.upgrade-holds"
 run_doctor "$U" >/dev/null
 has "a hold inside hooks.local.d is redundant" "$U" "hooks.local.d is never touched by upgrades"
@@ -667,6 +668,7 @@ rc="$(run_doctor "$U")"
 has "a held deletion fails" "$U" "[MISSING] held file is missing: .claude/hooks/gates/protect-files.sh"
 has "and names the fix" "$U" "project.sh --take-upstream .claude/hooks/gates/protect-files.sh"
 lacks "it is not reported as kept" "$U" "held: .claude/hooks/gates/protect-files.sh"
+expect "a held deletion is one failure line" "$(grep -c '\[MISSING\].*held file' "$U/out.txt")" 1
 expect "doctor exits 1 on a held deletion" "$rc" "1"
 rc=0
 CLAUDE_PROJECT_DIR="$U" bash "$U/.specify/gates/doctor.sh" --ci >"$U/out.txt" 2>&1 || rc=$?

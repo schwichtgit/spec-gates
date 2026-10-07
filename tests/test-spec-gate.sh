@@ -240,6 +240,8 @@ expect "--accept executed both blocks" \
 OUT="$(gate_out "$D" --accept nonexistent)"
 expect_contains "--accept unknown feature exits 1" "$OUT" "EXIT=1"
 expect_contains "--accept unknown feature names available" "$OUT" "unknown feature: nonexistent"
+expect "--accept unknown feature: the list has no stray space (#226)" \
+    "$(grep -cE '\(available: [^ )]+( [^ )]+)*\)' <<<"$OUT")" 1
 # An unknown name is an argument error, refused before any gate runs
 # (#179): under --dry-run too, and before the quality gate.
 OUT="$(gate_out "$D" --dry-run --accept nonexistent)"

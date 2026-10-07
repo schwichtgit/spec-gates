@@ -160,7 +160,7 @@ fi
 # any gate runs (also under --dry-run), not after the lint gates (#179).
 if [[ -n "$ACCEPT_ARG" && "$ACCEPT_ARG" != "all" ]]; then
     if ! grep -qx -- "$ACCEPT_ARG" <<<"$(gates_spec_features "$PROJECT_ROOT")"; then
-        AVAILABLE="$(gates_spec_features "$PROJECT_ROOT" | tr '\n' ' ')"
+        AVAILABLE="$(gates_spec_features "$PROJECT_ROOT" | paste -sd ' ' -)"
         refuse "--accept: unknown feature: $ACCEPT_ARG (available: ${AVAILABLE:-none})"
     fi
 fi

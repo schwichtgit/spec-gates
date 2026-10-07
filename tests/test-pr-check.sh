@@ -597,6 +597,85 @@ expect "a merge bringing in the base's files -> exit 0" "$(run GATES_COMMIT_RANG
 akia >"$W/evil.txt" && sg add evil.txt && sg commit -q --amend --no-edit
 expect "a secret the merge itself adds -> exit 1" "$(run GATES_COMMIT_RANGE="$SECMAIN..sec-merge")" 1
 
+echo ""
+echo "=== a multi-commit range scans each distinct blob once, same report (#228) ==="
+# The scan reads each blob the range adds once per rule and maps the hits
+# back to the commits that added them. The report must stay the one the
+# per-commit scan gave: the same blob under two paths and two commits, a
+# file changed again (still holding the key), a rename, a key added then
+# removed, forbidden names (an .example stays allowed), a binary and an
+# executable file, a symlink whose target looks like a key (never read),
+# the first matching rule per file, a path with a space, and merges: a
+# path equal to one parent (not scanned) and one resolved by hand.
+ghp() { printf 'ghp_%s\n' abcdefghijklmnopqrstuvwxyz0123456789; }
+(
+    cd "$W"
+    c228() { git add -A && git commit -q --allow-empty -m "$@"; }
+    git checkout -q -b sec-eq "$BASE"
+    akia >a.txt && ghp >b.txt && echo clean >c.txt && printf 'xoxb-%s\n' 1234567890 >"sp ace.txt"
+    { ghp && akia; } >multi.txt && akia >x.example && echo X=1 >.env && echo k >id_rsa
+    mkdir -p sub/.ssh && echo h >sub/.ssh/config
+    printf 'password = "%s"\n' abcdefghijkl >cred.txt
+    c228 "feat: keys"
+    akia >copy.txt && akia >c.txt && c228 "feat: same blob twice"
+    { akia && echo more; } >a.txt && echo o >other.txt && c228 "chore: touch a"
+    ghp >tmp.txt && c228 "feat: tmp"
+    rm tmp.txt && c228 "fix: drop tmp"
+    printf 'bin\0AKIA%s\n' ABCDEFGHIJKLMNOP >blob.dat && ghp >run.sh && chmod +x run.sh
+    ln -s "AKIA$(printf ABCDEFGHIJKLMNOP)" link && c228 "chore: binary, executable, link"
+    git mv b.txt renamed.txt && c228 "chore: rename b"
+    c228 "chore: empty"
+    git checkout -q -b sec-eq-side
+    akia >side.txt && echo s1 >m.txt && c228 "feat: side"
+    git checkout -q sec-eq
+    echo s2 >m.txt && c228 "feat: main m"
+    git merge -q --no-ff -m "chore: merge side" sec-eq-side || true
+    { echo s1 && ghp; } >m.txt && c228 "chore: merge side"
+    echo after >after.txt && c228 "feat: after"
+) >/dev/null 2>&1
+expect "the equivalence range has one merge" "$(git -C "$W" rev-list --count --merges "$BASE..sec-eq")" 1
+expect "the scan over the equivalence range -> exit 1" "$(run GATES_COMMIT_RANGE="$BASE..sec-eq")" 1
+sed -E -e 's/^commit [0-9a-f]+ /commit H /' -e "s/$BASE/BASE/" "$WORKDIR/out.txt" >"$WORKDIR/out228.txt"
+cat >"$WORKDIR/want228.txt" <<'EOF'
+pr-check: text skipped -- no PR/MR title or description in this context
+pr-check: BASE..sec-eq -- 12 commit(s) checked, 0 touching protected paths, 0 violation(s)
+commit H feat: keys:
+  BLOCKED: forbidden file: .env
+    SECRET: AWS key pattern in a.txt
+    SECRET: GitHub token pattern in b.txt
+    SECRET: Possible credential assignment in cred.txt
+  BLOCKED: forbidden file: id_rsa
+    SECRET: AWS key pattern in multi.txt
+    SECRET: Slack token pattern in sp ace.txt
+  BLOCKED: forbidden file: sub/.ssh/config
+    SECRET: AWS key pattern in x.example
+commit H feat: same blob twice:
+    SECRET: AWS key pattern in c.txt
+    SECRET: AWS key pattern in copy.txt
+commit H chore: touch a:
+    SECRET: AWS key pattern in a.txt
+commit H feat: tmp:
+    SECRET: GitHub token pattern in tmp.txt
+commit H chore: binary, executable, link:
+    SECRET: AWS key pattern in blob.dat
+    SECRET: GitHub token pattern in run.sh
+commit H chore: rename b:
+    SECRET: GitHub token pattern in renamed.txt
+commit H feat: side:
+    SECRET: AWS key pattern in side.txt
+commit H chore: merge side:
+    SECRET: GitHub token pattern in m.txt
+pr-check: BASE..sec-eq -- secrets or forbidden files in 12 commit(s) scanned; remove them from the history (rewrite the branch) and rotate any exposed credential
+EOF
+TOTAL=$((TOTAL + 1))
+if diff -u "$WORKDIR/want228.txt" "$WORKDIR/out228.txt"; then
+    echo "PASS: the multi-commit secret report is unchanged"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL: the multi-commit secret report changed (diff above)"
+    FAIL=$((FAIL + 1))
+fi
+
 # The base revision's copy (GATES_RUNTIME_DIR, #166) carries the scan.
 sg checkout -q sec-pick
 RUN_SCRIPT="$RT/.specify/gates/pr-check.sh"
@@ -608,6 +687,12 @@ cp -R "$RT" "$NOSEC" && rm -f "$NOSEC/.specify/gates/lib/secrets.sh"
 RUN_SCRIPT="$NOSEC/.specify/gates/pr-check.sh"
 expect "a runtime without lib/secrets.sh -> exit 2" \
     "$(run GATES_COMMIT_RANGE="$BASE..sec-clean" GATES_RUNTIME_DIR="$NOSEC/.specify/gates")" 2
+# A lib/secrets.sh older than pr-check.sh (no range scan) is a setup error.
+sed 's/^gates_secret_scan_range()/old_scan_range()/' "$RT/.specify/gates/lib/secrets.sh" \
+    >"$NOSEC/.specify/gates/lib/secrets.sh"
+expect "a lib/secrets.sh without the range scan -> exit 2" \
+    "$(run GATES_COMMIT_RANGE="$BASE..sec-clean" GATES_RUNTIME_DIR="$NOSEC/.specify/gates")" 2
+expect "it says the lib predates pr-check.sh" "$(grep -c 'secrets.sh predates pr-check.sh' "$WORKDIR/out.txt")" 1
 RUN_SCRIPT=.specify/gates/pr-check.sh
 sg checkout -q "$ORIG"
 

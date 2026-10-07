@@ -83,6 +83,22 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   their output is unchanged. In bash 3.2, `${file##*/}` in
   `gates_forbidden_path` and `${arg#["']}`-style quote stripping were
   quadratic on a long word too; they now use a regex and substrings.
+- **pr-check's secret scan scales with the content a range adds** (#228).
+  The scan matched every commit's tree against every changed path, so a
+  208-commit, 300-file range took minutes. It now lists the range's
+  changed paths and blobs in one `git diff-tree --stdin` pass, scans each
+  distinct blob once per rule and maps hits back to the commits that added
+  them: about 3 s for that range instead of about 2 minutes on the same
+  machine. The report, per-commit attribution and merge handling are
+  unchanged. A projected `lib/secrets.sh` older than `pr-check.sh` is a
+  setup error (exit 2).
+- **Small output and docs fixes** (#226). `verify.sh --accept <unknown>`
+  lists the features without a stray space before the parenthesis.
+  `project.sh` reads a `.prettierignore` with CRLF line endings. Doctor
+  names a stale or missing hold once, in the holds check, and still
+  fails (exit 1). The README rollback note for 0.3.x branches covers
+  husky, lefthook and the pre-commit framework, whose `pre-merge-commit`
+  entry lives in their own configuration.
 
 ## 0.4.0 — 2026-10-06
 

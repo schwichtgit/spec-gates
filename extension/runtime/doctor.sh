@@ -419,6 +419,7 @@ if declare -f gates_ci_missing >/dev/null 2>&1 && [[ -d "$PROJECT_ROOT/.specify/
     echo ""
     echo "Upgrade safety (projection, holds, CI):"
     VEND_RT="$PROJECT_ROOT/.specify/extensions/gates/runtime"
+    PHOLDS=0
     if [[ -f "$VEND_RT/project.sh" ]]; then
         PFLAGS=""
         # The git hook stubs live in .git/hooks, never in a checkout, and
@@ -446,10 +447,10 @@ if declare -f gates_ci_missing >/dev/null 2>&1 && [[ -d "$PROJECT_ROOT/.specify/
                 while IFS= read -r pcmd; do
                     [[ -n "$pcmd" ]] && PITEMS="$PITEMS"$'\n'"the hook manager has not generated the git hooks it is wired for — run: $pcmd"
                 done <<<"$(sed -n 's/^project: pending: .* until you run `\(.*\)`$/\1/p' <<<"$POUT" | sort -u)"
-                grep -q '^project: FAILED: stale holds' <<<"$POUT" \
-                    && PITEMS="$PITEMS"$'\n'"stale holds — remove the lines listed below from $GATES_HOLDS_REL"
-                grep -q '^project: FAILED: held files that do not exist' <<<"$POUT" \
-                    && PITEMS="$PITEMS"$'\n'"held files are missing or empty — restore each: bash .specify/extensions/gates/runtime/project.sh --take-upstream <path>"
+                # Stale and missing holds are named once, per hold, in the
+                # holds check below (#226), which also counts them.
+                grep -q '^project: FAILED: stale holds\|^project: FAILED: held files that do not exist' <<<"$POUT" \
+                    && PHOLDS=1
                 grep -q '^project: git is not installed' <<<"$POUT" \
                     && PITEMS="$PITEMS"$'\n'"git is not installed, so the git boundary is not wired — install git, then run: bash .specify/extensions/gates/runtime/project.sh"
                 grep -q '^project: git refuses this repository: dubious ownership' <<<"$POUT" \
@@ -457,8 +458,9 @@ if declare -f gates_ci_missing >/dev/null 2>&1 && [[ -d "$PROJECT_ROOT/.specify/
                 grep -q '^project: another tool owns these git hooks' <<<"$POUT" \
                     && PITEMS="$PITEMS"$'\n'"another tool owns git hooks that do not call gates — add the line printed below to each"
                 PITEMS="${PITEMS#$'\n'}"
-                [[ -n "$PITEMS" ]] || PITEMS="project.sh --check reports pending work (below)"
+                [[ -n "$PITEMS" || "$PHOLDS" -eq 1 ]] || PITEMS="project.sh --check reports pending work (below)"
                 while IFS= read -r pitem; do
+                    [[ -n "$pitem" ]] || continue
                     echo "${BAD}$pitem"
                     MISSING=$((MISSING + 1))
                 done <<<"$PITEMS"
@@ -479,7 +481,7 @@ if declare -f gates_ci_missing >/dev/null 2>&1 && [[ -d "$PROJECT_ROOT/.specify/
 
     gates_holds_load "$PROJECT_ROOT"
     gates_manifest_load "$PROJECT_ROOT"
-    HELD_EDITS=0
+    HELD_EDITS=0 HOLD_BAD=0
     if [[ -n "$GATES_HOLDS" ]]; then
         HTABLE=""
         [[ -d "$VEND_RT" ]] && HTABLE="$(gates_projection_table "$VEND_RT" 1)"
@@ -503,6 +505,7 @@ if declare -f gates_ci_missing >/dev/null 2>&1 && [[ -d "$PROJECT_ROOT/.specify/
                 [[ -e "$PROJECT_ROOT/$hp" ]] && hgone="empty"
                 echo "${BAD}held file is $hgone: $hp — a deletion cannot be held; the check that runs it is off. Restore it: bash .specify/extensions/gates/runtime/project.sh --take-upstream $hp"
                 MISSING=$((MISSING + 1))
+                HOLD_BAD=1
                 continue
             fi
             if [[ -z "$HTABLE" ]]; then
@@ -513,6 +516,7 @@ if declare -f gates_ci_missing >/dev/null 2>&1 && [[ -d "$PROJECT_ROOT/.specify/
             elif cmp -s "$VEND_RT/$hsrc" "$PROJECT_ROOT/$hp"; then
                 echo "${BAD}stale hold: $hp now equals the installed extension's copy — remove it from $GATES_HOLDS_REL so upgrades update it again"
                 MISSING=$((MISSING + 1))
+                HOLD_BAD=1
             else
                 # The manifest keeps the hash projection last wrote for a
                 # held file. When the installed copy differs from it, the
@@ -527,6 +531,12 @@ if declare -f gates_ci_missing >/dev/null 2>&1 && [[ -d "$PROJECT_ROOT/.specify/
                 HELD_EDITS=1
             fi
         done <<<"$GATES_HOLDS"
+    fi
+    # project.sh --check found a hold problem the per-hold check did not
+    # name: still a failure.
+    if [[ "$PHOLDS" -eq 1 && "$HOLD_BAD" -eq 0 ]]; then
+        echo "${BAD}project.sh --check reports stale or missing holds (listed above)"
+        MISSING=$((MISSING + 1))
     fi
     # A held edit is checked by nothing above: only the canary suite shows
     # whether the gates still block with it in place.
