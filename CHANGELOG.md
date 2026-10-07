@@ -31,6 +31,17 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   commands, so `! grep -q x <<EOF`, its body and `EOF` as the last lines
   were refused. Heredoc lines (`<<`, `<<-`, quoted or not) no longer
   count; a command after the terminator still does.
+- **Agent hooks: last quadratic paths and edge cases** (#238).
+  validate-bash counted and removed quotes, cut `--opt=value` words and
+  expanded the command's own assignments in ways that were quadratic in
+  bash 3.2 or awk (minutes on a long quote-dense word or thousands of
+  assignments, several only in a UTF-8 locale); they are linear now,
+  with results unchanged. A command that reads every file under a
+  sensitive directory (`grep -r . ~/.ssh/`, `rg`, `tar`, `zip`, `scp`,
+  `xargs`) now asks; listings such as `ls -R` or `du` still run.
+  validate-pr without python3 asks on `gh api -H "Accept: x" "$EP"`, and
+  with it no longer refuses `gh api user -f title=$T`: fields are
+  checked only on a pulls endpoint or one it cannot read.
 - **Doctor names the pending upgrade item** (#214). Whenever
   `project.sh --check` exited 1, doctor advised running `project.sh`,
   which reports "no changes" for pending hook-manager wiring, a pending
