@@ -87,7 +87,9 @@ nothing is checked.
      computed conditions are read as live: the CI run's own log is the
      proof that the gates ran. A
      `ci:<step>` hold for a step the pipeline runs is stale and fails, and
-     an unknown id gets a `[rec]`.
+     an unknown id gets a `[rec]`. A hold for a step the pipeline lacks is
+     a `[rec]` naming the check CI gives up (exit code unchanged); for
+     `pr`, `project.sh --check` prints the step on its own.
    - **Agent hooks**: each projected hook must be executable (Claude Code
      runs them by path).
    - **Attestations**: `.specify/gates/` and its `attestations.jsonl`

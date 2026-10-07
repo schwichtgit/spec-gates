@@ -687,9 +687,65 @@ printf 'on: push\njobs:\n  g:\n    steps:\n      - run: bash .specify/gates/veri
 run_doctor "$U" >/dev/null
 has "a missing CI step fails" "$U" "[MISSING] CI pipeline lacks the 'pr' step from the template"
 printf 'ci:pr\n' >"$U/.specify/gates/.upgrade-holds"
-run_doctor "$U" >/dev/null
-has "an acknowledged omission passes" "$U" "[ok]  CI step 'pr' omitted on purpose"
+rc="$(run_doctor "$U")"
+# A held step is a check CI gives up (#235): a [rec] that names it, not an
+# [ok], and not a failure.
+has "a ci:pr hold names what it gives up" "$U" "[rec] CI step 'pr' held (ci:pr in .specify/gates/.upgrade-holds): PR titles, descriptions and Protected-Change declarations are not checked in CI"
+has "and points at the pr step on its own" "$U" "[rec] adopt the pr step on its own"
+lacks "a ci:pr hold is not reported as ok" "$U" "[ok]  CI step 'pr'"
+lacks "a ci:pr hold is not a failure" "$U" "[MISSING] CI pipeline lacks the 'pr' step"
 has "and the pipeline is otherwise complete" "$U" "[ok]  CI pipeline (.github/workflows/gates.yml) has every template step"
+printf 'on: push\njobs:\n  g:\n    steps:\n      - run: bash .specify/gates/verify.sh --boundary ci\n      - run: bash .specify/gates/pr-check.sh\n' >"$U/.github/workflows/gates.yml"
+printf 'ci:canary\n' >"$U/.specify/gates/.upgrade-holds"
+rc2="$(run_doctor "$U")"
+has "a ci:canary hold names what it gives up" "$U" "[rec] CI step 'canary' held (ci:canary in .specify/gates/.upgrade-holds): CI does not prove the gates still block"
+expect "a ci:canary hold exits as a ci:pr hold" "$rc2" "$rc"
+# The pr step adopted on its own (#235), pasted into a pipeline that runs
+# only a bare gates step and the canaries, makes the pipeline complete on
+# every platform: the snippet is live, and the gates step stays proven.
+rm -f "$U/.specify/gates/.upgrade-holds"
+pr_snippet() { (source "$REPO_ROOT/extension/runtime/lib/manifest.sh" && gates_ci_pr_snippet "$1"); }
+{
+    printf 'on: [push, pull_request]\njobs:\n  g:\n    steps:\n      - run: bash .specify/gates/verify.sh --boundary ci\n      - run: bash .specify/gates/canary.sh\n'
+    pr_snippet github | sed 's/^/      /'
+} >"$U/.github/workflows/gates.yml"
+rc2="$(run_doctor "$U")"
+expect "a ci: hold leaves the exit code of a complete pipeline unchanged" "$rc" "$rc2"
+has "GitHub: the pr snippet completes the pipeline" "$U" "[ok]  CI pipeline (.github/workflows/gates.yml) has every template step"
+lacks "GitHub: the pr snippet leaves the gates step proven" "$U" "step is proven to run and fail it"
+rm -f "$U/.github/workflows/gates.yml"
+{
+    printf 'gates:\n  script:\n    - bash .specify/gates/verify.sh --boundary ci\n    - bash .specify/gates/canary.sh\n\n'
+    pr_snippet gitlab
+} >"$U/.gitlab-ci.yml"
+run_doctor "$U" >/dev/null
+has "GitLab: the pr snippet completes the pipeline" "$U" "[ok]  CI pipeline (.gitlab-ci.yml) has every template step"
+lacks "GitLab: the pr snippet leaves the gates step proven" "$U" "step is proven to run and fail it"
+rm -f "$U/.gitlab-ci.yml"
+{
+    printf "pipeline {\n  stages {\n    stage('Gates') {\n      steps {\n        sh 'bash .specify/gates/verify.sh --boundary ci'\n        sh 'bash .specify/gates/canary.sh'\n      }\n    }\n"
+    pr_snippet jenkins | sed 's/^/    /'
+    printf '  }\n}\n'
+} >"$U/Jenkinsfile"
+run_doctor "$U" >/dev/null
+has "Jenkins: the pr snippet completes the pipeline" "$U" "[ok]  CI pipeline (Jenkinsfile) has every template step"
+lacks "Jenkins: the pr snippet leaves the gates step proven" "$U" "step is proven to run and fail it"
+rm -f "$U/Jenkinsfile"
+# The docs carry the same snippets (#235): each fenced block that opens
+# with the snippet's first line equals it.
+for doc in docs/how-it-works.md extension/commands/speckit.gates.ci.md; do
+    for k in github gitlab jenkins; do
+        want="$(pr_snippet "$k")"
+        got="$(awk -v first="$(head -n 1 <<<"$want")" '
+            /^```/ { if (inb) exit; fence = 1; next }
+            fence && $0 == first { inb = 1 }
+            { fence = 0 }
+            inb { print }' "$REPO_ROOT/$doc")"
+        expect "$doc carries the $k pr snippet" "$got" "$want"
+    done
+done
+mkdir -p "$U/.github/workflows"
+printf 'on: push\njobs:\n  g:\n    steps:\n      - run: bash .specify/gates/verify.sh --boundary ci\n      - run: bash .specify/gates/canary.sh\n' >"$U/.github/workflows/gates.yml"
 # ci: holds are judged like file holds (#139): one for a step the pipeline
 # runs is stale, an id the template lacks is a stray line.
 printf 'ci:canary\nci:bogus\n' >"$U/.specify/gates/.upgrade-holds"

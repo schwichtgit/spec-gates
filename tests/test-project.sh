@@ -315,9 +315,25 @@ printf 'on: push\njobs:\n  g:\n    steps:\n      - run: bash .specify/gates/veri
 rc_is "CI drift is reported" 0 "$D" --skip-canary
 ok "the missing pr step is named" grep -q '^project:   pr$' <<<"$OUT"
 ok "the pipeline file is named without a stray space (#215)" grep -qF 'the CI pipeline (.github/workflows/gates.yml) lacks' <<<"$OUT"
+# The missing pr step comes with the step on its own, for the platform the
+# gates run on (#235); the pipeline file is not written.
+ok "the pr step on its own is printed" grep -qF 'project:   the pr step on its own (github), without the rest of the template:' <<<"$OUT"
+# shellcheck disable=SC2016  # the needle is literal snippet text
+ok "it runs the base revision's pr-check.sh" grep -qF 'project:           GATES_RUNTIME_DIR="$rt/.specify/gates" bash "$rt/.specify/gates/pr-check.sh"' <<<"$OUT"
+ok "the pipeline file is not changed" bash -c "! grep -q pr-check '$D/.github/workflows/gates.yml'"
+SNIP="$(sed -n 's/^project:     //p' <<<"$OUT")"
+ok "the printed step is the shipped snippet" test "$SNIP" = "$(gates_ci_pr_snippet github)"
 printf 'ci:pr  # no PRs in this repo\n' >>"$D/.specify/gates/.upgrade-holds"
 rc_is "an acknowledged omission is not reported" 0 "$D" --skip-canary
 ok "no drift reported after ci:pr" bash -c "! grep -q 'lacks these template steps' <<<\"\$1\"" _ "$OUT"
+# A held step is named with the check CI gives up (#235).
+ok "a ci:pr hold says what it gives up" grep -qF "project: [rec] CI step 'pr' held (ci:pr in .specify/gates/.upgrade-holds): PR titles, descriptions and Protected-Change declarations are not checked in CI" <<<"$OUT"
+ok "and still prints the pr step on its own" grep -qF 'project:   the pr step on its own (github)' <<<"$OUT"
+rc_is "--check reports the held step too" 0 "$D" --check
+ok "--check names what ci:pr gives up" grep -qF "project: [rec] CI step 'pr' held" <<<"$OUT"
+printf 'ci:canary\n' >>"$D/.specify/gates/.upgrade-holds"
+rc_is "a hold for a step that runs is not reported as held" 0 "$D" --check
+ok "no held line for the running canary step" bash -c "! grep -qF \"CI step 'canary' held\" <<<\"\$1\"" _ "$OUT"
 fixture
 printf '#!/bin/sh\necho mine\n' >"$D/.git/hooks/pre-commit"
 chmod +x "$D/.git/hooks/pre-commit"

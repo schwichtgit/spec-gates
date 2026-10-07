@@ -565,7 +565,10 @@ if declare -f gates_ci_missing >/dev/null 2>&1 && [[ -d "$PROJECT_ROOT/.specify/
                     echo "${BAD}stale hold: ci:$cid but the pipeline runs the '$cid' step — remove it from $GATES_HOLDS_REL"
                     MISSING=$((MISSING + 1))
                 else
-                    echo "${OK}CI step '$cid' omitted on purpose (ci:$cid in $GATES_HOLDS_REL)"
+                    # A held step is a check CI gives up: say which (#235).
+                    echo "${REC}CI step '$cid' held (ci:$cid in $GATES_HOLDS_REL): $(gates_ci_step_omitted "$cid")"
+                    [[ "$cid" == pr ]] \
+                        && echo "${REC}adopt the pr step on its own: bash .specify/extensions/gates/runtime/project.sh --check prints it for this pipeline"
                 fi
             done <<<"$CI_ACKS"
         fi
