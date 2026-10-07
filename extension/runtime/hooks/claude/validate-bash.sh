@@ -327,8 +327,10 @@ if [[ -z "$BLOCKED" ]]; then
                     ;;
                 '>'* | '<'* | '&>'* | [0-9]'>'* | [0-9]'<'*) continue ;;
             esac
-            _arg="${_arg#[\"\']}"
-            _arg="${_arg%[\"\']}"
+            # One quote off each end; by substring, as ${_arg#[\"\']} and
+            # ${_arg%[\"\']} are quadratic in bash 3.2 on a long word (#231).
+            case "$_arg" in [\"\']*) _arg="${_arg:1}" ;; esac
+            case "${_arg: -1}" in [\"\']) _arg="${_arg:0:${#_arg}-1}" ;; esac
             # The quoted $TMPDIR patterns are literal on purpose: they match
             # the unexpanded command text.
             # shellcheck disable=SC2016
@@ -463,8 +465,8 @@ git_scan() {
         [[ "$n" -gt 0 ]] || continue
         if [[ "${w[0]}" == cd || "${w[0]}" == pushd ]]; then
             t="${w[1]:-}"
-            t="${t#[\"\']}"
-            t="${t%[\"\']}"
+            case "$t" in [\"\']*) t="${t:1}" ;; esac # not ${t#[\"\']}, #231
+            case "${t: -1}" in [\"\']) t="${t:0:${#t}-1}" ;; esac
             # shellcheck disable=SC2016  # literal command text
             case "$t" in
                 '' | '~'* | *'$'* | *'`'* | -*) scwd="" ;;
@@ -529,8 +531,8 @@ git_scan() {
         esac
         base="$scwd"
         if [[ -n "$cdir" ]]; then
-            cdir="${cdir#[\"\']}"
-            cdir="${cdir%[\"\']}"
+            case "$cdir" in [\"\']*) cdir="${cdir:1}" ;; esac # as above, #231
+            case "${cdir: -1}" in [\"\']) cdir="${cdir:0:${#cdir}-1}" ;; esac
             if [[ "$cdir" == /* ]]; then base="$cdir"; elif [[ -n "$scwd" ]]; then base="$scwd/$cdir"; fi
         fi
         if [[ "$xa" -eq 1 && ( "$sub" == add || "$sub" == stage ) ]]; then

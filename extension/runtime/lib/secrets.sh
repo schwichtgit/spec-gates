@@ -20,8 +20,15 @@
 # subprocess: this runs once per file (issue #133). GATES_FORBIDDEN_WHAT
 # names the rule that matched.
 gates_forbidden_path() { # <path>
-    local file="$1"
-    local basename="${file##*/}"
+    local file="$1" basename
+    # The text after the last slash. ${file##*/} is quadratic in bash 3.2,
+    # minutes on a 200 KB word of a command (issue #231); the regex is
+    # linear, and the expansion stays for text the regex cannot read.
+    if [[ "$file" =~ [^/]*$ ]]; then
+        basename="${BASH_REMATCH[0]}"
+    else
+        basename="${file##*/}"
+    fi
     GATES_FORBIDDEN_WHAT=""
 
     case "$basename" in

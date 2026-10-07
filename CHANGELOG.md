@@ -80,7 +80,9 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   word or character at a time were quadratic there. The passes now skip
   what cannot apply (no `<<`, no commit message or `gh` text), find a
   brace group before matching its word, and walk a character array once;
-  their output is unchanged.
+  their output is unchanged. In bash 3.2, `${file##*/}` in
+  `gates_forbidden_path` and `${arg#["']}`-style quote stripping were
+  quadratic on a long word too; they now use a regex and substrings.
 
 ## 0.4.0 — 2026-10-06
 
