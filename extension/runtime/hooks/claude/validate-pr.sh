@@ -58,20 +58,29 @@ fi
 # what the parser accepts: gh/glab at a command start (line start, after a
 # separator, a quote, eval or a shell keyword, past assignments, wrappers
 # and their flags), and `gh api` only when the command names pulls.
+CMD_START="(^|[;&|(){}\`'\"!]|(^|[[:space:]])(then|do|else|elif|if|while|until|eval))[[:space:]]*"
+# A wrapper option may take a value (`sudo -u bob`, `env -u NAME`).
+CMD_PRE='(([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*|-[^[:space:]]*([[:space:]]+[^-[:space:]][^[:space:]]*)?|sudo|env|command|exec|nohup|time|nice|xargs)[[:space:]]+)*([^[:space:]]*/)?'
 might_be_pr() { # <command>
-    local start pre
-    start="(^|[;&|(){}\`'\"!]|(^|[[:space:]])(then|do|else|elif|if|while|until|eval))[[:space:]]*"
-    # A wrapper option may take a value (`sudo -u bob`, `env -u NAME`).
-    pre='(([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*|-[^[:space:]]*([[:space:]]+[^-[:space:]][^[:space:]]*)?|sudo|env|command|exec|nohup|time|nice|xargs)[[:space:]]+)*([^[:space:]]*/)?'
-    grep -qE "$start$pre(gh${REPO_OPT}[[:space:]]+pr[[:space:]]+(create|new|edit)|glab${REPO_OPT}[[:space:]]+mr[[:space:]]+(create|new|update))" <<<"$1" \
+    grep -qE "$CMD_START$CMD_PRE(gh${REPO_OPT}[[:space:]]+pr[[:space:]]+(create|new|edit)|glab${REPO_OPT}[[:space:]]+mr[[:space:]]+(create|new|update))" <<<"$1" \
         && return 0
-    grep -qE "$start${pre}gh[[:space:]]+api([[:space:]]|$)" <<<"$1" || return 1
+    grep -qE "$CMD_START${CMD_PRE}gh[[:space:]]+api([[:space:]]|$)" <<<"$1" || return 1
     # Quotes and backslashes removed: 'pu''lls' is still a pulls endpoint.
     grep -q pulls <<<"$(tr -d "'\"\\\\\n" <<<"$1")"
 }
+# `gh api "$EP"`: the endpoint -- the first word after `gh api` and its
+# options that is not a field (no =) -- holds a $ or backtick, so whether
+# it is a pulls endpoint is unknown; the hook asks, as the parser does (#229).
+api_endpoint_dynamic() { # <command>
+    local opts='(-[^[:space:]]*([[:space:]]+[^-[:space:]][^[:space:]]*)?[[:space:]]+)*'
+    grep -qE "$CMD_START${CMD_PRE}gh[[:space:]]+api[[:space:]]+$opts([^-[:space:]=][^[:space:]=]*)?[\$\`]" <<<"$1"
+}
 
 if ! python3 -c 'import json, re' >/dev/null 2>&1; then
-    might_be_pr "$COMMAND" || exit 0
+    if ! might_be_pr "$COMMAND"; then
+        api_endpoint_dynamic "$COMMAND" || exit 0
+        ask "gh api: the endpoint is not literal text, so this hook cannot tell whether it creates or edits a pull request; confirm it"
+    fi
     refuse "ERROR: python3 with the json module not found -- the PR hook cannot parse the command." \
         "  Install python3 with the json module (check: python3 -c \"import json\")."
 fi
@@ -393,9 +402,13 @@ for seg in lex(command):
                                               or "eval" in words[:k]):
                 refuse("ERROR: a PR command inside a shell string (sh -c, eval) cannot be checked.")
             # A PR command behind a wrapper or keyword this cannot step
-            # over (an option it does not know takes a value).
-            if k > 0 and words[0] in WRAPPERS | KEYWORDS | {"eval", "xargs"} \
-                    and find_pr(seg[k:])[0] is not None:
+            # over (an option it does not know takes a value). A `gh api`
+            # call there is refused only when it could be a PR command:
+            # a pulls endpoint, or one this cannot read (#229).
+            if k == 0 or words[0] not in WRAPPERS | KEYWORDS | {"eval", "xargs"}:
+                continue
+            inner, iargs, _ = find_pr(seg[k:])
+            if inner is not None and (inner != "api" or parse_api(iargs) is not None):
                 refuse("ERROR: cannot read the words before the PR command (%s); run it on its own."
                        % " ".join(words[:k]))
         continue
@@ -426,7 +439,7 @@ PYEOF
 run_local_rules() {
     compgen -G "$PROJECT_ROOT/.specify/gates/hooks.local.d/validate-pr/*.sh" >/dev/null || return 0
     local llib="$PROJECT_ROOT/.specify/gates/lib/local-hooks.sh"
-    if [[ ! -f "$llib" ]] || ! bash -n "$llib" 2>/dev/null; then
+    if [[ ! -f "$llib" ]] || ! "$BASH" -n "$llib" 2>/dev/null; then
         refuse "ERROR: local rules exist in hooks.local.d/validate-pr, but lib/local-hooks.sh cannot load." \
             "  Run /speckit.gates.doctor."
     fi

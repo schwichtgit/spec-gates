@@ -452,6 +452,22 @@ bulk_staging_on() {
 # Arguments come from xargs (`xargs git add < list`) are unknown (BULKQ).
 # A `cd <dir>` segment moves the directory later relative paths resolve
 # against; a `cd` this cannot resolve makes them unknown too.
+# head_before <word> <bracket>: set HB to the text of <word> before its
+# first character in <bracket> (all of it when there is none). A regex and
+# a substring, as ${word%%<bracket>*} is quadratic in bash 3.2 on a long
+# word (#233); the expansion stays for text the regex cannot read.
+head_before() {
+    local re="^[^${2:1}*" rest
+    if [[ "$1" =~ $re ]]; then
+        HB="${BASH_REMATCH[0]}"
+        rest="${1:${#HB}}"
+        # shellcheck disable=SC2053  # the bracket is a pattern on purpose
+        [[ -z "$rest" || "${rest:0:1}" == $2 ]] && return 0
+    fi
+    # shellcheck disable=SC2295  # the bracket is a pattern on purpose
+    HB="${1%%$2*}"
+    return 0
+}
 git_scan() {
     local seg t t2 q a v base cdir sub n i dashdash xa whole staged wtree force seqoff
     local hskip=""
@@ -565,13 +581,16 @@ git_scan() {
                             ;;
                         --*) ;;
                         *)
-                            t="${a#-}"
-                            t="${t#"${t%%[mFcCt]*}"}"
+                            # The cluster from its first option that takes
+                            # a value; substrings, not ${t#...} (#233).
+                            t="${a:1}"
+                            head_before "$t" '[mFcCt]'
+                            t="${t:${#HB}}"
                             if [[ "${#t}" -eq 1 ]]; then
                                 v="${w[i]:-}"
                                 i=$((i + 1))
                             elif [[ -n "$t" ]]; then
-                                v="${t#?}"
+                                v="${t:1}"
                             fi
                             ;;
                     esac
@@ -587,7 +606,7 @@ git_scan() {
                 # `-n` is --no-verify for commit, also inside a cluster
                 # (`-nm`), up to the first option that takes a value.
                 if [[ "$sub" == commit && "$a" == -* && "$a" != --* ]] \
-                    && [[ "${a%%[mFcCtSu]*}" == *n* ]]; then
+                    && head_before "$a" '[mFcCtSu]' && [[ "$HB" == *n* ]]; then
                     printf 'HOOKS git commit %s\n' "$a"
                     continue
                 fi
@@ -761,7 +780,17 @@ git_scan() {
               s = substr(s, 1, RSTART - 1) "$SUBST" substr(s, RSTART + RLENGTH)
           }
           s = s inner
-          gsub(/&&|\|\||;|\||&|\(|\)|`/, "\n", s); print s }')
+          gsub(/&&|\|\||;|\||&|\(|\)|`/, "\n", s)
+          # Only a segment that changes directory, runs git or names a
+          # hook skip variable can change the result; the loop above
+          # skips every other one, and reading each in bash costs seconds
+          # on a large command of many lines (#233).
+          n = split(s, seg, "\n")
+          for (k = 1; k <= n; k++) {
+              if (split(seg[k], f, " ") == 0) continue
+              t = seg[k]; gsub(/["'"'"']/, "", t)
+              if (f[1] == "cd" || f[1] == "pushd" || t ~ /git|HUSKY|LEFTHOOK|SKIP/) print seg[k]
+          } }')
     return 0
 }
 GIT_SCAN="$(git_scan)"
@@ -867,7 +896,7 @@ elif [[ -f "$POLICY" ]]; then
     if ! jq -e '(.protected_files.extra // []) | type == "array" and all(type == "string")' \
         "$POLICY" >/dev/null 2>&1; then
         EXTRA_UNREAD=1
-    elif [[ -f "$_plib" ]] && bash -n "$_plib" 2>/dev/null \
+    elif [[ -f "$_plib" ]] && "$BASH" -n "$_plib" 2>/dev/null \
         && ! (
             # shellcheck source=/dev/null disable=SC1090
             source "$_plib" && _pf="$(gates_policy_file)" \
@@ -1057,6 +1086,18 @@ glob_hit() {
     [[ "$2" == \*\*/* && "$1" == ${2#\*\*/} ]] && return 0
     return 1
 }
+# base_name <path>: set BN to the text after the last slash of <path>. A
+# regex and a substring, as ${path##*/} is quadratic in bash 3.2 on a long
+# word (#233); the expansion stays for text the regex cannot read.
+base_name() {
+    local head
+    if [[ "$1" =~ [^/]*$ ]]; then
+        BN="${BASH_REMATCH[0]}"
+        head="${1:0:${#1}-${#BN}}"
+        [[ -z "$head" || "${head: -1}" == / ]] && return 0
+    fi
+    BN="${1##*/}"
+}
 # protected_globs: the extra glob entries with no literal prefix
 # (`**/*.lock.md`), which protected_prefixes cannot match by text.
 protected_globs() {
@@ -1113,8 +1154,10 @@ if [[ "$MUTATES" -eq 1 || "$WRITE_REDIRECT" -eq 1 ]]; then
             [[ -n "$_g" ]] || continue
             while read -r -a _w && [[ -z "$_ghit" ]]; do
                 for _t in ${_w[@]+"${_w[@]}"}; do
-                    _t="${_t#./}"
-                    if glob_hit "$_t" "$_g" || glob_hit "${_t##*/}" "$_g" \
+                    # Substrings, not ${_t#./} and ${_t##*/} (#233).
+                    case "$_t" in ./*) _t="${_t:2}" ;; esac
+                    base_name "$_t"
+                    if glob_hit "$_t" "$_g" || glob_hit "$BN" "$_g" \
                         || { [[ -n "$CWD_REL" ]] && glob_hit "$CWD_REL/$_t" "$_g"; }; then
                         _ghit="$_t ($_g)"
                         break
@@ -1276,9 +1319,10 @@ fi
 # gates_core_secret <path>: the core of the secret-file list, built in,
 # for when lib/secrets.sh cannot load: environment files, private keys,
 # certificates and key stores, as 0.4.0 blocked them. The rest of the list
-# then asks.
+# then asks. Called under nocasematch; base_name, not ${1##*/} (#233).
 gates_core_secret() {
-    case "${1##*/}" in
+    base_name "$1"
+    case "$BN" in
         *.example | *.sample | *.template) return 1 ;;
         .env | .env.* | id_rsa* | id_ed25519* | id_ecdsa* | *.pem | *.key | *.crt | *.p12 | *.pfx | *.jks | *.keystore)
             return 0
@@ -1302,6 +1346,14 @@ if [[ "$SECRETS_LIB" == ok ]]; then
     shopt -s nocasematch
     while IFS= read -r _t; do
         if gates_forbidden_path "$_t"; then
+            # A read-only command that names a sensitive directory
+            # (`ls ~/.ssh/`, `cat ~/.aws/config`) runs: only the directory
+            # matched, not a secret name. A write there, or a glob that
+            # could read every key in it (`cat ~/.ssh/*`), still asks (#229).
+            if [[ "$GATES_FORBIDDEN_WHAT" == "file in a sensitive directory" && "$MUTATES" -eq 0 \
+                && "$WRITE_REDIRECT" -eq 0 && "$_t" != *[*?[]* ]]; then
+                continue
+            fi
             SECRET_FILE="$_t"
             break
         fi
@@ -1312,13 +1364,17 @@ if [[ "$SECRETS_LIB" == ok ]]; then
         defer_ask "this command names the secret file $SECRET_FILE (${GATES_FORBIDDEN_WHAT:-a forbidden name}); confirm it does not expose a credential"
     fi
 else
+    # nocasematch, not a tr per word: a fork per word costs seconds on a
+    # large command (#233).
+    shopt -s nocasematch
     while IFS= read -r _t; do
-        if gates_core_secret "$(tr '[:upper:]' '[:lower:]' <<<"$_t")"; then
+        if gates_core_secret "$_t"; then
             defer_ask "this command names the secret file $_t; confirm it does not expose a credential"
             break
         fi
     done < <(printf '%s\n' "$COMMAND" | tr '<>|;&()=,' '         ' | awk '
         { for (i = 1; i <= NF; i++) { t = $i; gsub(/["'"'"'`]/, "", t); if (t != "" && !seen[t]++) print t } }')
+    shopt -u nocasematch
     defer_ask "lib/secrets.sh cannot load, so this command cannot be checked for secret files; run /speckit.gates.doctor"
 fi
 
@@ -1327,7 +1383,7 @@ fi
 # project refusal is stronger than a question.
 if compgen -G "$LROOT/.specify/gates/hooks.local.d/validate-bash/*.sh" >/dev/null; then
     LLIB="$LROOT/.specify/gates/lib/local-hooks.sh"
-    if [[ ! -f "$LLIB" ]] || ! bash -n "$LLIB" 2>/dev/null; then
+    if [[ ! -f "$LLIB" ]] || ! "$BASH" -n "$LLIB" 2>/dev/null; then
         ask "local rules exist in hooks.local.d/validate-bash, but lib/local-hooks.sh cannot load; run /speckit.gates.doctor"
     fi
     # shellcheck source=/dev/null disable=SC1090

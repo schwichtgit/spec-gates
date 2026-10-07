@@ -82,7 +82,7 @@ _gates_local_exec() {
     # calls setsid leaves the group and is out of reach.
     set -m
     GATES_HOOK="$GATES_LOCAL_HOOK" GATES_PROJECT_ROOT="$GATES_LOCAL_ROOT" \
-        bash "$f" "$@" <<<"$GATES_LOCAL_STDIN" >/dev/null 2>"$errf" &
+        "$BASH" "$f" "$@" <<<"$GATES_LOCAL_STDIN" >/dev/null 2>"$errf" &
     pid=$!
     set +m
     (

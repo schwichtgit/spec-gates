@@ -113,6 +113,23 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   fails (exit 1). The README rollback note for 0.3.x branches covers
   husky, lefthook and the pre-commit framework, whose `pre-merge-commit`
   entry lives in their own configuration.
+- **Agent hooks: no false asks on reads, fewer false refusals** (#229).
+  validate-bash no longer asks on a read-only command that only names a
+  sensitive directory (`ls ~/.ssh/`, `cat ~/.aws/config`); a write there,
+  a glob over it or a secret name in it still asks. Without python3,
+  validate-pr now asks on `gh api "$EP"` as the parser does, and with it
+  a non-PR `gh api` behind a wrapper option it cannot read
+  (`sudo --odd bob gh api user`) runs instead of being refused. The hooks
+  check and run local rules with the running bash (`$BASH`), so a
+  restricted PATH without bash no longer turns them into refusals.
+- **validate-bash is fast on large multi-line commands** (#233). The git
+  scan read every line of a command in bash, so 200 KB of short lines or
+  a large heredoc file write took 5-7 s under macOS bash 3.2; it now reads
+  only the lines that change directory, run git or name a hook skip
+  variable, about half the time. `${t%%[mFcCt]*}` on `git commit` option
+  words, `${_t##*/}` for protected glob entries and the built-in secret
+  check's basename were quadratic on a long word (up to two minutes on
+  200 KB); they now use a regex and substrings. Results are unchanged.
 
 ## 0.4.0 — 2026-10-06
 

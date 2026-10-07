@@ -190,7 +190,8 @@ for c in "gh pr create -t 'feat: x' -b y" "cd x && gh pr create -t 'feat: x' -b 
     vpn "PR hook: no python3 -> still refused: $c" 2 "$c"
 done
 for c in 'git commit -m "fix: handle gh pr create"' 'gh api repos/o/r/issues -f title=anything' \
-    'echo see gh pr create docs' 'gh api user'; do
+    'echo see gh pr create docs' 'gh api user' 'sudo --odd bob gh api user' \
+    "gh api graphql -f query='query(\$o: String!) { x }'" "gh api user -f 'title=\$T'"; do
     vpn "PR hook: no python3 -> not a PR command, allowed: $c" 0 "$c"
 done
 check "PR hook: missing runtime lib -> PR command refused" 2 bash -c "printf '%s' '$PRCMD' | CLAUDE_PROJECT_DIR='$WORKDIR/no-runtime-here' '$HOOKS/validate-pr.sh'"
@@ -231,6 +232,13 @@ askcheck() { # <name> <payload> <hook> [VAR=value...]: expect exit 0 + "ask" JSO
         FAIL=$((FAIL + 1))
     fi
 }
+# #229: without python3 a gh api endpoint that is not literal text asks,
+# as the parser does.
+# shellcheck disable=SC2016  # literal command text under test
+for c in 'gh api "$EP"' 'gh api -X GET "$EP"' 'x=1 gh api `ep` -f title=x' 'sudo -u bob gh api "repos/$R/issues"'; do
+    askcheck "PR hook: no python3 -> a variable gh api endpoint asks: $c" "$(jq -nc --arg c "$c" '{tool_input:{command:$c}}')" \
+        validate-pr.sh PATH="$NOPY" CLAUDE_PROJECT_DIR="$RT"
+done
 # Every command the jq path blocks is blocked in raw mode too, including
 # with the extra fields Claude Code sends (absolute cwd/transcript paths must
 # not leak into the rm rule) and with escaped quotes inside the command.
@@ -1344,6 +1352,34 @@ if [[ -x /usr/bin/awk ]] && ! grep -q 'GNU Awk' <<<"$(/usr/bin/awk --version 2>&
 else
     echo "SKIP: 200 KB command under BWK awk (/usr/bin/awk is absent or GNU awk)"
 fi
+# Large multi-line commands and long option words stay fast under macOS
+# /bin/bash 3.2 and /usr/bin/awk (#233): the git scan read every line in
+# bash, and ${t%%[mFcCt]*}, ${_t##*/} and the built-in secret check's
+# basename were quadratic on a long word (a minute and more on 200 KB).
+if [[ -x /usr/bin/awk && -x /bin/bash ]]; then
+    BL="$WORKDIR/big-lines"
+    mkdir -p "$BL/p/.specify/gates" "$BL/g/.specify/gates" "$BL/lone" "$BL/none"
+    echo '{"hooks":{}}' >"$BL/p/.specify/gates/policy.json"
+    echo '{"hooks":{},"protected_files":{"extra":["**/*.lock"]}}' >"$BL/g/.specify/gates/policy.json"
+    cp "$HOOKS/validate-bash.sh" "$BL/lone/"
+    awk 'BEGIN { for (i = 0; i < 14000; i++) print "echo line " i }' >"$BL/lines.txt"
+    { printf "cat > notes.txt <<'EOF'\n"; awk 'BEGIN { for (i = 0; i < 12000; i++) print "text " i " here" }'; printf 'EOF'; } >"$BL/heredoc.txt"
+    head -c 200000 /dev/zero | tr '\0' x >"$BL/x.txt"
+    { printf 'git commit -n'; cat "$BL/x.txt"; } >"$BL/commit.txt"
+    { printf 'rm '; cat "$BL/x.txt"; } >"$BL/rm.txt"
+    { printf 'cat '; cat "$BL/x.txt"; } >"$BL/cat.txt"
+    for f in lines heredoc commit rm cat; do
+        jq -n --rawfile c "$BL/$f.txt" '{tool_input:{command:$c}}' >"$BL/$f.json"
+    done
+    BP="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+    check "200 KB of short lines is allowed in time" 0 bounded 20 bash -c "out=\$(PATH='$BP' CLAUDE_PROJECT_DIR='$BL/p' '$HOOKS/validate-bash.sh' <'$BL/lines.json') && [[ -z \"\$out\" ]]"
+    check "a 200 KB heredoc file write is allowed in time" 0 bounded 20 bash -c "out=\$(PATH='$BP' CLAUDE_PROJECT_DIR='$BL/p' '$HOOKS/validate-bash.sh' <'$BL/heredoc.json') && [[ -z \"\$out\" ]]"
+    check "git commit -n with a 200 KB option word asks in time" 0 bounded 20 bash -c "out=\$(PATH='$BP' CLAUDE_PROJECT_DIR='$BL/p' '$HOOKS/validate-bash.sh' <'$BL/commit.json') && grep -q 'permissionDecision\":\"ask' <<<\"\$out\""
+    check "rm of a 200 KB word with a protected glob is allowed in time" 0 bounded 20 bash -c "out=\$(PATH='$BP' CLAUDE_PROJECT_DIR='$BL/g' '$HOOKS/validate-bash.sh' <'$BL/rm.json') && [[ -z \"\$out\" ]]"
+    check "a 200 KB word without lib/secrets.sh asks in time" 0 bounded 20 bash -c "out=\$(PATH='$BP' CLAUDE_PROJECT_DIR='$BL/none' '$BL/lone/validate-bash.sh' <'$BL/cat.json') && grep -q 'secrets.sh cannot load' <<<\"\$out\""
+else
+    echo "SKIP: large commands under /bin/bash and /usr/bin/awk (one is absent)"
+fi
 rule protect-files 10-no-vendor.sh 'if grep -q "\"vendor/"; then echo "vendor/ is generated" >&2; exit 1; fi'
 check "protect-files local rule refuses" 2 bash -c "printf '%s' '{\"tool_input\":{\"file_path\":\"vendor/x.go\"}}' | CLAUDE_PROJECT_DIR='$LR' '$HOOKS/protect-files.sh'"
 check "protect-files local rule refuses before an ask" 2 bash -c "printf '%s' '{\"tool_input\":{\"file_path\":\"vendor/secret_util.go\"}}' | CLAUDE_PROJECT_DIR='$LR' '$HOOKS/protect-files.sh'"
@@ -1363,6 +1399,27 @@ mv "$LR/.specify/gates/lib/local-hooks.sh" "$LR/.specify/gates/lib/local-hooks.s
 check "commit-msg: rules present but library missing -> refused" 1 bash -c "cd '$LR' && '$CM' '$MSGF'"
 askcheck "validate-bash: rules present but library missing asks" '{"tool_input":{"command":"ls"}}' validate-bash.sh CLAUDE_PROJECT_DIR="$LR"
 mv "$LR/.specify/gates/lib/local-hooks.sh.off" "$LR/.specify/gates/lib/local-hooks.sh"
+# #229: the hooks check and run local rules with the bash running them,
+# not the one on PATH: under a PATH without bash a passing rule passes.
+NOBASH="$WORKDIR/path-nobash"
+toolpath "$NOBASH"
+for t in mktemp sleep rm kill mkdir sort cut ls env ps; do
+    command -v "$t" >/dev/null 2>&1 && ln -sf "$(command -v "$t")" "$NOBASH/$t"
+done
+NB="$WORKDIR/nobash-rules"
+project_runtime "$NB" "true"
+printf '%s' '{ "hooks": {}, "git": { "block_main_commits": false } }' >"$NB/.specify/gates/policy.json"
+for h in validate-bash protect-files validate-pr commit-msg; do
+    mkdir -p "$NB/.specify/gates/hooks.local.d/$h"
+    printf 'exit 0\n' >"$NB/.specify/gates/hooks.local.d/$h/10-pass.sh"
+done
+check "validate-bash: a passing local rule passes without bash on PATH" 0 bash -c "out=\$(printf '%s' '{\"tool_input\":{\"command\":\"ls\"}}' | PATH='$NOBASH' CLAUDE_PROJECT_DIR='$NB' '$HOOKS/validate-bash.sh') && [[ -z \"\$out\" ]]"
+check "protect-files: a passing local rule passes without bash on PATH" 0 bash -c "out=\$(printf '%s' '{\"tool_input\":{\"file_path\":\"src/a.ts\"}}' | PATH='$NOBASH' CLAUDE_PROJECT_DIR='$NB' '$HOOKS/protect-files.sh') && [[ -z \"\$out\" ]]"
+if [[ "$PR_OK" -eq 0 ]]; then
+    check "validate-pr: a passing local rule passes without bash on PATH" 0 bash -c "printf '%s' '$PRCMD' | PATH='$NOBASH' CLAUDE_PROJECT_DIR='$NB' '$HOOKS/validate-pr.sh'"
+fi
+printf 'feat: add a thing\n' >"$WORKDIR/nobash-msg.txt"
+check "commit-msg: a passing local rule passes without bash on PATH" 0 bash -c "cd '$NB' && PATH='$NOBASH' '$CM' '$WORKDIR/nobash-msg.txt'"
 PCL="$WORKDIR/pclocal"
 project_runtime "$PCL" "true"
 printf '%s' '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error", "custom_command": "true" } }, "git": { "block_main_commits": false } }' \
@@ -1585,6 +1642,17 @@ for c in 'cat .env' 'cat config/.env.prod' 'cp ~/.ssh/id_rsa /tmp/k' 'grep KEY .
     askcheck "naming a secret file asks: $c" "$(vb_payload "$c")" validate-bash.sh CLAUDE_PROJECT_DIR="$VB"
 done
 vb_allows "the .env.example allowlist holds" 'cat .env.example'
+# #229: a read that names a sensitive directory runs; a write there, a
+# glob over it or a secret name in it still asks.
+# shellcheck disable=SC2088  # the ~ is command text under test
+for c in 'ls ~/.ssh/' 'cat ~/.aws/config' 'ls -la ~/.gnupg/ && echo done'; do
+    vb_allows "a read in a sensitive directory runs: $c" "$c"
+done
+# shellcheck disable=SC2088
+for c in 'echo x > ~/.ssh/config' 'cp a ~/.aws/config' 'cat ~/.ssh/*' 'cat ~/.ssh/id_rsa' 'cat ~/.aws/credentials' \
+    'ls ~/.ssh/ && cat .env'; do
+    askcheck "a sensitive-directory write, glob or secret asks: $c" "$(vb_payload "$c")" validate-bash.sh CLAUDE_PROJECT_DIR="$VB"
+done
 for c in 'git commit --no-verify -m "feat: x"' 'git commit -n -m "feat: x"' 'git commit -nm "feat: x"' \
     'git -c core.hooksPath=/dev/null commit -m "feat: x"' 'git config core.hooksPath /tmp/none' \
     'git merge --no-verify feat/x'; do
@@ -1938,6 +2006,10 @@ for c in "eval gh pr create -t 'feat: x' -b 'Adds a parser.'" "xargs gh pr creat
     vp "a PR command through eval, xargs or an unread wrapper option refused: $c" 2 "$c"
 done
 vp "eval of a non-PR gh api call allowed" 0 "eval gh api user"
+# #229: behind a wrapper option it cannot read, a gh api call is refused
+# only when it could be a PR command.
+vp "a non-PR gh api call behind an unread wrapper option allowed" 0 "sudo --odd bob gh api user"
+vp "a pulls gh api call behind an unread wrapper option refused" 2 "sudo --odd bob gh api repos/o/r/pulls -f title=x"
 if [[ "$PR_OK" -eq 0 ]]; then
     # shellcheck disable=SC2016  # literal command text under test
     askcheck "gh api with a variable endpoint asks" "$(pp_payload 'gh api "$EP" -f title=x')" validate-pr.sh CLAUDE_PROJECT_DIR="$RT"
