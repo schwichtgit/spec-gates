@@ -186,6 +186,8 @@ builtin_rules() {
     # from the list pre-commit and pr-check use (lib/secrets.sh, #221).
     if [[ "$SECRETS_LIB" == ok ]] && gates_forbidden_path "$FILE_PATH"; then
         BLOCKED="Secret file: ${GATES_FORBIDDEN_WHAT:-a forbidden name} (lib/secrets.sh)"
+    elif [[ "$SECRETS_LIB" != ok ]] && gates_core_secret "$FILE_PATH"; then
+        BLOCKED="Secret file (the built-in core list; lib/secrets.sh cannot load)"
     fi
 
     # Credentials (#71): an exact credential file name is strong evidence and
@@ -247,12 +249,28 @@ builtin_rules() {
     return 0
 }
 
-# The secret-file list (#221): the projected lib, or the one beside this
-# hook in the extension's own layout. One that cannot load asks below,
+# The secret-file list (#221): the project's lib, the one this hook was
+# projected beside (.claude/hooks/gates -> .specify/gates/lib, also when
+# CLAUDE_PROJECT_DIR points elsewhere), or the one in the extension's own
+# layout. Without one the core list still blocks and the rest asks below,
 # once no other rule has blocked.
+# gates_core_secret <path>: the core of the secret-file list, built in,
+# for when lib/secrets.sh cannot load: environment files, private keys,
+# certificates and key stores, as 0.4.0 blocked them. The rest of the list
+# then asks.
+gates_core_secret() {
+    case "${1##*/}" in
+        *.example | *.sample | *.template) return 1 ;;
+        .env | .env.* | id_rsa* | id_ed25519* | id_ecdsa* | *.pem | *.key | *.crt | *.p12 | *.pfx | *.jks | *.keystore)
+            return 0
+            ;;
+    esac
+    return 1
+}
 PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 SECRETS_LIB=missing
-for _sl in "$PROJECT_ROOT/.specify/gates/lib/secrets.sh" "${BASH_SOURCE[0]%/*}/../../lib/secrets.sh"; do
+for _sl in "$PROJECT_ROOT/.specify/gates/lib/secrets.sh" "${BASH_SOURCE[0]%/*}/../../../.specify/gates/lib/secrets.sh" \
+    "${BASH_SOURCE[0]%/*}/../../lib/secrets.sh"; do
     [[ -f "$_sl" ]] || continue
     # shellcheck source=/dev/null disable=SC1090
     if "$BASH" -n "$_sl" 2>/dev/null && source "$_sl" 2>/dev/null \

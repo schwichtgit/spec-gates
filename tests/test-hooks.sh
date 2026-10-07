@@ -1201,6 +1201,30 @@ for hk in protect-files.sh validate-bash.sh; do
 done
 check "a project rule still blocks before the secrets-lib question" 2 bash -c \
     "printf '%s' '{\"tool_input\":{\"file_path\":\".specify/gates/policy.json\"}}' | CLAUDE_PROJECT_DIR='$DR' '$HOOKS/protect-files.sh'"
+# Without any lib the built-in core still blocks, never weaker than 0.4.0
+# (the canary runs the hook with CLAUDE_PROJECT_DIR at an empty sandbox).
+mkdir -p "$WORKDIR/emptyproj"
+for f in .env .env.local config/id_rsa server.pem release.jks .ENV; do
+    check "no lib/secrets.sh: the core list still blocks $f" 2 bash -c \
+        "printf '%s' '{\"tool_input\":{\"file_path\":\"$f\"}}' | CLAUDE_PROJECT_DIR='$WORKDIR/emptyproj' '$WORKDIR/lonehooks/protect-files.sh'"
+done
+check "no lib/secrets.sh: a name outside the core asks" 0 bash -c \
+    "printf '%s' '{\"tool_input\":{\"file_path\":\".netrc\"}}' | CLAUDE_PROJECT_DIR='$WORKDIR/emptyproj' '$WORKDIR/lonehooks/protect-files.sh' | grep -q 'lib/secrets.sh cannot load'"
+check "no lib/secrets.sh: validate-bash names a core secret file" 0 bash -c \
+    "printf '%s' '{\"tool_input\":{\"command\":\"cat .env\"}}' | CLAUDE_PROJECT_DIR='$WORKDIR/emptyproj' '$WORKDIR/lonehooks/validate-bash.sh' | grep -q 'names the secret file .env'"
+# A projected install (.claude/hooks/gates beside .specify/gates/lib) finds
+# its lib through the hook's own path when CLAUDE_PROJECT_DIR points
+# elsewhere, as in the canary sandbox.
+PJ="$WORKDIR/projected-layout"
+mkdir -p "$PJ/.claude/hooks/gates" "$PJ/.specify/gates/lib"
+cp "$HOOKS/protect-files.sh" "$HOOKS/validate-bash.sh" "$PJ/.claude/hooks/gates/"
+sed 's/aws-credentials)/aws-credentials | *.drift)/' "$FF" >"$PJ/.specify/gates/lib/secrets.sh"
+check "projected layout: protect-files reads the lib beside it" 2 bash -c \
+    "printf '%s' '{\"tool_input\":{\"file_path\":\"x.drift\"}}' | CLAUDE_PROJECT_DIR='$WORKDIR/emptyproj' '$PJ/.claude/hooks/gates/protect-files.sh'"
+check "projected layout: validate-bash reads the lib beside it" 0 bash -c \
+    "printf '%s' '{\"tool_input\":{\"command\":\"cat x.drift\"}}' | CLAUDE_PROJECT_DIR='$WORKDIR/emptyproj' '$PJ/.claude/hooks/gates/validate-bash.sh' | grep -q 'names the secret file x.drift'"
+check "projected layout: validate-bash asks no lib question" 0 bash -c \
+    "out=\$(printf '%s' '{\"tool_input\":{\"command\":\"ls src\"}}' | CLAUDE_PROJECT_DIR='$WORKDIR/emptyproj' '$PJ/.claude/hooks/gates/validate-bash.sh') && [[ -z \"\$out\" ]]"
 
 echo ""
 echo "=== bulk staging (git.block_bulk_staging, #71) ==="

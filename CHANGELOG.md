@@ -68,8 +68,9 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   writes; it now reads it and asks only when it cannot.
 - **One secret-file list at every boundary** (#221). protect-files and
   validate-bash kept their own copy of the forbidden names; they now read
-  it from `lib/secrets.sh`, as `pre-commit` and `pr-check.sh` do, and ask
-  when it cannot load. The list is the union of the old ones, so the git
+  it from `lib/secrets.sh`, as `pre-commit` and `pr-check.sh` do. When it
+  cannot load, `.env` files, private keys and certificates still block
+  and every other edit asks. The list is the union of the old ones, so the git
   and CI boundaries now also refuse `*.jks`, `credentials`,
   `credentials.yml`/`.yaml`, `.netrc`, `.pypirc`, `gcloud-*.json` and a
   top-level `.ssh/`, `.gnupg/`, `.aws/` or `.gcloud/`.

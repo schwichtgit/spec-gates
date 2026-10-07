@@ -1236,10 +1236,25 @@ fi
 # that names one (`cat .env`, `cp id_rsa x`) asks, since reading it puts
 # the secret in the transcript. The names and allowlist are the ones
 # pre-commit and pr-check refuse (lib/secrets.sh, #221), matched ignoring
-# case; the projected lib, or the one beside this hook in the extension's
-# own layout. One that cannot load asks.
+# case; the project's lib, the one this hook was projected beside, or the
+# one in the extension's own layout. Without one, a core name still names
+# its file in the question, and any other command asks.
+# gates_core_secret <path>: the core of the secret-file list, built in,
+# for when lib/secrets.sh cannot load: environment files, private keys,
+# certificates and key stores, as 0.4.0 blocked them. The rest of the list
+# then asks.
+gates_core_secret() {
+    case "${1##*/}" in
+        *.example | *.sample | *.template) return 1 ;;
+        .env | .env.* | id_rsa* | id_ed25519* | id_ecdsa* | *.pem | *.key | *.crt | *.p12 | *.pfx | *.jks | *.keystore)
+            return 0
+            ;;
+    esac
+    return 1
+}
 SECRETS_LIB=missing
-for _sl in "$LROOT/.specify/gates/lib/secrets.sh" "${BASH_SOURCE[0]%/*}/../../lib/secrets.sh"; do
+for _sl in "$LROOT/.specify/gates/lib/secrets.sh" "${BASH_SOURCE[0]%/*}/../../../.specify/gates/lib/secrets.sh" \
+    "${BASH_SOURCE[0]%/*}/../../lib/secrets.sh"; do
     [[ -f "$_sl" ]] || continue
     # shellcheck source=/dev/null disable=SC1090
     if "$BASH" -n "$_sl" 2>/dev/null && source "$_sl" 2>/dev/null \
@@ -1263,6 +1278,13 @@ if [[ "$SECRETS_LIB" == ok ]]; then
         defer_ask "this command names the secret file $SECRET_FILE (${GATES_FORBIDDEN_WHAT:-a forbidden name}); confirm it does not expose a credential"
     fi
 else
+    while IFS= read -r _t; do
+        if gates_core_secret "$(tr '[:upper:]' '[:lower:]' <<<"$_t")"; then
+            defer_ask "this command names the secret file $_t; confirm it does not expose a credential"
+            break
+        fi
+    done < <(printf '%s\n' "$COMMAND" | tr '<>|;&()=,' '         ' | awk '
+        { for (i = 1; i <= NF; i++) { t = $i; gsub(/["'"'"'`]/, "", t); if (t != "" && !seen[t]++) print t } }')
     defer_ask "lib/secrets.sh cannot load, so this command cannot be checked for secret files; run /speckit.gates.doctor"
 fi
 
