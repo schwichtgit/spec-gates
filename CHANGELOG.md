@@ -8,6 +8,20 @@ never touches `.specify/gates/policy.json`. New policy keys take the
 defaults stated here until you set them. Releases before 0.3.3 are
 described in their [GitHub release notes](https://github.com/schwichtgit/spec-gates/releases).
 
+## [Unreleased]
+
+### Fixed
+
+- **Dependabot and Renovate PRs pass the GitHub pr step** (#248). Their
+  descriptions quote upstream release notes, often with emoji, so every
+  such PR failed the message rules. The GitHub template and the
+  standalone `pr` snippet now hand `pr-check.sh` an empty description
+  when the PR author is `dependabot[bot]` or `renovate[bot]`; the title,
+  Protected-Change declarations in commits, and the secret scan still
+  run. Declarations in such a PR's description no longer count. An
+  existing pipeline keeps the old step until you merge the template's
+  `GATES_PR_BODY` line into it.
+
 ## 0.4.1 — 2026-10-07
 
 ### Upgrading

@@ -73,11 +73,15 @@ jobs:
       # judges it. A base without pr-check.sh (the PR adopting spec-gates)
       # runs the PR's own copy. This workflow file still comes from the PR:
       # protect it and .specify/gates/** with branch protection + CODEOWNERS.
+      # Dependabot and Renovate descriptions quote upstream release notes
+      # (emoji, third-party prose) nobody here wrote, so the description of
+      # a PR they open is not checked; its title, protected changes and
+      # secrets are. Add your own bots' logins to the list.
       - name: Check the pull request (text, protected changes, secrets)
         if: github.event_name == 'pull_request'
         env:
           GATES_PR_TITLE: ${{ github.event.pull_request.title }}
-          GATES_PR_BODY: ${{ github.event.pull_request.body }}
+          GATES_PR_BODY: ${{ !contains(fromJSON('["dependabot[bot]", "renovate[bot]"]'), github.event.pull_request.user.login) && github.event.pull_request.body || '' }}
         run: |
           base="origin/$GITHUB_BASE_REF"
           if git cat-file -e "$base:.specify/gates/pr-check.sh" 2>/dev/null; then

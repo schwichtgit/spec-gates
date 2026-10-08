@@ -298,7 +298,7 @@ gates_ci_pr_snippet() { # <github|gitlab|jenkins>
                 "  if: github.event_name == 'pull_request'" \
                 '  env:' \
                 '    GATES_PR_TITLE: ${{ github.event.pull_request.title }}' \
-                '    GATES_PR_BODY: ${{ github.event.pull_request.body }}' \
+                '    GATES_PR_BODY: ${{ !contains(fromJSON('"'"'["dependabot[bot]", "renovate[bot]"]'"'"'), github.event.pull_request.user.login) && github.event.pull_request.body || '"'"''"'"' }}' \
                 '  run: |' \
                 '    base="origin/$GITHUB_BASE_REF"' \
                 '    if git cat-file -e "$base:.specify/gates/pr-check.sh" 2>/dev/null; then' \
