@@ -160,8 +160,8 @@ if required package contents (manifest, constitution corpus, runtime) are
 missing from the zip.
 
 **Downstream:** in production use by real downstream projects (GitHub and
-GitLab CI backstops); the 0.3.1 line carries fixes from structured downstream
-feedback (issues #31–#34).
+GitLab CI backstops); releases carry fixes from structured downstream
+feedback (see the CHANGELOG).
 
 ### Example Usage
 
