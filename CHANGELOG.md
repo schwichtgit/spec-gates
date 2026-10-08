@@ -21,6 +21,18 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   run. Declarations in such a PR's description no longer count. An
   existing pipeline keeps the old step until you merge the template's
   `GATES_PR_BODY` line into it.
+- **validate-pr names an unset `--body-file` variable** (#248). A
+  `--body-file $B` whose variable the agent hook cannot see (a shell
+  variable set in an earlier command, not inherited by the hook) was
+  refused with only the unexpanded path. The refusal now names the
+  variable, says the hook resolves only the variables it inherits, and
+  says to pass the path literally. Still refused, as before.
+- **README Upgrade: unattended `add` and skill format** (#248).
+  `specify extension add --from <url>` asks to confirm the source and
+  aborts with exit 1 without a terminal; the Upgrade section says to
+  pipe `yes` into it in scripts and agent sessions. It also says to run
+  `specify integration upgrade --force` after the `add` when the skills
+  use the integration format, which some Spec Kit CLI versions revert.
 
 ## 0.4.1 — 2026-10-07
 

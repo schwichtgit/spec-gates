@@ -146,6 +146,12 @@ check "PR --body-file \$VAR/bad resolved and blocked" 2 bash -c "echo '{\"tool_i
 check "PR --body-file \${VAR}/ok resolved and allowed" "$PR_OK" bash -c "echo '{\"tool_input\":{\"command\":\"gh pr create --title \\\"feat: x\\\" --body-file \${GATES_BF}/ok.md\"}}' | GATES_BF='$BFD' '$HOOKS/validate-pr.sh'"
 check "PR --body-file unreadable path refused" 2 bash -c "echo '{\"tool_input\":{\"command\":\"gh pr create --title \\\"feat: x\\\" --body-file $BFD/missing.md\"}}' | '$HOOKS/validate-pr.sh'"
 check "PR --body-file with unset variable refused" 2 bash -c "echo '{\"tool_input\":{\"command\":\"gh pr create --title \\\"feat: x\\\" --body-file \$GATES_UNSET_VAR/ok.md\"}}' | '$HOOKS/validate-pr.sh'"
+# #248: an unexpanded leading variable is named in the refusal, with the
+# reason (the hook sees only its own environment); a set variable whose
+# file is missing gets the plain message.
+check "PR --body-file unset \$VAR names the variable" 0 bash -c "echo '{\"tool_input\":{\"command\":\"gh pr create --title \\\"feat: x\\\" --body-file \$GATES_UNSET_VAR/ok.md\"}}' | '$HOOKS/validate-pr.sh' 2>&1 | grep -qF '\$GATES_UNSET_VAR is not set in this hook'\''s environment'"
+check "PR --body-file unset \${VAR} names the variable" 0 bash -c "echo '{\"tool_input\":{\"command\":\"gh pr create --title \\\"feat: x\\\" --body-file \${GATES_UNSET_VAR}/ok.md\"}}' | '$HOOKS/validate-pr.sh' 2>&1 | grep -qF 'not a shell'"
+check "PR --body-file set \$VAR, missing file: no unset hint" 1 bash -c "echo '{\"tool_input\":{\"command\":\"gh pr create --title \\\"feat: x\\\" --body-file \$GATES_BF/missing.md\"}}' | GATES_BF='$BFD' '$HOOKS/validate-pr.sh' 2>&1 | grep -qF 'is not set in this hook'"
 check "PR --body-file - (stdin) refused" 2 bash -c "echo '{\"tool_input\":{\"command\":\"gh pr create --title \\\"feat: x\\\" --body-file -\"}}' | '$HOOKS/validate-pr.sh'"
 check "gh pr edit without title/body allowed" "$PR_OK" bash -c 'echo '"'"'{"tool_input":{"command":"gh pr edit 5 --add-label bug"}}'"'"' | '"'$HOOKS/validate-pr.sh'"''
 check "gh pr edit body-only (no title) allowed" "$PR_OK" bash -c 'echo '"'"'{"tool_input":{"command":"gh pr edit 5 --body \"Adds a parser.\""}}'"'"' | '"'$HOOKS/validate-pr.sh'"''

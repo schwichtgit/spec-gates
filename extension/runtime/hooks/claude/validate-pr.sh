@@ -506,7 +506,16 @@ if [[ -n "$BODY_FILE" ]]; then
     fi
     RESOLVED="$(resolve_body_file "$BODY_FILE")"
     if [[ ! -f "$RESOLVED" || ! -r "$RESOLVED" ]]; then
+        # A leading variable left unexpanded (#248): the hook sees only its
+        # own environment, not shell variables the agent set earlier.
+        UNSET_HINT=()
+        if [[ "$BODY_FILE" =~ ^\$\{?([A-Za-z_][A-Za-z0-9_]*) && "$RESOLVED" == *'$'* ]]; then
+            UNSET_HINT=("  \$${BASH_REMATCH[1]} is not set in this hook's environment: it resolves only" \
+                "  variables it inherits (exported before the agent started), not a shell" \
+                "  variable set in an earlier command. Pass the path literally.")
+        fi
         refuse "ERROR: cannot read --body-file $BODY_FILE (resolved: $RESOLVED)." \
+            ${UNSET_HINT[@]+"${UNSET_HINT[@]}"} \
             "  Write the file in a separate step first and pass a readable path, or use --body."
     fi
     # Both forms given: check both, whichever the tool ends up using.
