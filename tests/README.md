@@ -21,7 +21,7 @@ the hooks execute under macOS `/bin/bash`.
   fail -> block, loop-guard, fail-open when the runtime is not projected,
   block-main, secret scan). Later parts: the agent hooks never silently
   allow (block on certainty, ask on uncertainty, raw mode without jq);
-  `protected_files.extra`; commit-msg toggles, Protected-Change trailers
+  the shared forbidden-file list (`lib/secrets.sh`); `protected_files.extra`; commit-msg toggles, Protected-Change trailers
   and `git.ai_branding`; hook/runtime version skew, hook stubs and linked
   worktrees; the auto-format hooks really format, map a tool failure
   through their severity, and format nothing without a policy; local rules in
@@ -44,9 +44,9 @@ the hooks execute under macOS `/bin/bash`.
   runtime version check, constitution enforcement, upgrade safety, install
   hygiene, and the git probe with `--installed-only`.
 - `test-canary.sh` — the gate's own proof that it still blocks: a healthy
-  fixture gets every canary `blocked`; a no-op formatter dispatch and a
-  stubbed accept-block runner are each caught in one run, naming the
-  broken gate; a canary run never creates, modifies, or reads project
+  fixture gets every canary `blocked`; a no-op formatter dispatch, a
+  stubbed accept-block runner and a runner that judges a block by its last
+  line are each caught, naming the broken gate; a canary run never creates, modifies, or reads project
   files (FR-006); `--only` subsets and `doctor --canary` delegation;
   absent-tool skips vs the policy-enabled gap rule.
 - `test-attest.sh` — evidence: every run appends a schema-conformant
@@ -62,9 +62,13 @@ the hooks execute under macOS `/bin/bash`.
   errors for unterminated/empty/orphan blocks naming `file:line`);
   `--accept` runs incomplete features informationally without changing the
   exit code; a `Complete` feature blocks on a failing block (SC-001) or an
-  unchecked task (SC-002), naming both; timeout and mutation detection
-  (never auto-reverted); `severity`/`include`/`exclude`/`enabled` policy
-  knobs; the `GATES_SPEC_EXEC` recursion guard.
+  unchecked task (SC-002), naming both; every line counts (errexit and
+  pipefail, the `!` rule and its heredoc exception); timeout and mutation
+  detection (never auto-reverted), including git config, hooks, refs,
+  ignored files and processes left running; `severity`/`include`/
+  `exclude`/`enabled`/`snapshot_exclude` policy knobs; the
+  `GATES_SPEC_EXEC` recursion guard; blocks run without git's hook
+  environment.
 - `test-contract.sh` — the policy contract (feature 003): one `sync`
   adopts a baseline and materializes the effective policy; verify runs
   offline afterwards; hand-editing any contract artifact blocks, naming
@@ -88,9 +92,13 @@ the hooks execute under macOS `/bin/bash`.
   and every shipped script parses under the stock macOS bash 3.2.
 - `test-pr-check.sh` — `pr-check.sh` at the CI boundary: PR/MR text
   runs through the shared message rules; Protected-Change declarations are
-  enforced per commit from trailers or the description; GitHub, GitLab and
-  Jenkins contexts resolve from their own variables (including a truncated
-  GitLab description); no PR context skips; an unresolvable range exits 2.
+  enforced per commit from trailers or the description, merge commits
+  included; the rules come from the base's policy (an invalid base exits
+  2, an adoption PR uses its own), and the base revision's `pr-check.sh`
+  judges the PR; every commit in the range is scanned for secrets and
+  forbidden files; GitHub, GitLab and Jenkins contexts resolve from their
+  own variables (including a truncated GitLab description); no PR context
+  skips; an unresolvable range exits 2.
 - `test-manifest.sh` — the projection libraries: sha256 tool fallback
   (none available fails closed), version order, the projection table
   (never lists `policy.json` or `hooks.local.d/`), manifest validation

@@ -122,17 +122,12 @@ Enforcement follows the feature's own completion claim, read from
   `- [ ]` task or failing accept block fails the run, naming the feature,
   the task or criterion, and the cause (exit code, `timeout after <N>s`,
   or a mutation — blocks are read-only by contract and never
-  auto-reverted). The read-only check covers the working tree, git config,
-  the git hooks, `.git/info/`, skip-worktree and assume-unchanged flags,
-  this worktree's entry, `HEAD` and refs, and gitignored files. Refs of
-  branches checked out in other worktrees are left out, so work in a
-  sibling worktree does not fail a block. A block that
-  leaves a process running fails too, including one that left the
-  block's process group or session; a process that both closed the
-  inherited descriptor and dropped the block's environment marker is not
-  seen, nor on macOS an Apple-signed binary that closed the descriptor,
-  since `ps` cannot read its environment (see [how it works](docs/how-it-works.md)). Outside a git work tree
-  blocks fail closed, since there is nothing to check mutations against.
+  auto-reverted). The read-only check covers the working tree, git
+  config and hooks, `HEAD` and refs, and gitignored files; work in a
+  sibling worktree does not count. A block that leaves a process running
+  fails too. Outside a git work tree blocks fail closed. What the check
+  covers, and its limits, is in
+  [How it works](docs/how-it-works.md#spec-conformance-acceptance-criteria-as-executable-gates).
 
 Results land in the attestation record (a `spec` gate entry plus per-run
 counts and per-feature outcomes), a `spec` canary proves the gate still
@@ -147,7 +142,8 @@ section, with its defaults:
 `snapshot_exclude` takes path globs of untracked or gitignored files the
 read-only check skips, for a cache another process writes while blocks
 run; `cache/` covers the directory and everything under it, and a pattern
-that would match every path (`*`, `**`) is refused.
+of only `*`, `?` and `/` (which would match every path) makes the policy
+invalid.
 
 ## Policy as a versioned contract
 
@@ -207,21 +203,9 @@ changes plus `Approved-By: <name>`. Repos without an `extends`
 declaration are completely unaffected.
 
 With `git.protected_change_trailer` set to `false`, `pre-commit`
-refuses protected files outright. The commit that sets it to `false` is
-still judged by `HEAD`'s policy, so it passes with its trailers; the
-refusal starts with the next commit. One exception remains: the commit
-`sync --update` makes. `pre-commit` lets it through only when, read
-from the index, the branch is `gates/baseline-<v>` and the lock pins
-`<v>`, nothing is staged but `policy.json` and the three artifacts,
-`policy.json` differs from `HEAD` in `extends.version` alone, and the
-staged files pass the contract checks (snapshot digest equals the pin,
-declaration equals the lock, effective policy equals recomputation).
-Anything else stays refused. The exception follows the shape of the
-change, not who runs it: a hand-made commit of that exact shape passes
-too, and no hook can prove offline that the snapshot is what the source
-publishes. That proof is the review of the update branch, where
-`pr-check.sh` still requires the `Protected-Change` trailers the update
-commit carries.
+refuses protected files outright, except for a commit shaped exactly
+like the one `sync --update` makes (see
+[How it works](docs/how-it-works.md#2-the-git-boundary)).
 
 ## Constitution as an enforceable contract
 
@@ -391,23 +375,21 @@ command, then step 5. Scripts that run `verify.sh` without `--boundary`
 still work, with a deprecation warning; step 5 and doctor name them, so
 add `--boundary agent|git|ci` to each.
 
-The git hook stubs live in `.git/hooks`, which every branch and worktree
-of the clone shares, and each stub runs the checked-out branch's
-projected hook. Step 5 adds a `pre-merge-commit` stub. On a branch still
-on 0.3.x, which has no projected `pre-merge-commit` hook, that stub runs
-the branch's `pre-commit` hook for merge commits instead; on a branch
-with no gates runtime at all it does nothing. Rolling back to 0.3.x
-(reinstalling that release and restoring `.specify/gates` from the step 1
-backup) also means removing the new stub:
-`rm "$(git rev-parse --git-path hooks)/pre-merge-commit"`. When husky,
-lefthook or the pre-commit framework owns the git hooks, step 5 puts the
-`pre-merge-commit` entry in that tool's configuration instead
-(`.husky/pre-merge-commit`, a `pre-merge-commit:` block in `lefthook.yml`,
-or a `.pre-commit-config.yaml` item with that stage). The entry calls
-`.specify/gates/hooks/pre-merge-commit` directly, which a 0.3.x runtime
-does not have, so merge commits fail while it is there: rolling back also
-means removing that entry from the configuration. The hook the tool
-generated for it then runs nothing, or remove it with the same `rm`.
+**Branches still on 0.3.x, and rolling back.** The git hook stubs in
+`.git/hooks` are shared by every branch and worktree of the clone, and
+each runs the checked-out branch's projected hook. The `pre-merge-commit`
+stub step 5 adds runs a 0.3.x branch's `pre-commit` hook for merge
+commits, and does nothing on a branch with no gates runtime. Rolling back
+to 0.3.x (reinstalling that release and restoring `.specify/gates` from
+the step 1 backup) also means removing that stub:
+`rm "$(git rev-parse --git-path hooks)/pre-merge-commit"`. Under husky,
+lefthook or the pre-commit framework, the `pre-merge-commit` entry lives
+in that tool's configuration instead (`.husky/pre-merge-commit`, a
+`pre-merge-commit:` block in `lefthook.yml`, or a `.pre-commit-config.yaml`
+item with that stage) and calls `.specify/gates/hooks/pre-merge-commit`,
+which a 0.3.x runtime lacks, so merge commits fail until you remove that
+entry too; the hook the tool generated for it then runs nothing, or
+remove it with the same `rm`.
 
 **No cosign on this machine** (a locked-down workstation, say): the
 checksum check is still required, and the signature can be checked
@@ -421,32 +403,24 @@ a deliberate choice for the maintainer to make, never a default: the
 zip, so they prove the download arrived intact, not who published it.
 
 `project.sh` never writes `.specify/gates/policy.json`. It records a hash
-of every file it projects in `.specify/gates/.projected.sha256`, so a file
-you changed locally is reported (exit 3) instead of overwritten: re-run
-with `--keep-local <path>` (it is added to `.specify/gates/.upgrade-holds`
-and left alone from then on) or `--take-upstream <path>`, which also
-releases a hold. A deletion cannot be held: every projected file is run
-by a hook, a gate, the canary suite or CI, and a missing agent hook exits
-127, which Claude Code does not treat as a block. `--keep-local` on a
-deleted file is refused, and a held file that is missing fails both
-`project.sh` and doctor until `--take-upstream <path>` restores it. A project
-projected by 0.3.x has no such record yet; there `project.sh` compares
-against the hashes of what the 0.3.x releases shipped, so only real
-edits stop it. It ends by running the canary suite and fails if any gate
-no longer blocks. `/speckit.gates.doctor` reports the same state between
-upgrades: local edits that are not held, stale holds, and CI pipelines
-missing a template step (a `ci:<step>` line in `.upgrade-holds` records a
-deliberate omission, reported as a `[rec]` naming the check CI gives up;
-one for a step the pipeline runs is stale and fails).
-Only live steps count: commented-out steps, steps under `if: false`, a
-step whose failure is ignored (`|| true`, `continue-on-error: true`), and
-a job that never runs on a push or pull request do not. The gates step
-must be proven: `bash .specify/gates/verify.sh --boundary ci` as the whole
-command (or the last line of its script), on a push or pull request
-trigger, without `GATES_SPEC_EXEC` or `GATES_POLICY_FILE`, outside Jenkins
-`catchError`/`try`; a pipeline that calls `verify.sh` without such a step
-fails and is told what to change (the full rules and the limits of a text
-check are in [how-it-works](docs/how-it-works.md)).
+of every file it projects in `.specify/gates/.projected.sha256` (commit
+it with the upgrade), so a file you changed locally is reported (exit 3)
+instead of overwritten: re-run with `--keep-local <path>` (held in
+`.specify/gates/.upgrade-holds` from then on) or `--take-upstream <path>`,
+which also releases a hold. A deleted file cannot be held. A 0.3.x
+projection has no such record; there only files that differ from every
+0.3.x release stop the run. `project.sh` ends by running the canary suite
+and fails if any gate no longer blocks.
+
+Between upgrades, `/speckit.gates.doctor` reports the same state: local
+edits that are not held, stale holds, and CI pipelines missing a template
+step (`gates`, `canary`, `pr`). A `ci:<step>` line in `.upgrade-holds`
+records a deliberate omission and is reported as a `[rec]` naming the
+check CI gives up; for `pr`, `project.sh` prints the step to add on its
+own. The gates step counts only when doctor can prove it runs and fails
+the pipeline: `bash .specify/gates/verify.sh --boundary ci` as a whole
+command on a push or pull request trigger. The full rules are in
+[How it works](docs/how-it-works.md#local-edits-survive-upgrades).
 `/speckit.gates.upgrade` walks through the same steps in Claude Code.
 
 ## Project rules that survive upgrades
@@ -485,17 +459,15 @@ if grep -q 'vendor/'; then echo "vendor/ is generated; run make vendor" >&2; exi
 
 Two settings in `.specify/gates/policy.json` cover the most common cases:
 
-- `git.block_bulk_staging: true` refuses `git add -A` (also inside an
-  option cluster such as `-vA`), `--all`, `--no-ignore-removal`,
-  `--pathspec-from-file`, `.`, `:/` and other pathspec magic, globs
-  (quoted or not), `"$PWD"`, `~` and directory arguments (also under
-  `git -C <dir>`) at the agent boundary, so an untracked directory
-  cannot be swept into a commit. `git stage`, `env git add`,
-  `GIT_DIR=… git add` and `git --no-pager add` count too; an argument the
-  check cannot resolve (`"$f"`) asks. Explicit files, `-p`, and the forms
-  that stage only tracked changes (`git add -u`, `--renormalize`,
-  `git commit -a`) stay allowed: they cannot sweep in an untracked file. The git boundary cannot tell how
-  files were staged, so this is an agent-boundary rule.
+- `git.block_bulk_staging: true` refuses `git add` and `git stage` forms
+  that can sweep an untracked directory into a commit: `-A`, `--all`,
+  `.`, `:/` and other pathspec magic, globs, `"$PWD"`, `~` and directory
+  arguments, and more (the full list is in
+  [How it works](docs/how-it-works.md#1-the-agent-boundary)); an argument
+  the check cannot resolve (`"$f"`) asks. Explicit files, `-p`, and the
+  forms that stage only tracked changes (`git add -u`, `--renormalize`,
+  `git commit -a`) stay allowed. The git boundary cannot tell how files
+  were staged, so this is an agent-boundary rule.
 - The file hook blocks only on strong evidence: `.env` files, keys and
   certificates (`*.pem`, `*.key`, `*.p12`, `*.jks`, `*.keystore`, …),
   exact credential file names (`credentials.json`, `.netrc`, `.pypirc`,
@@ -516,28 +488,18 @@ is certainly still valid. Any other owner gets the call-through line to
 add. Where each entry goes:
 [How it works, "Other hook managers"](docs/how-it-works.md#the-three-boundary-model).
 
-Doctor checks such hooks statically: it looks for the gates call-through in
-the file the tool that runs the hook reads, and does not run the hook,
-since that would run the tool's own steps too (husky's default is
-`npm test`). The call-through counts only where that tool runs it for that
-hook: under the hook's own key in lefthook, not skipped, and running while
-nothing is staged; in a pre-commit framework item whose `stages:` include
-the hook. It also counts only in a form whose failure refuses the commit:
-the gates hook as a whole command, not behind `|| true`, `&`, a pipe,
-`echo`, `:` or a shell comment, and not excluded by lefthook's
-`exclude_tags:`. A commented-out line, or one after a top-level `exit` or
-`exec <command>`, does not count. A manager config that calls gates while
-git runs no hook for it (its install command never ran) fails.
-`doctor --probe-git` runs the full chain when you want proof: the gates
-hook refuses in probe mode, and the hook git runs must then exit non-zero,
-so the probe proves a refusal reaches git, not only that the hook was
-reached. Under lefthook it runs only the gates job. A hook gates
-installs itself (the stub) is always run with a probe signal, because only
-gates code executes there. `pre-commit install` after projection moves the
-stub to `.git/hooks/<hook>.legacy` and runs it from there, so gates keeps
-running; `pre-commit install -f` deletes it (see
-[How it works](docs/how-it-works.md#the-three-boundary-model) for the
-install order).
+A hook gates installs itself (the stub) is always run with a probe
+signal, because only gates code executes there. A hook another tool owns
+is checked statically, since running it would run that tool's steps too
+(husky's default is `npm test`): doctor looks for the gates call-through
+where that tool runs it for that hook, in a form whose failure refuses the
+commit, and fails a manager config that calls gates while git runs no hook
+for it (its install command never ran). `doctor --probe-git` runs the full
+chain when you want proof that a gates refusal reaches git. `pre-commit
+install` after projection moves the stub to `.git/hooks/<hook>.legacy`
+and keeps running it; `pre-commit install -f` deletes it. The exact rules
+and the install orders are in
+[How it works](docs/how-it-works.md#the-three-boundary-model).
 
 ## Commit and PR message rules
 
@@ -647,18 +609,10 @@ bash tests/run.sh   # 15 suites: parity, gate, hooks, policy, doctor, canary, at
 ```
 
 The gate runs the projected copy in `.specify/gates/`, so re-project after
-editing `extension/runtime/` (steps in [CONTRIBUTING](CONTRIBUTING.md)).
-
-The repo gates itself: `.github/workflows/ci.yml` projects the runtime and
-runs `verify.sh --boundary ci` (attestations and the parity gate included)
-plus the canary suite on every PR, alongside the tests. Every PR gets a
-**unit test results** check (per-test table) and one sticky comment with
-the per-suite counts and the coverage headline. A separate `coverage` job
-runs the suite under bashcov and puts the runtime's line coverage per file
-in its job summary and artifact; it reports and never blocks. Locally,
-as root in a Linux container with bashcov installed:
-`bash scripts/coverage.sh`. See the pull
-request template for the contribution checklist.
+editing `extension/runtime/`. The repo gates itself: CI projects the
+runtime and runs `verify.sh --boundary ci`, the canary suite and the
+tests on every PR. Setup, the projection steps, coverage and the
+contribution checklist are in [CONTRIBUTING](CONTRIBUTING.md).
 
 ## License
 
