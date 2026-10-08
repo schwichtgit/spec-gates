@@ -351,7 +351,9 @@ cosign verify-blob --bundle "$D/gates-$V.zip.sigstore.json" \
 
 # 3. Swap the installed extension (policy.json stays). Run these as two
 #    commands: read the remove output first, and run add only if it
-#    reports the extension removed without an error.
+#    reports the extension removed without an error. add asks to confirm
+#    the URL source; in a script or an agent session, answer it with
+#    `yes | specify extension add ...` (unanswered, it aborts with exit 1).
 specify extension remove gates --keep-config --force
 specify extension add gates --from "$U/gates-$V.zip"
 
@@ -374,6 +376,16 @@ finishes the upgrade. A runtime projected by 0.3.x has no
 command, then step 5. Scripts that run `verify.sh` without `--boundary`
 still work, with a deprecation warning; step 5 and doctor name them, so
 add `--boundary agent|git|ci` to each.
+
+`add` asks "Continue with installation? [y/N]" for a URL source. Run
+without a terminal (a script, an agent session), it reads no answer,
+prints "Aborted." and exits 1; pipe `yes` into it there.
+
+If your `speckit-gates-*` skills were last rendered by `specify
+integration upgrade` (`metadata.source: extension:gates`), some Spec Kit
+CLI versions render them in the older format on `add`, and the upgrade
+diff reverts the format. Run `specify integration upgrade --force` after
+the `add`, then re-apply any deliberate edits to managed files.
 
 **Branches still on 0.3.x, and rolling back.** The git hook stubs in
 `.git/hooks` are shared by every branch and worktree of the clone, and
