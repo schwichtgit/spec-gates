@@ -64,11 +64,14 @@ jobs:
       - name: Prove the gate still blocks (canaries)
         run: bash .specify/gates/canary.sh
 
+      # Dependabot's description quotes upstream release notes (emoji,
+      # third-party prose) that no one here wrote or can edit; its title,
+      # commits and secrets are still checked.
       - name: Check the pull request (text + protected changes)
         if: github.event_name == 'pull_request'
         env:
           GATES_PR_TITLE: ${{ github.event.pull_request.title }}
-          GATES_PR_BODY: ${{ github.event.pull_request.body }}
+          GATES_PR_BODY: ${{ github.event.pull_request.user.login != 'dependabot[bot]' && github.event.pull_request.body || '' }}
         run: bash .specify/gates/pr-check.sh
 
       - name: Run the test suites
@@ -83,8 +86,9 @@ jobs:
       # scripts/test-report.py turns the log into JUnit, which becomes the
       # "unit test results" check (per-test table) and the job summary. The
       # report job below posts the PR comment.
+      # Only when the suites ran: an earlier failing step leaves no log.
       - name: Build the JUnit report
-        if: always()
+        if: ${{ !cancelled() && hashFiles('test-results/run.log') != '' }}
         run: python3 scripts/test-report.py test-results/run.log --junit test-results/junit.xml
 
       - name: Publish unit test results (check run + job summary)
