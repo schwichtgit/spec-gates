@@ -91,6 +91,20 @@ for needle in "pr-check.sh" 'GIT_DEPTH: "0"' "python3" "curl" "timeout:" "if [ -
     fi
 done
 
+# Bot PRs (#248): Dependabot and Renovate descriptions quote upstream
+# release notes, so the GitHub template and the standalone pr snippet hand
+# pr-check an empty body for them, and only for them.
+BOT_GUARD="!contains(fromJSON('[\"dependabot[bot]\", \"renovate[bot]\"]'), github.event.pull_request.user.login) && github.event.pull_request.body || ''"
+GH_SNIP="$(source "$REPO_ROOT/extension/runtime/lib/manifest.sh" && gates_ci_pr_snippet github)"
+for src in template snippet; do
+    if [[ "$src" == template ]]; then text="$(cat "$GH_T")"; else text="$GH_SNIP"; fi
+    if grep -qF -- "GATES_PR_BODY: \${{ $BOT_GUARD }}" <<<"$text"; then
+        pass "github $src skips the description of Dependabot and Renovate PRs"
+    else
+        fail "github $src checks bot-quoted release notes (or drops every description)"
+    fi
+done
+
 # Every template installs the tools the gate resolves (#138): the pinned,
 # checksum-verified shellcheck through the projected installer, and the
 # lockfile linters. Comment lines (# and //) do not count.

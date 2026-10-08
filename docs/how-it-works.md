@@ -462,7 +462,10 @@ GitHub: a step in the job that runs `verify.sh --boundary ci`, so the
 required `gates` check covers it. That job checks out with
 `fetch-depth: 0` (without full history the base revision cannot be
 read), and the workflow runs on `pull_request` with `edited` among its
-types.
+types. A PR opened by Dependabot or Renovate is checked without its
+description, which quotes upstream release notes nobody in the project
+wrote; its title, protected changes and secrets are still checked. Add
+other bots' logins to the list in `GATES_PR_BODY`.
 
 ```yaml
 # spec-gates pr step (GitHub): add under steps: of the job that runs
@@ -473,7 +476,7 @@ types.
   if: github.event_name == 'pull_request'
   env:
     GATES_PR_TITLE: ${{ github.event.pull_request.title }}
-    GATES_PR_BODY: ${{ github.event.pull_request.body }}
+    GATES_PR_BODY: ${{ !contains(fromJSON('["dependabot[bot]", "renovate[bot]"]'), github.event.pull_request.user.login) && github.event.pull_request.body || '' }}
   run: |
     base="origin/$GITHUB_BASE_REF"
     if git cat-file -e "$base:.specify/gates/pr-check.sh" 2>/dev/null; then
