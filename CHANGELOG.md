@@ -25,6 +25,47 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   `install-shellcheck.sh --pin` for the pin, so they need the runtime of
   the same release.
 
+- **Project gates** (#243, feature 006). A project declares its own
+  checks under `hooks.verify-quality.gates` (an object keyed by gate
+  name: `command`, `severity`, `timeout_s`, `skip_at`), next to whatever
+  the orchestrator runs. Each runs after the orchestrator's gates, from
+  the project root, under a time limit (`timeout_s`, else
+  `gate_timeout_s`, else 600 s; a timeout stops the gate's process
+  group), and is reported as its own gate in the text report, `--json`
+  and the attestation. A command that cannot start, or exceeds its
+  limit, fails. Gate names may not take a built-in name. Every gate
+  command sees `GATES_BOUNDARY`. An older runtime refuses the new keys.
+- **Declared skips, never at CI** (#243). `skip_at: ["agent"]` (or
+  `["agent", "git"]`) keeps a gate out of an earlier boundary; it starts
+  no process and is reported as `skipped by declaration at <boundary>`,
+  with `declared_skip` in the attestation. `ci` cannot be named
+  (constitution 1.1.0, Principle III). The parity gate fails when a
+  declared gate neither ran nor was skipped by a declaration naming the
+  boundary, so at CI every declared gate must have run. Doctor lists
+  each gate with its skips; the policy contract classifies removed
+  gates, added skips and lowered severities as weakening. The canary
+  suite has 17 canaries (new: `project`).
+- **`verify.sh --walk`** (#243). Runs only the built-in walk, whatever
+  the orchestrator, with no attestation: the stable way for a custom
+  command to include the built-in checks. Doctor recommends it where a
+  command calls `lib/formatter-dispatch.sh`.
+- **`test_severity`** (#243). With the `task` orchestrator,
+  `"test_severity": "error"` makes a failing `task test` fail the run;
+  the default stays warning.
+
+### Changed
+
+- **A deferred agent run names what it defers** (#243). When the gate
+  lock makes an agent-boundary run skip, its message and `--json` now
+  list the gates it would have run (`deferred`) and those its policy
+  skips at the agent boundary (`declared_skip`).
+- **A gate cannot start the suite it belongs to** (#243). A full
+  `verify.sh` run started from a gate command on the same project
+  refuses with exit 1, and a `--walk` started inside a walk does the
+  same, so the calling gate fails instead of recursing. A gate that runs
+  `git commit` in its own project, and so triggers the pre-commit gate
+  run, is refused this way.
+
 ### Fixed
 
 - **The custom command runs from the project root** (#276). It ran from

@@ -52,6 +52,27 @@ re-implements the gate.
 A fourth, server-side boundary (branch protection requiring the CI check) is
 available via `/speckit.gates.ci github --protect`.
 
+**Your own checks, as gates.** Lint, type checks, tests with a coverage
+floor or a manifest validator join the built-in checks as named gates in
+the policy, each reported on its own and run under a time limit. A slow
+one can stay out of the Stop hook; CI still runs it, and the parity gate
+proves it did:
+
+```json
+"verify-quality": {
+  "orchestrator": "none",
+  "severity": "error",
+  "gates": {
+    "lint": { "command": "npm run -s lint" },
+    "test": { "command": "npm test -- --coverage", "timeout_s": 1200 },
+    "build": { "command": "npm run -s build", "skip_at": ["agent"] }
+  }
+}
+```
+
+`skip_at` takes `agent` and `git`, never `ci`. Details in
+[How it works](docs/how-it-works.md#one-entrypoint).
+
 One gate run holds a working tree at a time (`.specify/gates/.lock`): a
 Stop-hook run that finds a commit's run in progress skips and lets the
 session end, while a git or CI run waits for the other one, up to

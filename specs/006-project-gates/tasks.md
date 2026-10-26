@@ -213,12 +213,12 @@ warning.
 
 ## Phase 7: Polish & cross-cutting concerns
 
-- [ ] T031 [P] Document project gates, `skip_at`, `GATES_BOUNDARY`, `gate_timeout_s`, `test_severity` and `--walk` in `docs/how-it-works.md` (policy reference and the boundary section, citing constitution Principle III) and `README.md` (one example policy; the parity paragraph mentions declared skips); say that project gates are not read-only by contract (unlike accept blocks) and that a timeout stops the gate's process group only
-- [ ] T032 [P] Update `extension/commands/speckit.gates.verify.md` (report shape with skipped gates, `--walk`, `GATES_BOUNDARY`) and `extension/commands/speckit.gates.init.md` (mention project gates as a follow-up edit; init infers none)
-- [ ] T033 [P] `CHANGELOG.md` `[Unreleased]`: `### Added` entries for project gates, `skip_at` and the parity set check, `--walk`, `test_severity` (#243); note the 17th canary and that an older runtime refuses the new keys
-- [ ] T034 Run the full suite (`bash tests/run.sh`), `bash .specify/gates/verify.sh --boundary ci` and `bash .specify/gates/canary.sh` (17/17 blocked) on the final branch; run test-gate, test-spec-gate and test-parity under `/bin/bash` 3.2 and in a `node:26-slim` container with `CI=true` (mawk)
-- [ ] T035 Walk quickstart.md sections 1 to 8 in a scratch project and record any deviation as a fix or a spec update
-- [ ] T036 Set `**Status**: Complete` in `specs/006-project-gates/spec.md` last, so the spec gate enforces the accept blocks above from then on
+- [x] T031 [P] Document project gates, `skip_at`, `GATES_BOUNDARY`, `gate_timeout_s`, `test_severity` and `--walk` in `docs/how-it-works.md` (policy reference and the boundary section, citing constitution Principle III) and `README.md` (one example policy; the parity paragraph mentions declared skips); say that project gates are not read-only by contract (unlike accept blocks) and that a timeout stops the gate's process group only
+- [x] T032 [P] Update `extension/commands/speckit.gates.verify.md` (report shape with skipped gates, `--walk`, `GATES_BOUNDARY`) and `extension/commands/speckit.gates.init.md` (mention project gates as a follow-up edit; init infers none)
+- [x] T033 [P] `CHANGELOG.md` `[Unreleased]`: `### Added` entries for project gates, `skip_at` and the parity set check, `--walk`, `test_severity` (#243); note the 17th canary and that an older runtime refuses the new keys
+- [x] T034 Run the full suite (`bash tests/run.sh`), `bash .specify/gates/verify.sh --boundary ci` and `bash .specify/gates/canary.sh` (17/17 blocked) on the final branch; run test-gate, test-spec-gate and test-parity under `/bin/bash` 3.2 and in a `node:26-slim` container with `CI=true` (mawk)
+- [x] T035 Walk quickstart.md sections 1 to 8 in a scratch project and record any deviation as a fix or a spec update
+- [x] T036 Set `**Status**: Complete` in `specs/006-project-gates/spec.md` last, so the spec gate enforces the accept blocks above from then on
 
 ---
 

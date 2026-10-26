@@ -24,6 +24,16 @@ Optional:
   every feature's) accept blocks, as information only. Features whose
   `spec.md` says `**Status**: Complete` are enforced on every run anyway.
   A name that is not a feature is refused (exit 1) before any gate runs.
+- `--walk`: run only the built-in walk (prettier, markdownlint,
+  shellcheck as the policy enables them), with no attestation. This is
+  the stable way for a custom command to run the built-in checks; never
+  call `lib/formatter-dispatch.sh` directly.
+
+The report lists the project's own gates (`hooks.verify-quality.gates`)
+after the built-in ones. A gate the policy keeps out of this boundary
+shows as `[skipped] <name> -- skipped by declaration at agent`; that is
+a policy decision, not a failure, and CI still runs it. Every gate
+command can read the running boundary from `GATES_BOUNDARY`.
 
 ## Steps
 
