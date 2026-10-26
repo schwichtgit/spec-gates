@@ -33,6 +33,19 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   pipe `yes` into it in scripts and agent sessions. It also says to run
   `specify integration upgrade --force` after the `add` when the skills
   use the integration format, which some Spec Kit CLI versions revert.
+- **GitLab draft merge requests pass the pr step** (#261). GitLab marks
+  a draft in the MR title (`Draft: feat: x`), so pr-check failed every
+  draft on the conventional format, and on length near the limit. In
+  GitLab jobs `pr-check.sh` now drops one `Draft:`, `[Draft]`, `(Draft)`,
+  `WIP:` or `[WIP]` marker (any case, followed by a blank) at the start
+  of the title before the message rules run, and says so in the log. A
+  marker elsewhere, or a title that is only a marker, is checked as is.
+- **An accept-block timeout names the machine load** (#264). On a loaded
+  machine a timeout read like a hang. The detail now carries the
+  1-minute load average where it can be read (`/proc/loadavg`,
+  `sysctl -n vm.loadavg`, or `uptime`): `timeout after 90s at load 48.2`.
+  Without a load source it reads as before; `spec.timeout_s` remains the
+  knob.
 
 ## 0.4.1 — 2026-10-07
 

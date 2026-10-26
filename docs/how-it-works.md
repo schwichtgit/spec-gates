@@ -413,7 +413,12 @@ the paths it changes against every parent, so merging the base into a PR
 branch does not re-check the base's own changes. A declaration in the description covers every commit, since a
 squash merge keeps the description and drops the commit trailers. GitHub
 re-runs it when a PR is `edited`; GitLab starts no pipeline on an MR edit,
-so a fresh pipeline is needed after one.
+so a fresh pipeline is needed after one. In a GitLab job, one draft marker
+at the start of the MR title (`Draft:`, `[Draft]`, `(Draft)`, `WIP:` or
+`[WIP]`, any case, followed by a blank) is dropped before the title is
+checked: GitLab removes it when the MR is marked ready, so the merged text
+never carries it. A marker anywhere else stays, and a title that is only a
+marker still fails.
 
 It also runs the `pre-commit` secret and forbidden-file scan, with the
 same rules (`lib/secrets.sh`), over every commit in the range, so commits
@@ -708,7 +713,11 @@ tool gates and before `parity`:
    `test -z "$(...)"`, `if ...; then exit 1; fi` and `! cmd || exit 1`
    fail the block wherever they stand. Output is captured (shown only on
    failure), with a per-block watchdog (`spec.timeout_s`, default 30s) that stops the
-   block's whole process group, and snapshots around each block:
+   block's whole process group (the failure reads
+   `timeout after <N>s at load <1-minute load average>`, the load from
+   `/proc/loadavg`, `sysctl vm.loadavg` or `uptime` where one can be read,
+   so a slow block on a loaded machine is not mistaken for a hang), and
+   snapshots around each block:
    `git status` plus a content hash of every dirty or untracked file, git
    config in every scope, the hooks directory git uses, the files in
    `.git/info/` (attributes, exclude, sparse-checkout), every index entry

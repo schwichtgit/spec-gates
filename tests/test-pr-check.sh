@@ -69,7 +69,7 @@ run() { # <env-assignment>... -> exit code
         -u CI_MERGE_REQUEST_TITLE -u CI_MERGE_REQUEST_DESCRIPTION -u CHANGE_TARGET -u CHANGE_TITLE \
         -u GATES_PR_TITLE -u GATES_PR_BODY -u GATES_COMMIT_RANGE -u CLAUDE_PROJECT_DIR \
         -u CI_MERGE_REQUEST_IID -u CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED -u CI_API_V4_URL \
-        -u CI_PROJECT_ID -u CI_JOB_TOKEN -u GATES_GITLAB_TOKEN -u GATES_RUNTIME_DIR \
+        -u CI_PROJECT_ID -u CI_JOB_TOKEN -u GATES_GITLAB_TOKEN -u GATES_RUNTIME_DIR -u GITLAB_CI \
         "$@" "${RUN_SHELL[@]}" "$RUN_SCRIPT") >"$WORKDIR/out.txt" 2>&1 || rc=$?
     echo "$rc"
 }
@@ -124,6 +124,39 @@ expect "declared in the MR description -> exit 0" \
     "$(run CI_MERGE_REQUEST_DIFF_BASE_SHA="$BASE" CI_MERGE_REQUEST_TITLE="feat: x" CI_MERGE_REQUEST_DESCRIPTION="Adds a.$DECL")" 0
 expect "truncated description without API access -> fails closed" \
     "$(run CI_MERGE_REQUEST_DIFF_BASE_SHA="$BASE" CI_MERGE_REQUEST_TITLE="feat: x" CI_MERGE_REQUEST_DESCRIPTION="Adds a.$DECL" CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED=true)" 1
+
+echo ""
+echo "=== GitLab draft MR title (#261) ==="
+# 72 characters once the marker is dropped: the length rule sees that text.
+T72="feat: $(printf '%066d' 0 | tr 0 x)"
+expect "the stripped test title is 72 characters" "${#T72}" 72
+for marker in 'Draft:' '[Draft]' '(Draft)' 'WIP:' '[WIP]' 'draft:' 'DRAFT:' '[draft]' '(DRAFT)' 'wip:' '[Wip]'; do
+    expect "GitLab title '$marker <72-char title>' -> exit 0" \
+        "$(run GITLAB_CI=true CI_MERGE_REQUEST_TITLE="$marker $T72" CI_MERGE_REQUEST_DESCRIPTION="Adds a.")" 0
+    expect "'$marker': no length warning on the stripped title" \
+        "$(grep -c 'Subject line exceeds' "$WORKDIR/out.txt")" 0
+    expect "'$marker': the dropped marker is reported" \
+        "$(grep -cF "draft marker '$marker' dropped" "$WORKDIR/out.txt")" 1
+done
+expect "GATES_PR_TITLE in a GitLab MR job is stripped too -> exit 0" \
+    "$(run CI_MERGE_REQUEST_IID=3 GATES_PR_TITLE="Draft: feat: x" CI_MERGE_REQUEST_DESCRIPTION="Adds a.")" 0
+expect "a 73-character title after the marker still warns" \
+    "$(run GITLAB_CI=true CI_MERGE_REQUEST_TITLE="Draft: ${T72}y" CI_MERGE_REQUEST_DESCRIPTION="Adds a." >/dev/null
+        grep -c 'Subject line exceeds 72 characters (73)' "$WORKDIR/out.txt")" 1
+expect "a title that is only a marker -> exit 1" \
+    "$(run GITLAB_CI=true CI_MERGE_REQUEST_TITLE="Draft:" CI_MERGE_REQUEST_DESCRIPTION="Adds a.")" 1
+expect "a marker followed only by blanks -> exit 1" \
+    "$(run GITLAB_CI=true CI_MERGE_REQUEST_TITLE="[Draft]   " CI_MERGE_REQUEST_DESCRIPTION="Adds a.")" 1
+expect "a marker inside the title is kept -> exit 1" \
+    "$(run GITLAB_CI=true CI_MERGE_REQUEST_TITLE="Update Draft: feat: x" CI_MERGE_REQUEST_DESCRIPTION="Adds a.")" 1
+expect "the kept marker fails the conventional format" \
+    "$(grep -c 'Subject does not match conventional commit format' "$WORKDIR/out.txt")" 1
+expect "a marker with no blank after it is kept -> exit 1" \
+    "$(run GITLAB_CI=true CI_MERGE_REQUEST_TITLE="Draft:feat: x" CI_MERGE_REQUEST_DESCRIPTION="Adds a.")" 1
+expect "only one marker is dropped -> exit 1" \
+    "$(run GITLAB_CI=true CI_MERGE_REQUEST_TITLE="Draft: [WIP] feat: x" CI_MERGE_REQUEST_DESCRIPTION="Adds a.")" 1
+expect "outside GitLab the marker is kept (GitHub drafts are a flag) -> exit 1" \
+    "$(run "${GH[@]}" GATES_PR_TITLE="Draft: feat: x" GATES_PR_BODY="Adds a.$DECL")" 1
 
 echo ""
 echo "=== GitLab: truncated or missing description (#67) ==="
