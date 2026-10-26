@@ -1473,6 +1473,36 @@ project "$DWK" '{ "hooks": { "verify-quality": { "orchestrator": "custom", "seve
     "custom_command": "bash .specify/gates/verify.sh --walk" } } }' no
 run_doctor "$DWK" >/dev/null
 lacks "a custom_command calling --walk gets no [rec]" "$DWK" "calls lib/formatter-dispatch.sh"
+
+echo ""
+echo "=== the covering script declaration (feature 007) ==="
+DCV="$WORKDIR/cover"
+project "$DCV" '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } },
+    "spec": { "cover": { "script": "scripts/cover.sh", "at": ["agent", "git"] } } }' no
+mkdir -p "$DCV/scripts"
+printf '#!/bin/sh\nexit 1\n' >"$DCV/scripts/cover.sh"
+chmod +x "$DCV/scripts/cover.sh"
+run_doctor "$DCV" >/dev/null
+has "a declared, executable script is shown with where it covers, its limit and protection" "$DCV" \
+    "  [ok]  cover script scripts/cover.sh at agent, git (30s), protected"
+lacks "an executable script gets no warning" "$DCV" "is not executable"
+chmod -x "$DCV/scripts/cover.sh"
+run_doctor "$DCV" >/dev/null
+has "a script that is not executable is warned about (every block runs)" "$DCV" \
+    "  [rec] cover script scripts/cover.sh is not executable, so it covers nothing (every block runs)"
+rm -f "$DCV/scripts/cover.sh"
+expect "a declared script that is missing fails doctor" "$(run_doctor "$DCV")" 1
+has "the missing script is named" "$DCV" \
+    "  [MISSING] cover script scripts/cover.sh: not found, so verify.sh refuses every run"
+project "$DCV" '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } },
+    "spec": { "cover": { "script": "scripts/cover.sh", "at": ["git"], "timeout_s": 5 } } }' no
+printf '#!/bin/sh\nexit 1\n' >"$DCV/scripts/cover.sh"
+chmod +x "$DCV/scripts/cover.sh"
+run_doctor "$DCV" >/dev/null
+has "the time limit and boundaries follow the policy" "$DCV" "  [ok]  cover script scripts/cover.sh at git (5s), protected"
+project "$DCV" '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } } }' no
+run_doctor "$DCV" >/dev/null
+lacks "no spec.cover, no cover line" "$DCV" "cover script"
 echo ""
 [[ "$SKIPPED" -gt 0 ]] && echo "$SKIPPED healthy-fixture case(s) skipped: this host lacks tools doctor requires."
 echo "$PASS of $TOTAL tests passed."

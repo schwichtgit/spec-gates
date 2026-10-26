@@ -636,6 +636,47 @@ expect "the merged gate ran at ci; the removed one is not listed" \
     "$([[ -f "$OG/built" ]] && echo ran):$(grep -c '\] lint' <<<"$OUT" || true)" "ran:0"
 
 echo ""
+echo "=== covering script classification (feature 007, contracts/policy-cover.md) ==="
+# cdev <baseline-cover-json or ""> <effective-cover-json or ""> [delta]: the
+# deviations of two policies differing in spec.cover, as gdev prints them.
+cdev() {
+    local b='{"hooks":{}}' e='{"hooks":{}}'
+    [[ -n "$1" ]] && b="{\"hooks\":{},\"spec\":{\"cover\":$1}}"
+    [[ -n "$2" ]] && e="{\"hooks\":{},\"spec\":{\"cover\":$2}}"
+    printf '%s' "$b" >"$CL/cb.json"
+    printf '%s' "$e" >"$CL/ce.json"
+    (
+        # shellcheck source=/dev/null
+        source "$REPO_ROOT/extension/runtime/lib/contract.sh"
+        gates_contract_deviations "$CL/cb.json" "$CL/ce.json" "${3:-}" \
+            | awk -F'\t' '{ print $1 " " $2 (($7 != "") ? " " $7 : "") }'
+    )
+}
+CG1='{"script":"scripts/c.sh","at":["git"]}'
+CG2='{"script":"scripts/c.sh","at":["agent","git"]}'
+expect "spec.cover added is ONE weakened deviation" "$(cdev "" "$CG2")" "weakened spec.cover cover script added"
+expect "spec.cover added is weakened in a delta too" "$(cdev "" "$CG1" delta)" "weakened spec.cover cover script added"
+expect "spec.cover.at gaining a boundary is weakened" "$(cdev "$CG1" "$CG2")" "weakened spec.cover.at"
+expect "spec.cover.at losing a boundary is strengthened (delta), no overlay deviation" \
+    "$(cdev "$CG2" "$CG1" delta)|$(cdev "$CG2" "$CG1")" "strengthened spec.cover.at|"
+expect "spec.cover.script changing is changed" \
+    "$(cdev "$CG1" '{"script":"scripts/d.sh","at":["git"]}')" "changed spec.cover.script"
+expect "spec.cover.timeout_s set or changed is changed" \
+    "$(cdev "$CG1" '{"script":"scripts/c.sh","at":["git"],"timeout_s":9}')|$(cdev \
+        '{"script":"scripts/c.sh","at":["git"],"timeout_s":5}' '{"script":"scripts/c.sh","at":["git"],"timeout_s":9}')" \
+    "changed spec.cover.timeout_s|changed spec.cover.timeout_s"
+expect "spec.cover removed is ONE strengthened line (delta), no overlay deviation" \
+    "$(cdev "$CG2" "" delta)|$(cdev "$CG2" "")" "strengthened spec.cover cover script removed|"
+expect "the same spec.cover is no deviation" "$(cdev "$CG1" "$CG1")|$(cdev "$CG1" "$CG1" delta)" "|"
+OUT="$(cdev "" "$CG1" >/dev/null
+    (
+        # shellcheck source=/dev/null
+        source "$REPO_ROOT/extension/runtime/lib/contract.sh"
+        gates_contract_deviations "$CL/cb.json" "$CL/ce.json" | gates_contract_print_deviations "deviation "
+    ))"
+expect "an added cover prints as cover script added" "$OUT" "deviation (weakened): spec.cover: cover script added"
+
+echo ""
 echo "=== partial overlays (#135) ==="
 OX="$WORKDIR/overlay-extends-only"
 project "$OX" "$(jq -nc --arg src "$B" '{extends: {source: $src, version: "v1.0.0"}}')"

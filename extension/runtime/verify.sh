@@ -846,6 +846,15 @@ elif [[ "$DRY_RUN" != "1" &&"$ATT_ENABLED" != "false" && "$PARITY_SEV" != "off" 
         pg_unrun="declared gates not run at $GATES_BOUNDARY: the policy's gate set could not be read"
     fi
     [[ -n "$pg_unrun" ]] && PARITY_DRIFT="${PARITY_DRIFT:+$PARITY_DRIFT; }$pg_unrun"
+    # Covering (feature 007, research R6): at ci no accept block may have
+    # been covered (constitution, Principle III). The spec gate never asks
+    # the covering script there, so this fires only if that breaks. The
+    # check reads the block entries of this run's spec results (empty when
+    # the spec gate did not run); gates_spec_covered_at_ci is the seam the
+    # parity tests feed.
+    if pc_cov="$(gates_spec_covered_at_ci "$GATES_BOUNDARY" "${SPEC_RESULTS_JSON:-}")"; then
+        PARITY_DRIFT="${PARITY_DRIFT:+$PARITY_DRIFT; }$pc_cov"
+    fi
     if [[ -z "$PARITY_DRIFT" ]]; then
         record "parity" "pass" ""
         att_gate "parity" "" "" "" "" "" "pass" "" 0

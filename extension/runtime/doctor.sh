@@ -754,6 +754,31 @@ if declare -f gates_spec_features >/dev/null 2>&1 \
     echo "  $SPEC_FEATURES feature(s), $SPEC_BLOCKS accept block(s) parsed, $SPEC_COMPLETE complete"
 fi
 
+# The covering script (spec.cover, feature 007, FR-019): where it may cover
+# accept blocks (never at ci), its time limit, and that it is protected. A
+# declared script that is missing makes verify.sh refuse every run; one that
+# is not executable covers nothing (every block runs).
+if declare -f gates_cover_script >/dev/null 2>&1 && have jq; then
+    COVER_PATH="$(gates_cover_script)"
+    if [[ -n "$COVER_PATH" ]]; then
+        COVER_AT="$(gates_cover_at | jq -r 'join(", ")' 2>/dev/null)" || COVER_AT=""
+        COVER_PROT="protected"
+        grep -qxF -- "$(printf '%s' "$COVER_PATH" | sed -e 's#//*#/#g' -e 's#/\(\./\)*#/#g' -e 's#^\(\./\)*##')" \
+            <<<"$(cd "$PROJECT_ROOT" && gates_protected_list 2>/dev/null)" || COVER_PROT="NOT protected"
+        if ! COVER_WHY="$(gates_cover_script_check "$PROJECT_ROOT" "$COVER_PATH")"; then
+            echo "${BAD}cover script $COVER_PATH: $COVER_WHY, so verify.sh refuses every run — add the script or remove spec.cover"
+            MISSING=$((MISSING + 1))
+        elif [[ "$COVER_PROT" != "protected" ]]; then
+            echo "${BAD}cover script $COVER_PATH is not in the protected list — re-project the runtime"
+            MISSING=$((MISSING + 1))
+        else
+            echo "${OK}cover script $COVER_PATH at ${COVER_AT:-?} ($(gates_cover_timeout)s), $COVER_PROT"
+            [[ -x "$PROJECT_ROOT/$COVER_PATH" ]] \
+                || echo "${REC}cover script $COVER_PATH is not executable, so it covers nothing (every block runs) — chmod +x it"
+        fi
+    fi
+fi
+
 # Git boundary wiring (issues #20/#23): an INSTALLED hook that git will
 # not run is silent enforcement loss — the worst class. Non-executable or
 # non-delegating installed hooks are enforcement GAPS (exit 1), and so is a
