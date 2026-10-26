@@ -295,9 +295,11 @@ linter_summary() {
     done
     v="$d/.specify/gates/verify.sh"
     expect "$1: the output fills the detail window" \
-        "$(CLAUDE_PROJECT_DIR="$d" bash "$v" --boundary ci --json 2>/dev/null \
+        "$(CI=true CLAUDE_PROJECT_DIR="$d" bash "$v" --boundary ci --json 2>/dev/null \
             | jq -r --arg t "$1" '.gates[] | select(.name == $t) | .detail | length > 1900')" true
-    S="$(CLAUDE_PROJECT_DIR="$d" bash "$v" --boundary ci 2>&1 | grep "^  \[fail\] $1 -- " || true)"
+    # CI=true as in every GitHub Actions job: prettier then colors its
+    # "[warn]" lines even without a terminal.
+    S="$(CI=true CLAUDE_PROJECT_DIR="$d" bash "$v" --boundary ci 2>&1 | grep "^  \[fail\] $1 -- " || true)"
     [[ -n "${GATES_TEST_VERBOSE:-}" ]] && echo "  $1 summary: $S"
     return 0
 }

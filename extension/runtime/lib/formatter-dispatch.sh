@@ -420,26 +420,30 @@ _gates_check_tool() { # <tool> <root>
 # The first finding in a check tool's output, as one line, for verify.sh's
 # summary (#262): each tool opens with banner lines and closes with a
 # footer, so neither the first nor the last line names what failed.
-# Empty when no line looks like a finding.
+# ANSI escapes are dropped first: prettier colors "[warn]" whenever CI is
+# set (every GitHub Actions job), terminal or not. Empty when no line looks
+# like a finding.
 _gates_first_finding() { # <tool> <output-file>
+    local esc=$'\033'
     case "$1" in
         prettier)
             # "[warn] a.md" or "[error] a.md: SyntaxError: ...", not the
             # "Code style issues found ..." footer.
-            grep -E '^\[(warn|error)\] ' "$2" | grep -v 'Code style issues' \
-                | sed -n '1p' || true
+            sed "s/${esc}\[[0-9;]*[A-Za-z]//g" "$2" | grep -E '^\[(warn|error)\] ' \
+                | grep -v 'Code style issues' | sed -n '1p' || true
             ;;
         markdownlint)
             # "a.md:1:1 error MD018/... text"
-            grep -E '^[^[:space:]]+:[0-9]+(:[0-9]+)? ' "$2" | sed -n '1p' || true
+            sed "s/${esc}\[[0-9;]*[A-Za-z]//g" "$2" | grep -E '^[^[:space:]]+:[0-9]+(:[0-9]+)? ' \
+                | sed -n '1p' || true
             ;;
         shellcheck)
             # "In b.sh line 2:" and the first "^-- SC2086 (info): ..." under it.
-            awk '
+            sed "s/${esc}\[[0-9;]*[A-Za-z]//g" "$2" | awk '
                 /^In .* line [0-9]+:$/ && loc == "" { loc = substr($0, 4, length($0) - 4) }
                 loc != "" && match($0, /SC[0-9]+ \(/) {
                     print loc ": " substr($0, RSTART); exit
-                }' "$2" || true
+                }' || true
             ;;
     esac
 }
