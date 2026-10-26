@@ -29,16 +29,16 @@ third.
 
 ## Phase 1: Setup
 
-- [ ] T001 Add `fx_spec_feature <dir> <feature> <task-id> <block-cmd> [<task-id> <block-cmd>...]` to `tests/lib/fixture.sh`: write `<dir>/specs/<feature>/spec.md` with `**Status**: Complete` and `tasks.md` with one checked task per pair (`- [x] <task-id> <feature> task`) followed by an accept block holding `<block-cmd>`; document it in the header comment
+- [x] T001 Add `fx_spec_feature <dir> <feature> <task-id> <block-cmd> [<task-id> <block-cmd>...]` to `tests/lib/fixture.sh`: write `<dir>/specs/<feature>/spec.md` with `**Status**: Complete` and `tasks.md` with one checked task per pair (`- [x] <task-id> <feature> task`) followed by an accept block holding `<block-cmd>`; document it in the header comment
 
 ---
 
 ## Phase 2: Foundational
 
-- [ ] T002 Extend `extension/runtime/policy.schema.json` per contracts/policy-cover.md: `spec.cover` object with required `script` (string, minLength 1), required `at` (array, minItems 1, uniqueItems, items enum `agent`, `git`), optional `timeout_s` (integer 1 to 300, default 30), `additionalProperties: false`; descriptions say CI is never covered (Principle III) and the script is protected
-- [ ] T003 Extend `gates_validate_policy` in `extension/runtime/lib/policy.sh` with the same rules: `script` non-empty, not absolute, no `..` segment; `at` non-empty, unique, only `agent`/`git`, `ci` refused as "CI runs the full policy (constitution, Principle III)"; `timeout_s` integer 1 to 300; unknown keys refused; each refusal names `spec.cover.<key>` (exit 1 through verify.sh, as every invalid policy)
-- [ ] T004 Add accessors to `extension/runtime/lib/policy.sh`: `gates_cover_script` (the path or empty), `gates_cover_at` (compact JSON array or empty), `gates_cover_timeout` (default 30)
-- [ ] T005 [P] Tests in `tests/test-policy.sh`: each rule of T003 accepts the valid form and refuses the invalid one naming the key, including `at: ["ci"]` naming Principle III; a policy without `spec.cover` validates as before; mutation-check
+- [x] T002 Extend `extension/runtime/policy.schema.json` per contracts/policy-cover.md: `spec.cover` object with required `script` (string, minLength 1), required `at` (array, minItems 1, uniqueItems, items enum `agent`, `git`), optional `timeout_s` (integer 1 to 300, default 30), `additionalProperties: false`; descriptions say CI is never covered (Principle III) and the script is protected
+- [x] T003 Extend `gates_validate_policy` in `extension/runtime/lib/policy.sh` with the same rules: `script` non-empty, not absolute, no `..` segment; `at` non-empty, unique, only `agent`/`git`, `ci` refused as "CI runs the full policy (constitution, Principle III)"; `timeout_s` integer 1 to 300; unknown keys refused; each refusal names `spec.cover.<key>` (exit 1 through verify.sh, as every invalid policy)
+- [x] T004 Add accessors to `extension/runtime/lib/policy.sh`: `gates_cover_script` (the path or empty), `gates_cover_at` (compact JSON array or empty), `gates_cover_timeout` (default 30)
+- [x] T005 [P] Tests in `tests/test-policy.sh`: each rule of T003 accepts the valid form and refuses the invalid one naming the key, including `at: ["ci"]` naming Principle III; a policy without `spec.cover` validates as before; mutation-check
 
 **Checkpoint**: keys validate; nothing else changes.
 

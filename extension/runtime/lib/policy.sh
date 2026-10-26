@@ -12,6 +12,8 @@
 #   gates_project_gates_declared       # [{name, skip_at}] for parity
 #   gates_declared_skip <boundary> <skip_at-json>  # the boundary-skip
 #                                      # decision; feature 007 reuses it
+#   gates_cover_script / gates_cover_at / gates_cover_timeout
+#                                      # spec.cover (feature 007)
 #
 # Missing hook, missing field, or missing policy file all yield empty output
 # with exit 0 -- the loader is fail-open. Strict checks happen in
@@ -227,6 +229,30 @@ gates_declared_skip() { # <boundary> <skip_at-json>
     jq -e --arg b "$boundary" 'type == "array" and any(.[]; . == $b)' \
         >/dev/null 2>&1 <<<"$list" || return 1
     printf 'skipped by declaration at %s\n' "$boundary"
+}
+
+# The covering script (feature 007, spec.cover). Fail-open like the other
+# accessors: the validator is the strict check.
+gates_cover_script() { # the declared path, empty when none
+    gates_cover_field '.script | if type == "string" then . else empty end'
+}
+
+gates_cover_at() { # compact JSON array, empty when none
+    gates_cover_field '.at | if type == "array" then tojson else empty end'
+}
+
+gates_cover_timeout() { # seconds, default 30
+    local t
+    t="$(gates_cover_field '.timeout_s | if type == "number" then tostring else empty end')"
+    printf '%s\n' "${t:-30}"
+}
+
+gates_cover_field() { # <jq filter on .spec.cover>
+    local file
+    file="$(gates_policy_file)"
+    [[ -f "$file" ]] || return 0
+    jq -r "(.spec.cover // {}) | if type == \"object\" then ($1) else empty end" \
+        "$file" 2>/dev/null || true
 }
 
 # Protected-change trailer switch (git.protected_change_trailer, default on).
@@ -541,7 +567,40 @@ gates_validate_policy() {
         def brand_keys: ["terms", "allow_phrases"];
         def att_keys: ["enabled", "max_records", "parity"];
         def parity_values: ["error", "warning", "off"];
-        def spec_keys: ["enabled", "severity", "include", "exclude", "timeout_s", "snapshot_exclude"];
+        def spec_keys: ["enabled", "severity", "include", "exclude", "timeout_s", "snapshot_exclude", "cover"];
+        # The covering script (feature 007): each error names spec.cover.<key>.
+        # Only the shape of the path is checked here; verify.sh refuses a run whose
+        # declared script is not a regular file inside the project.
+        def cover_keys: ["script", "at", "timeout_s"];
+        def cover_errors($c):
+            if ($c | type) != "object" then ["spec.cover: must be an object"]
+            else
+              [ $c | keys[] | select(IN(cover_keys[]) | not) | "spec.cover.\(.): unknown field" ]
+              + ( if ($c | has("script")) | not then ["spec.cover.script: missing required field"]
+                  elif ($c.script | type) != "string" or ($c.script | length) == 0
+                    then ["spec.cover.script: must be a non-empty string"]
+                  elif ($c.script | startswith("/"))
+                    then ["spec.cover.script: must be a project-relative path, not absolute"]
+                  elif any($c.script | split("/")[]; . == "..")
+                    then ["spec.cover.script: must not contain a .. segment"]
+                  else [] end )
+              + ( if ($c | has("at")) | not then ["spec.cover.at: missing required field (allowed: agent, git)"]
+                  elif ($c.at | type) != "array"
+                    then ["spec.cover.at: must be an array of boundaries (allowed: agent, git)"]
+                  elif ($c.at | length) == 0 then ["spec.cover.at: must not be empty"]
+                  else
+                    [ $c.at[] | select(. == "ci")
+                      | "spec.cover.at: \"ci\" is refused: CI runs the full policy (constitution, Principle III)" ]
+                    + [ $c.at[] | select(. != "ci" and . != "agent" and . != "git")
+                        | "spec.cover.at: invalid boundary \(tojson) (allowed: agent, git)" ]
+                    + ( if ($c.at | length) != ($c.at | unique | length)
+                          then ["spec.cover.at: duplicate entries"] else [] end )
+                  end )
+              + ( if ($c | has("timeout_s")) and ($c.timeout_s
+                      | (type == "number" and floor == . and . >= 1 and . <= 300) | not)
+                    then ["spec.cover.timeout_s: must be an integer from 1 to 300"]
+                  else [] end )
+            end;
         def spec_sev_values: ["error", "warning"];
         def ext_keys: ["source", "version", "file"];
         def pos_int: type == "number" and floor == . and . >= 1;
@@ -621,6 +680,7 @@ gates_validate_policy() {
                     + ( if ($s | has("timeout_s")) and ($s.timeout_s | pos_int | not)
                           then ["spec: timeout_s must be an integer >= 1"]
                         else [] end )
+                    + ( if ($s | has("cover")) then cover_errors($s.cover) else [] end )
                   end
             else [] end;
         def ext_errors:

@@ -13,6 +13,11 @@
 #                         lib/*.sh, lib/known-releases.sha256) and
 #                         <policy-json> as its policy.json; nothing is
 #                         committed. Prints its directory.
+#   fx_spec_feature <dir> <feature> <task-id> <block-cmd> [<task-id> <block-cmd>...]
+#                         write <dir>/specs/<feature>/spec.md (Status
+#                         Complete) and tasks.md with one checked task per
+#                         pair ("- [x] <task-id> <feature> task"), each
+#                         followed by an accept block holding <block-cmd>
 #   fx_registry <dir> <v> rewrite the registry entry's version
 #   fx_cleanup <dir>      remove a fixture
 
@@ -47,6 +52,21 @@ fx_gates_project() { # <policy-json>
     cp "$rt"/lib/*.sh "$rt/lib/known-releases.sha256" "$d/.specify/gates/lib/" || return 1
     printf '%s\n' "$1" >"$d/.specify/gates/policy.json" || return 1
     printf '%s\n' "$d"
+}
+
+fx_spec_feature() { # <dir> <feature> <task-id> <block-cmd> [<task-id> <block-cmd>...]
+    local f="$1/specs/$2"
+    shift 2
+    mkdir -p "$f" || return 1
+    printf '# Feature\n\n**Status**: Complete\n' >"$f/spec.md" || return 1
+    {
+        printf '# Tasks\n\n'
+        while [[ $# -ge 2 ]]; do
+            # shellcheck disable=SC2016  # the backticks are the fence
+            printf -- '- [x] %s %s task\n\n```accept\n%s\n```\n\n' "$1" "${f##*/}" "$2"
+            shift 2
+        done
+    } >"$f/tasks.md"
 }
 
 fx_registry() { # <dir> <version>

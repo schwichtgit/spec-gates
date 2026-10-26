@@ -1043,6 +1043,78 @@ done <<'EOF'
 1:|agent|"agent"
 EOF
 
+# --- the covering script (feature 007): spec.cover ---
+echo ""
+echo "=== spec.cover keys ==="
+# sc <cover-json>: a policy whose spec section declares it.
+sc() { printf '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } }, "spec": { "severity": "error", "cover": %s } }' "$1"; }
+accepts cover-full "$(sc '{ "script": "scripts/accept-covered.sh", "at": ["agent", "git"], "timeout_s": 30 }')"
+accepts cover-min "$(sc '{ "script": "cover.sh", "at": ["git"] }')"
+accepts cover-timeout-edges "$(sc '{ "script": "a/b.sh", "at": ["agent"], "timeout_s": 300 }')"
+accepts cover-timeout-one "$(sc '{ "script": "./a..b/c.sh", "at": ["agent"], "timeout_s": 1 }')"
+rejects cover-string "$(sc '"scripts/cover.sh"')" 5 'spec.cover: must be an object'
+rejects cover-no-script "$(sc '{ "at": ["git"] }')" 5 'spec.cover.script: missing required field'
+rejects cover-empty-script "$(sc '{ "script": "", "at": ["git"] }')" 5 'spec.cover.script: must be a non-empty string'
+rejects cover-script-number "$(sc '{ "script": 7, "at": ["git"] }')" 5 'spec.cover.script: must be a non-empty string'
+rejects cover-script-abs "$(sc '{ "script": "/usr/bin/true", "at": ["git"] }')" 5 'spec.cover.script: must be a project-relative path, not absolute'
+rejects cover-script-dotdot "$(sc '{ "script": "scripts/../../x.sh", "at": ["git"] }')" 5 'spec.cover.script: must not contain a .. segment'
+rejects cover-script-dotdot-lead "$(sc '{ "script": "../x.sh", "at": ["git"] }')" 5 'spec.cover.script: must not contain a .. segment'
+rejects cover-no-at "$(sc '{ "script": "c.sh" }')" 5 'spec.cover.at: missing required field'
+rejects cover-at-empty "$(sc '{ "script": "c.sh", "at": [] }')" 5 'spec.cover.at: must not be empty'
+rejects cover-at-string "$(sc '{ "script": "c.sh", "at": "git" }')" 5 'spec.cover.at: must be an array of boundaries'
+rejects cover-at-ci "$(sc '{ "script": "c.sh", "at": ["ci"] }')" 5 \
+    'spec.cover.at: "ci" is refused: CI runs the full policy (constitution, Principle III)'
+rejects cover-at-ci-mixed "$(sc '{ "script": "c.sh", "at": ["git", "ci"] }')" 5 'Principle III'
+rejects cover-at-unknown "$(sc '{ "script": "c.sh", "at": ["precommit"] }')" 5 \
+    'spec.cover.at: invalid boundary "precommit" (allowed: agent, git)'
+rejects cover-at-dup "$(sc '{ "script": "c.sh", "at": ["git", "git"] }')" 5 'spec.cover.at: duplicate entries'
+rejects cover-timeout-zero "$(sc '{ "script": "c.sh", "at": ["git"], "timeout_s": 0 }')" 5 \
+    'spec.cover.timeout_s: must be an integer from 1 to 300'
+rejects cover-timeout-big "$(sc '{ "script": "c.sh", "at": ["git"], "timeout_s": 301 }')" 5 \
+    'spec.cover.timeout_s: must be an integer from 1 to 300'
+rejects cover-timeout-frac "$(sc '{ "script": "c.sh", "at": ["git"], "timeout_s": 2.5 }')" 5 \
+    'spec.cover.timeout_s: must be an integer from 1 to 300'
+rejects cover-timeout-string "$(sc '{ "script": "c.sh", "at": ["git"], "timeout_s": "30" }')" 5 \
+    'spec.cover.timeout_s: must be an integer from 1 to 300'
+rejects cover-unknown "$(sc '{ "script": "c.sh", "at": ["git"], "command": "true" }')" 5 \
+    'spec.cover.command: unknown field'
+# Without spec.cover a policy validates as before.
+accepts cover-none '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } }, "spec": { "severity": "error", "timeout_s": 5 } }'
+if jq -e '.properties.spec.properties.cover
+    | .additionalProperties == false and .required == ["script", "at"]
+      and .properties.script.minLength == 1
+      and (.properties.at | .minItems == 1 and .uniqueItems == true and .items.enum == ["agent", "git"])
+      and (.properties.timeout_s | .minimum == 1 and .maximum == 300 and .default == 30)
+      and (.description | test("Principle III") and test("protected"))' \
+    "$SCHEMA" >/dev/null; then
+    pass "schema: spec.cover keys, never ci, protected"
+else
+    fail "schema entry for spec.cover missing or wrong"
+fi
+CVA="$(write_policy cover-acc "$(sc '{ "script": "scripts/c.sh", "at": ["agent", "git"], "timeout_s": 7 }')")"
+CVB="$(write_policy cover-acc-min "$(sc '{ "script": "c.sh", "at": ["git"] }')")"
+CVN="$(write_policy cover-acc-none '{ "hooks": {} }')"
+got="$(GATES_POLICY_FILE="$CVA" gates_cover_script)|$(GATES_POLICY_FILE="$CVA" gates_cover_at)|$(GATES_POLICY_FILE="$CVA" gates_cover_timeout)"
+got="$got;$(GATES_POLICY_FILE="$CVB" gates_cover_timeout)"
+got="$got;$(GATES_POLICY_FILE="$CVN" gates_cover_script)|$(GATES_POLICY_FILE="$CVN" gates_cover_at)|$(GATES_POLICY_FILE="$CVN" gates_cover_timeout)"
+if [[ "$got" == 'scripts/c.sh|["agent","git"]|7;30;||30' ]]; then
+    pass "gates_cover_script, gates_cover_at, gates_cover_timeout (default 30, empty when none)"
+else
+    fail "cover accessors: $got"
+fi
+CVD="$(fx_gates_project "$(sc '{ "script": "c.sh", "at": ["ci"] }')")"
+printf '#!/bin/sh\necho covered\n' >"$CVD/c.sh"
+chmod +x "$CVD/c.sh"
+CV_RC=0
+CV_OUT="$(CLAUDE_PROJECT_DIR="$CVD" bash "$CVD/.specify/gates/verify.sh" --boundary git 2>&1)" || CV_RC=$?
+if [[ "$CV_RC" == 1 ]] && grep -q 'spec.cover.at: "ci" is refused' <<<"$CV_OUT" \
+    && ! grep -q '^gates: boundary=' <<<"$CV_OUT"; then
+    pass "verify.sh refuses spec.cover.at ci with exit 1 and runs no gate"
+else
+    fail "verify.sh on spec.cover.at ci: rc $CV_RC, output: $CV_OUT"
+fi
+fx_cleanup "$CVD"
+
 # --- glob matcher: a pattern after a leading **/ (#220) ---
 echo ""
 echo "=== gates_glob_match: **/ prefix ==="
