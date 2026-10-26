@@ -281,6 +281,45 @@ expect "--json detail carries no ##gates-fail## marker" \
 expect "text report carries no ##gates-fail## marker" \
     "$(cd "$DS" && CLAUDE_PROJECT_DIR="$DS" bash "$DS/.specify/gates/verify.sh" --boundary ci 2>&1 | grep -c 'gates-fail##' || true)" 0
 
+# A file linter's output opens with banners and ends with a footer
+# (prettier's "Run Prettier with --write", shellcheck's wiki links), so
+# its summary is the first finding, marked by the dispatch.
+# <tool> <policy> <ext> <bad-content>: 150 bad files, so the output
+# outgrows the 2000-byte detail window.
+linter_summary() {
+    local d="$WORKDIR/sum-$1" i=100 v
+    project "$d" "$2"
+    while [[ $i -lt 250 ]]; do
+        printf '%b' "$4" >"$d/bad$i.$3"
+        i=$((i + 1))
+    done
+    v="$d/.specify/gates/verify.sh"
+    expect "$1: the output fills the detail window" \
+        "$(CLAUDE_PROJECT_DIR="$d" bash "$v" --boundary ci --json 2>/dev/null \
+            | jq -r --arg t "$1" '.gates[] | select(.name == $t) | .detail | length > 1900')" true
+    S="$(CLAUDE_PROJECT_DIR="$d" bash "$v" --boundary ci 2>&1 | grep "^  \[fail\] $1 -- " || true)"
+    [[ -n "${GATES_TEST_VERBOSE:-}" ]] && echo "  $1 summary: $S"
+    return 0
+}
+if command -v shellcheck >/dev/null 2>&1; then
+    # shellcheck disable=SC2016  # the bad file's literal $HOME
+    linter_summary shellcheck "$NONE_SHELL" sh '#!/bin/bash\nrm -rf $HOME/x\n'
+    expect "shellcheck: the summary names the first finding, not the footer" \
+        "$(grep -cE '^  \[fail\] shellcheck -- bad[0-9]+\.sh line 2: SC2086 \(info\): ' <<<"$S")" 1
+else
+    skip "shellcheck summary" "shellcheck not installed"
+fi
+if have_node_linters; then
+    linter_summary prettier "$NONE_PRETTIER" md '#Bad md\n\n\n- x\n'
+    expect "prettier: the summary names an unformatted file, not the footer" \
+        "$(grep -cE '^  \[fail\] prettier -- \[warn\] bad[0-9]+\.md$' <<<"$S")" 1
+    linter_summary markdownlint '{ "hooks": { "markdownlint": { "include": ["**/*.md"], "orchestrator": "none", "severity": "error" }, "verify-quality": { "orchestrator": "none", "severity": "error" } } }' md '#Bad md\n'
+    expect "markdownlint: the summary names the first finding, not the banner" \
+        "$(grep -cE '^  \[fail\] markdownlint -- bad[0-9]+\.md:1(:1)? error MD' <<<"$S")" 1
+else
+    skip "prettier and markdownlint summaries" "run npm ci to install pinned linters"
+fi
+
 # --- one gate run per working tree (#263) ---
 # A second run used to see the first one's writes and fail on them. The
 # holder's custom step blocks until the test creates "release", so the

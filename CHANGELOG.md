@@ -48,9 +48,11 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   knob.
 - **A failing gate's summary line names the failure** (#262). The text
   report printed the first line of the step's last 2000 bytes of
-  output, a line wherever the cut fell. It now prints the last
-  non-empty line, or the step's last `##gates-fail## <text>` line; the
-  marker never shows in the report or the `--json` detail.
+  output, a line wherever the cut fell. A step's last
+  `##gates-fail## <text>` line now wins; prettier, markdownlint and
+  shellcheck mark their first finding so, and a task or custom step
+  without one shows its last non-empty line. The marker never shows in
+  the report or the `--json` detail.
 - **Two gate runs in one working tree no longer fail each other** (#263).
   `verify.sh` holds `.specify/gates/.lock` for the run. A Stop-hook run
   that finds another run skips (exit 0); a git or CI run waits up to

@@ -586,10 +586,15 @@ emits a single machine-readable object for workflow steps and CI.
 
 **A failing step names its own failure.** A failing or warning tool,
 task or custom step keeps the last 2000 bytes of its output as the
-gate's `detail`; the one-line text report shows the step's last
-non-empty line. A step can name the line instead: the last line that
-carries `##gates-fail## <text>` wins, and the marker itself is stripped
-from the report and the `detail`, which keep the text.
+gate's `detail`. The one-line text report reads the whole output: the
+last line that carries `##gates-fail## <text>` wins (the marker itself
+is stripped from the report and the `detail`, which keep the text).
+The file-linter gates mark their first finding that way (a prettier
+`[warn] <file>` line, a markdownlint `<file>:<line>` finding, shellcheck's
+`<file> line N: SC<code> ...`), since their output opens with banners and
+ends with a footer; without a marked line they show their first
+non-empty line. A task or custom step without one shows its last
+non-empty line, where such steps print their verdict.
 
 **One gate run per working tree.** Two runs in one tree see each
 other's writes (build output, test files) and fail each other, so a run

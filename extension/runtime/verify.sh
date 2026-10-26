@@ -357,17 +357,22 @@ run_gate() { # name severity cmd...
         bin="$(printf '%s' "$meta" | sed -n 's/.* bin=//p')"
     fi
     # The detail keeps the output's last 2000 bytes, whose first line is
-    # wherever the cut fell (#262). The summary is the step's own verdict:
-    # its last "##gates-fail## <text>" line, else its last non-empty line.
-    # The marker is machinery too and never shows in the detail.
+    # wherever the cut fell (#262). The summary is read from the whole
+    # output instead: its last "##gates-fail## <text>" line (the file
+    # linters' dispatch marks their first finding so), else, for a file
+    # linter, the first non-empty line, and for a task or custom step,
+    # which ends on its verdict, the last one. The marker is machinery
+    # too and never shows in the detail.
     local detail summary
     detail="$(grep -v '##gates-meta##' /tmp/gates-out.$$ \
         | sed 's/##gates-fail##[[:space:]]*//' | tail -c 2000 || true)"
     summary="$(grep '##gates-fail##' /tmp/gates-out.$$ 2>/dev/null | tail -n 1 \
         | sed 's/.*##gates-fail##[[:space:]]*//' || true)"
     if [[ -z "$summary" ]]; then
+        local pick='$'
+        [[ -n "$meta" ]] && pick=1
         summary="$(grep -v '##gates-meta##' /tmp/gates-out.$$ \
-            | grep -v '^[[:space:]]*$' | tail -n 1 || true)"
+            | grep -v '^[[:space:]]*$' | sed -n "${pick}p" || true)"
     fi
     rm -f /tmp/gates-out.$$
 
