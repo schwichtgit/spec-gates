@@ -120,7 +120,8 @@ Enforcement follows the feature's own completion claim, read from
   changing the exit code.
 - **`**Status**: Complete`** — the claim is enforced. Any unchecked
   `- [ ]` task or failing accept block fails the run, naming the feature,
-  the task or criterion, and the cause (exit code, `timeout after <N>s`,
+  the task or criterion, and the cause (exit code, `timeout after <N>s`
+  with the 1-minute load average where it can be read,
   or a mutation — blocks are read-only by contract and never
   auto-reverted). The read-only check covers the working tree, git
   config and hooks, `HEAD` and refs, and gitignored files; work in a

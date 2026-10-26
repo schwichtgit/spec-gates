@@ -669,6 +669,28 @@ gates_spec_detached_stop() { # <id> <scratch> <fifo> <eof>
     return 1
 }
 
+# The 1-minute load average, for the timeout detail (#264): without it a
+# block that times out on a loaded machine reads like a hang. From
+# /proc/loadavg (Linux), else `sysctl -n vm.loadavg` (macOS and the BSDs:
+# "{ 1.23 1.10 1.05 }"), else the "load average(s):" field of uptime.
+# Prints nothing and returns 1 when none of them can be read.
+# GATES_SPEC_LOADAVG_FILE replaces /proc/loadavg (tests).
+gates_spec_load_avg() {
+    local f="${GATES_SPEC_LOADAVG_FILE:-/proc/loadavg}" load="" out
+    local num='^[{[:space:]]*([0-9]+[.,][0-9]+)' up='load averages?:[[:space:]]*([0-9]+[.,][0-9]+)'
+    if [[ -r "$f" ]] && read -r out _ <"$f" 2>/dev/null && [[ "$out" =~ $num ]]; then
+        load="${BASH_REMATCH[1]}"
+    fi
+    if [[ -z "$load" ]] && out="$(sysctl -n vm.loadavg 2>/dev/null)" && [[ "$out" =~ $num ]]; then
+        load="${BASH_REMATCH[1]}"
+    fi
+    if [[ -z "$load" ]] && out="$(uptime 2>/dev/null)" && [[ "$out" =~ $up ]]; then
+        load="${BASH_REMATCH[1]}"
+    fi
+    [[ -n "$load" ]] || return 1
+    printf '%s' "${load/,/.}"
+}
+
 # Execute one accept block (R4/R5): `bash -eo pipefail`, so any failing
 # line fails the block (#236), repo-root cwd, pure-shell watchdog (no
 # timeout(1) on macOS base), snapshots before and after. Outside a git work
@@ -790,7 +812,9 @@ gates_spec_run_block() { # <cmdfile> <timeout-s> <root> <outfile>
     rm -f "$lease" "$eof"
     if [[ -f "$marker" ]]; then
         rm -f "$marker" "$leftover" "$mark"
-        SPEC_BLOCK_DETAIL="timeout after ${timeout}s${detached:+; $detached}"
+        local load
+        load="$(gates_spec_load_avg)" || load=""
+        SPEC_BLOCK_DETAIL="timeout after ${timeout}s${load:+ at load $load}${detached:+; $detached}"
         return 2
     fi
     if [[ "$rc" -ne 0 ]]; then

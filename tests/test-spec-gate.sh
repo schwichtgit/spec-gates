@@ -523,9 +523,19 @@ mkfeature "$D" 300-slow Complete <<'EOF'
   bash -c 'sleep 2; touch late.txt'
   ```
 EOF
-OUT="$(gate_out "$D")"
+# Load sources faked (#264): a load file in place of /proc/loadavg, and
+# sysctl and uptime stubs first on PATH that fail unless told otherwise.
+LOADSTUB="$WORKDIR/load-stubs"
+mkdir -p "$LOADSTUB"
+# shellcheck disable=SC2016  # stub scripts, expanded when they run
+printf '#!/bin/sh\n[ -n "$FAKE_SYSCTL" ] || exit 1\nprintf "%%s\\n" "$FAKE_SYSCTL"\n' >"$LOADSTUB/sysctl"
+# shellcheck disable=SC2016  # stub scripts, expanded when they run
+printf '#!/bin/sh\n[ -n "$FAKE_UPTIME" ] || exit 1\nprintf "%%s\\n" "$FAKE_UPTIME"\n' >"$LOADSTUB/uptime"
+chmod +x "$LOADSTUB/sysctl" "$LOADSTUB/uptime"
+printf '48.20 30.10 20.00 3/512 4242\n' >"$WORKDIR/loadavg"
+OUT="$(GATES_SPEC_LOADAVG_FILE="$WORKDIR/loadavg" PATH="$LOADSTUB:$PATH" gate_out "$D")"
 expect_contains "hung block blocks the run" "$OUT" "EXIT=2"
-expect_contains "timeout is named with the budget" "$OUT" "timeout after 1s"
+expect_contains "timeout is named with the budget and the load" "$OUT" "timeout after 1s at load 48.20"
 # Issue #136: the watchdog kills the block's whole process group, so the
 # child's late write never lands after verify has returned.
 sleep 3
@@ -537,6 +547,23 @@ else
     echo "FAIL: timed-out block's child kept running and wrote late.txt"
     FAIL=$((FAIL + 1))
 fi
+# No load source at all: the plain detail.
+OUT="$(GATES_SPEC_LOADAVG_FILE="$WORKDIR/no-loadavg" PATH="$LOADSTUB:$PATH" gate_out "$D")"
+expect_contains "no load source: still a timeout" "$OUT" "timeout after 1s"
+expect "no load source: the detail names no load" "$(grep -c 'at load' <<<"$OUT")" 0
+# The fallbacks, read directly: macOS sysctl braces, uptime in two styles.
+# shellcheck disable=SC2016  # expanded by the inner bash
+load_avg() { # [env...] -> gates_spec_load_avg output, or "none"
+    env GATES_SPEC_LOADAVG_FILE="$WORKDIR/no-loadavg" PATH="$LOADSTUB:$PATH" "$@" bash -c \
+        'source "$1/extension/runtime/lib/spec-gate.sh"; gates_spec_load_avg || printf none' _ "$REPO_ROOT"
+}
+expect "the load file comes first" "$(load_avg GATES_SPEC_LOADAVG_FILE="$WORKDIR/loadavg" FAKE_SYSCTL='{ 3.50 1.00 0.50 }')" "48.20"
+expect "no load file: sysctl vm.loadavg (macOS braces)" "$(load_avg FAKE_SYSCTL='{ 3.50 1.00 0.50 }' FAKE_UPTIME='load average: 9.00')" "3.50"
+expect "no sysctl: uptime, Linux style" \
+    "$(load_avg FAKE_UPTIME=' 10:00:01 up 3 days,  2 users,  load average: 27.04, 20.00, 10.00')" "27.04"
+expect "no sysctl: uptime, macOS style with a decimal comma" \
+    "$(load_avg FAKE_UPTIME='10:00  up 3 days, 2 users, load averages: 2,50 1,00 0,90')" "2.50"
+expect "unparsable sources: none" "$(load_avg FAKE_SYSCTL='unknown oid' FAKE_UPTIME='up 3 days')" "none"
 
 D="$WORKDIR/mutation"
 project "$D" "$MINIMAL"
