@@ -413,7 +413,12 @@ the paths it changes against every parent, so merging the base into a PR
 branch does not re-check the base's own changes. A declaration in the description covers every commit, since a
 squash merge keeps the description and drops the commit trailers. GitHub
 re-runs it when a PR is `edited`; GitLab starts no pipeline on an MR edit,
-so a fresh pipeline is needed after one.
+so a fresh pipeline is needed after one. In a GitLab job, one draft marker
+at the start of the MR title (`Draft:`, `[Draft]`, `(Draft)`, `WIP:` or
+`[WIP]`, any case, followed by a blank) is dropped before the title is
+checked: GitLab removes it when the MR is marked ready, so the merged text
+never carries it. A marker anywhere else stays, and a title that is only a
+marker still fails.
 
 It also runs the `pre-commit` secret and forbidden-file scan, with the
 same rules (`lib/secrets.sh`), over every commit in the range, so commits

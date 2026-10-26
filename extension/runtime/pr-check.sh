@@ -205,6 +205,24 @@ fi
 BODY="$(printf '%s' "$BODY" | tr -d '\r')"
 TITLE="$(printf '%s' "$TITLE" | tr -d '\r')"
 
+# GitLab marks a draft MR in its title (#261): "Draft: feat: x" while the MR
+# is a draft, "feat: x" once it is ready, and the merged text never carries
+# the marker. One documented marker at the very start, any case, followed by
+# whitespace, is dropped before the message rules run, so the format and
+# length checks see the title that will be merged. WIP: and [WIP] are the
+# markers before GitLab 14.0. Only in GitLab jobs: a GitHub draft is a flag,
+# and a "WIP:" there would be squash-merged as written. A marker elsewhere
+# stays, and a title that is only a marker is checked as it is.
+if [[ "${GITLAB_CI:-}" == "true" || -n "${CI_MERGE_REQUEST_IID:-}" ]]; then
+    _draft_re='^(draft:|\[draft\]|\(draft\)|wip:|\[wip\])[[:space:]]+([^[:space:]].*)$'
+    shopt -s nocasematch
+    if [[ "$TITLE" =~ $_draft_re ]]; then
+        TITLE="${BASH_REMATCH[2]}"
+        echo "pr-check: GitLab draft marker '${BASH_REMATCH[1]}' dropped from the MR title; checking: $TITLE"
+    fi
+    shopt -u nocasematch
+fi
+
 # Resolve the PR/MR range and load the policy committed at its base, before
 # either check runs. -> 0 resolved (BASE, HEAD_REF set; GATES_POLICY_FILE
 # points at the base policy when the base has one), 1 no range in this

@@ -134,7 +134,11 @@ create`; GitLab: `glab repo create` or the web UI; Jenkins: the SCM
      `GATES_GITLAB_TOKEN` (offer to set it as a masked CI/CD variable
      holding a `read_api` token) or `CI_JOB_TOKEN`. A truncated
      description it cannot fetch fails the job. Before 16.7 without a
-     token, only the title is checked, and the job prints a notice.
+     token, only the title is checked, and the job prints a notice. A
+     draft MR's title marker (`Draft:`, `[Draft]`, `(Draft)`, `WIP:`,
+     `[WIP]`, any case, at the start and followed by a blank) is dropped
+     before the title is checked, since GitLab removes it when the MR is
+     marked ready.
    - jenkins: only the title is available (`CHANGE_TITLE`); the
      description is not checked.
 
