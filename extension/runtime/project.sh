@@ -254,8 +254,15 @@ fi
 NEED_RTV=0
 [[ "$(head -n 1 "$RTV_FILE" 2>/dev/null || true)" == "$VERSION" ]] || NEED_RTV=1
 GI="$ROOT/.specify/gates/.gitignore"
+# The attestation log and the gate lock (#263) are run-time files, never
+# source: one line each, added when missing.
 NEED_GI=0
-grep -qxF attestations.jsonl "$GI" 2>/dev/null || NEED_GI=1
+GI_ADD=""
+for gi_line in attestations.jsonl .lock/; do
+    grep -qxF "$gi_line" "$GI" 2>/dev/null && continue
+    NEED_GI=1
+    GI_ADD="$(addline "$GI_ADD" "$gi_line")"
+done
 
 SETTINGS="$ROOT/.claude/settings.json"
 FRAG="$SRC/hooks/claude/settings.fragment.json"
@@ -423,7 +430,7 @@ if [[ "$NEED_RTV" -eq 1 ]]; then
         CHANGES="$(addline "$CHANGES" "record runtime version $VERSION")"
     fi
 fi
-[[ "$NEED_GI" -eq 1 ]] && CHANGES="$(addline "$CHANGES" "add attestations.jsonl to .specify/gates/.gitignore")"
+[[ "$NEED_GI" -eq 1 ]] && CHANGES="$(addline "$CHANGES" "add $(printf '%s\n' "$GI_ADD" | paste -sd ' ' -) to .specify/gates/.gitignore")"
 [[ -n "$MERGED" ]] && CHANGES="$(addline "$CHANGES" "merge agent hooks into .claude/settings.json")"
 [[ -n "$HOOKPLAN" ]] && CHANGES="$(addline "$CHANGES" "$(printf '%s\n' "$HOOKPLAN" | sed 's/^/install the gates stub as git hook /')")"
 [[ -n "$LEGACYPLAN" ]] && CHANGES="$(addline "$CHANGES" "$(printf '%s\n' "$LEGACYPLAN" | sed 's/.*/refresh the gates stub the pre-commit framework runs as &.legacy/')")"
@@ -600,7 +607,11 @@ if [[ -n "$VEXEC" ]]; then
     while IFS= read -r f; do chmod +x "$f" || fail_write "chmod $f"; done <<<"$VEXEC"
 fi
 [[ "$NEED_RTV" -eq 1 ]] && { printf '%s\n' "$VERSION" >"$RTV_FILE" || fail_write "$RTV_FILE"; }
-[[ "$NEED_GI" -eq 1 ]] && { echo attestations.jsonl >>"$GI" || fail_write "$GI"; }
+if [[ "$NEED_GI" -eq 1 ]]; then
+    # A last line without its newline would merge with the first added one.
+    [[ -s "$GI" && -n "$(tail -c 1 "$GI")" ]] && { echo >>"$GI" || fail_write "$GI"; }
+    printf '%s\n' "$GI_ADD" >>"$GI" || fail_write "$GI"
+fi
 if [[ -n "$MERGED" ]]; then
     mkdir -p "$ROOT/.claude" || fail_write ".claude/"
     { jq . <<<"$MERGED" >"$SETTINGS.tmp.$$" && mv -f "$SETTINGS.tmp.$$" "$SETTINGS"; } || fail_write "$SETTINGS"

@@ -721,6 +721,29 @@ OUT="$(isoblock excldir '  echo new >>cache/data
     '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } }, "spec": { "snapshot_exclude": ["cache/", "scratch/"] } }')"
 expect_contains "a trailing-slash snapshot_exclude exempts the directory" "$OUT" "EXIT=0"
 
+# Nested repositories and worktrees (#263): other agents write in their
+# own worktrees under an ignored directory while a block runs. A directory
+# with its own .git (a directory or a worktree's .git file) is left out with
+# everything under it; an ordinary ignored write still counts.
+D="$WORKDIR/iso-nestedrepo"
+isofix "$D"
+git init -q "$D/cache/inner"
+git -C "$D" worktree add -q -b agent-wt "$D/cache/wt" 2>/dev/null
+# shellcheck disable=SC2016  # literal backticks
+printf -- '- [x] T001 Must leave the repository alone\n\n  ```accept\n%s\n  ```\n' \
+    '  echo x >>cache/inner/f; echo x >>cache/wt/f' \
+    | mkfeature "$D" 500-iso Complete
+OUT="$(gate_out "$D")"
+expect_contains "writes inside nested repos and worktrees do not count (#263)" "$OUT" "EXIT=0"
+# shellcheck disable=SC2016  # literal backticks
+printf -- '- [x] T001 Must leave the repository alone\n\n  ```accept\n%s\n  ```\n' \
+    '  echo x >>cache/wt/f; echo new >>cache/data' \
+    | mkfeature "$D" 500-iso Complete
+OUT="$(gate_out "$D")"
+expect_contains "an ignored write next to a nested worktree still counts" "$OUT" \
+    "ignored files modified: cache/data"
+expect "the nested worktree is not named" "$(grep -c 'cache/wt' <<<"$OUT" || true)" 0
+
 # A nested verify.sh (recursion guard set) appends its attestation; the gate
 # exempts its own evidence log, and the nested run reports spec as skipped.
 # shellcheck disable=SC2016  # block text, expanded when the block runs

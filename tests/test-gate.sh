@@ -236,6 +236,231 @@ DF="$WORKDIR/custom-fail"
 project "$DF" '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error", "custom_command": "false" } } }'
 expect "custom false -> fail (exit 2)" "$(gate "$DF")" 2
 
+# --- the failing-gate summary names the failure (#262) ---
+# The detail is the output's last 2000 bytes; the summary used to be the
+# first line of that window, a line near the cut.
+echo ""
+echo "=== failing-gate summary line ==="
+DS="$WORKDIR/summary"
+project "$DS" '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error", "custom_command": "sh ./step.sh" } } }'
+i=0
+while [[ $i -lt 100 ]]; do
+    echo "noise line $i padding padding padding"
+    i=$((i + 1))
+done >"$DS/noise.txt"
+{
+    echo '#!/bin/sh'
+    echo 'cat noise.txt'
+    echo 'echo "LAST-LINE-262 the real error"'
+    echo 'echo ""'
+    echo 'exit 1'
+} >"$DS/step.sh"
+summary_line() { # <dir>: the report line of the custom gate
+    (cd "$1" && CLAUDE_PROJECT_DIR="$1" bash "$1/.specify/gates/verify.sh" --boundary ci 2>&1) \
+        | grep '^  \[fail\] custom' || true
+}
+expect "output over 2000 bytes: the summary is its last non-empty line" \
+    "$(summary_line "$DS")" "  [fail] custom -- LAST-LINE-262 the real error"
+{
+    echo '#!/bin/sh'
+    echo 'echo "##gates-fail## FIRST-MARK-262"'
+    echo 'echo "##gates-fail## PICKED-MARK-262 lint found 3 errors"'
+    echo 'cat noise.txt'
+    echo 'echo "  ##gates-fail## TAIL-MARK-262 visible"'
+    echo 'echo "trailing line"'
+    echo 'exit 1'
+} >"$DS/step.sh"
+expect "a ##gates-fail## line wins over the last line (the last one wins)" \
+    "$(summary_line "$DS")" "  [fail] custom -- TAIL-MARK-262 visible"
+SJ="$(cd "$DS" && CLAUDE_PROJECT_DIR="$DS" bash "$DS/.specify/gates/verify.sh" --boundary ci --json 2>/dev/null || true)"
+SJD="$(jq -r '.gates[] | select(.name == "custom") | .detail' <<<"$SJ")"
+expect "--json detail keeps the marked text" \
+    "$(grep -c 'TAIL-MARK-262 visible' <<<"$SJD")" 1
+expect "--json detail carries no ##gates-fail## marker" \
+    "$(grep -c 'gates-fail##' <<<"$SJD" || true)" 0
+expect "text report carries no ##gates-fail## marker" \
+    "$(cd "$DS" && CLAUDE_PROJECT_DIR="$DS" bash "$DS/.specify/gates/verify.sh" --boundary ci 2>&1 | grep -c 'gates-fail##' || true)" 0
+
+# A file linter's output opens with banners and ends with a footer
+# (prettier's "Run Prettier with --write", shellcheck's wiki links), so
+# its summary is the first finding, marked by the dispatch.
+# <tool> <policy> <ext> <bad-content>: 150 bad files, so the output
+# outgrows the 2000-byte detail window.
+linter_summary() {
+    local d="$WORKDIR/sum-$1" i=100 v
+    project "$d" "$2"
+    while [[ $i -lt 250 ]]; do
+        printf '%b' "$4" >"$d/bad$i.$3"
+        i=$((i + 1))
+    done
+    v="$d/.specify/gates/verify.sh"
+    expect "$1: the output fills the detail window" \
+        "$(CI=true CLAUDE_PROJECT_DIR="$d" bash "$v" --boundary ci --json 2>/dev/null \
+            | jq -r --arg t "$1" '.gates[] | select(.name == $t) | .detail | length > 1900')" true
+    # CI=true as in every GitHub Actions job: prettier then colors its
+    # "[warn]" lines even without a terminal.
+    S="$(CI=true CLAUDE_PROJECT_DIR="$d" bash "$v" --boundary ci 2>&1 | grep "^  \[fail\] $1 -- " || true)"
+    [[ -n "${GATES_TEST_VERBOSE:-}" ]] && echo "  $1 summary: $S"
+    return 0
+}
+if command -v shellcheck >/dev/null 2>&1; then
+    # shellcheck disable=SC2016  # the bad file's literal $HOME
+    linter_summary shellcheck "$NONE_SHELL" sh '#!/bin/bash\nrm -rf $HOME/x\n'
+    expect "shellcheck: the summary names the first finding, not the footer" \
+        "$(grep -cE '^  \[fail\] shellcheck -- bad[0-9]+\.sh line 2: SC2086 \(info\): ' <<<"$S")" 1
+else
+    skip "shellcheck summary" "shellcheck not installed"
+fi
+if have_node_linters; then
+    linter_summary prettier "$NONE_PRETTIER" md '#Bad md\n\n\n- x\n'
+    expect "prettier: the summary names an unformatted file, not the footer" \
+        "$(grep -cE '^  \[fail\] prettier -- \[warn\] bad[0-9]+\.md$' <<<"$S")" 1
+    linter_summary markdownlint '{ "hooks": { "markdownlint": { "include": ["**/*.md"], "orchestrator": "none", "severity": "error" }, "verify-quality": { "orchestrator": "none", "severity": "error" } } }' md '#Bad md\n'
+    expect "markdownlint: the summary names the first finding, not the banner" \
+        "$(grep -cE '^  \[fail\] markdownlint -- bad[0-9]+\.md:1(:1)? error MD' <<<"$S")" 1
+else
+    skip "prettier and markdownlint summaries" "run npm ci to install pinned linters"
+fi
+
+# --- one gate run per working tree (#263) ---
+# A second run used to see the first one's writes and fail on them. The
+# holder's custom step blocks until the test creates "release", so the
+# timing does not depend on machine load.
+echo ""
+echo "=== gate lock ==="
+DL="$WORKDIR/lock"
+project "$DL" "{ \"hooks\": { \"verify-quality\": { \"orchestrator\": \"custom\", \"severity\": \"error\", \"custom_command\": \"sh $DL/hold.sh\" } } }"
+# shellcheck disable=SC2016  # script text, expanded when it runs
+{
+    echo '#!/bin/sh'
+    echo "d='$DL'"
+    echo ': >"$d/started"'
+    # Gives up after two minutes or once the work dir is gone, so a
+    # failed test cannot leave it running.
+    echo 'n=0'
+    echo 'while [ ! -f "$d/release" ] && [ -d "$d" ] && [ $n -lt 1200 ]; do sleep 0.1; n=$((n + 1)); done'
+    echo 'exit "${HOLD_RC:-0}"'
+} >"$DL/hold.sh"
+LOCK="$DL/.specify/gates/.lock"
+wait_for() { # <seconds> <test-args...>: poll until the test holds
+    local n=0 limit=$(($1 * 10))
+    shift
+    while ! test "$@"; do
+        [[ $n -ge $limit ]] && return 1
+        sleep 0.1
+        n=$((n + 1))
+    done
+}
+vrun() { # <boundary> [arg...]: verify.sh in the lock fixture
+    local b="$1"
+    shift
+    CLAUDE_PROJECT_DIR="$DL" bash "$DL/.specify/gates/verify.sh" --boundary "$b" "$@"
+}
+start_holder() { # <boundary>: sets HOLDER, returns once its step runs
+    rm -f "$DL/started" "$DL/release"
+    # Not through vrun: $! must be verify.sh's own pid.
+    CLAUDE_PROJECT_DIR="$DL" bash "$DL/.specify/gates/verify.sh" --boundary "$1" \
+        >"$WORKDIR/holder.out" 2>&1 &
+    HOLDER=$!
+    wait_for 60 -f "$DL/started" || echo "FAIL: the holder's step never started"
+}
+
+start_holder git
+expect "the holder owns the lock (pid and boundary)" \
+    "$(head -n 2 "$LOCK/owner" 2>/dev/null | paste -sd ' ' -)" "$HOLDER git"
+rc=0
+out="$(vrun agent 2>&1)" || rc=$?
+expect "agent boundary under a held lock: exit 0" "$rc" 0
+expect "agent boundary: skips naming the holder" \
+    "$(grep -c "gates: skipped: the gate run of pid $HOLDER (git) is in progress" <<<"$out")" 1
+expect "agent boundary: no gate ran" "$(grep -c '^gates: boundary=' <<<"$out" || true)" 0
+out="$(vrun agent --json 2>/dev/null)" || true
+expect "agent boundary --json: one skipped object" \
+    "$(jq -r '"\(.result) \(.boundary)"' <<<"$out" 2>/dev/null)" "skipped agent"
+rc=0
+out="$(vrun git --dry-run 2>&1)" || rc=$?
+expect "--dry-run takes no lock and does not wait" \
+    "$rc:$(grep -c 'waiting for' <<<"$out" || true)" "0:0"
+rc=0
+out="$(GATES_LOCK_WAIT_S=1 vrun ci 2>&1)" || rc=$?
+expect "ci boundary: gives up after GATES_LOCK_WAIT_S (exit 1)" "$rc" 1
+expect "ci boundary: the refusal names the holder" \
+    "$(grep -c "the gate run of pid $HOLDER (git) still holds" <<<"$out")" 1
+GATES_LOCK_WAIT_S=120 CLAUDE_PROJECT_DIR="$DL" bash "$DL/.specify/gates/verify.sh" \
+    --boundary git >"$WORKDIR/waiter.out" 2>&1 &
+WAITER=$!
+wait_for 60 -s "$WORKDIR/waiter.out" || true
+sleep 3 # a few polls, each of which could repeat the message
+expect "git boundary: says once whom it waits for" \
+    "$(grep -c "^gates: waiting for the gate run of pid $HOLDER (git)$" "$WORKDIR/waiter.out")" 1
+: >"$DL/release"
+rc=0
+wait "$HOLDER" || rc=$?
+expect "the holder passes" "$rc" 0
+rc=0
+wait "$WAITER" || rc=$?
+expect "git boundary: runs once the holder ends, and passes" "$rc" 0
+expect "the waiter ran its gates" "$(grep -c '^  \[pass\] custom' "$WORKDIR/waiter.out")" 1
+expect "the lock is gone after both runs" "$([[ -e "$LOCK" ]] && echo held || echo free)" free
+
+rc=0
+HOLD_RC=1 vrun git >/dev/null 2>&1 || rc=$?
+expect "a failing run exits 2" "$rc" 2
+expect "the lock is gone after a failing run" "$([[ -e "$LOCK" ]] && echo held || echo free)" free
+
+start_holder git
+kill -TERM "$HOLDER"
+# The shell runs the trap once the foreground step ends, as after Ctrl-C.
+: >"$DL/release"
+rc=0
+wait "$HOLDER" || rc=$?
+expect "an interrupted run exits 143" "$rc" 143
+expect "the lock is gone after an interrupted run" "$([[ -e "$LOCK" ]] && echo held || echo free)" free
+
+# A run whose lock another run took over (it judged this one stale) must
+# leave the new holder's lock in place when it exits.
+sleep 120 &
+OTHER=$!
+start_holder git
+printf '%s\nci\n\n' "$OTHER" >"$LOCK/owner"
+: >"$DL/release"
+wait "$HOLDER" || true
+expect "a run leaves a lock it no longer owns in place" \
+    "$(head -n 1 "$LOCK/owner" 2>/dev/null || echo none)" "$OTHER"
+kill "$OTHER" 2>/dev/null || true
+wait "$OTHER" 2>/dev/null || true
+rm -rf "$LOCK"
+
+sh -c 'exit 0' &
+DEAD=$!
+wait "$DEAD" || true
+mkdir -p "$LOCK"
+printf '%s\nci\n\n' "$DEAD" >"$LOCK/owner"
+rc=0
+out="$(GATES_LOCK_WAIT_S=5 vrun git 2>&1)" || rc=$?
+expect "a stale lock is taken over: the run passes" "$rc" 0
+expect "the takeover is noted" \
+    "$(grep -c "taking over the stale gate lock of pid $DEAD (ci)" <<<"$out")" 1
+expect "the lock is gone after the run that took it over" \
+    "$([[ -e "$LOCK" ]] && echo held || echo free)" free
+
+# A run started from inside the holder (an accept block, a hook it runs)
+# must not wait on its own parent.
+DN="$WORKDIR/lock-nested"
+project "$DN" "{ \"hooks\": { \"verify-quality\": { \"orchestrator\": \"custom\", \"severity\": \"error\", \"custom_command\": \"sh $DN/nest.sh\" } } }"
+# shellcheck disable=SC2016  # script text, expanded when it runs
+{
+    echo '#!/bin/sh'
+    echo '[ -n "$INNER" ] && exit 0'
+    echo "INNER=1 CLAUDE_PROJECT_DIR='$DN' bash '$DN/.specify/gates/verify.sh' --boundary git"
+} >"$DN/nest.sh"
+rc=0
+out="$(GATES_LOCK_WAIT_S=2 CLAUDE_PROJECT_DIR="$DN" bash "$DN/.specify/gates/verify.sh" --boundary git 2>&1)" || rc=$?
+expect "a nested run does not wait on its parent's lock" \
+    "$rc:$(grep -c 'waiting for' <<<"$out" || true)" "0:0"
+expect "the nested run leaves the parent's lock to the parent" \
+    "$([[ -e "$DN/.specify/gates/.lock" ]] && echo held || echo free)" free
+
 # --- empty gate set does not crash under bash 3.2, and --json is well-formed ---
 echo ""
 echo "=== empty gate set (bash 3.2 regression) ==="

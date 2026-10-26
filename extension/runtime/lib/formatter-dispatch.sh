@@ -384,6 +384,9 @@ _gates_check_tool() { # <tool> <root>
 
     cd "$root" || return 1
 
+    # The output is kept so a failure can name its first finding (below).
+    local out
+    out="$(mktemp 2>/dev/null || mktemp -t gates-check)" || return 1
     local rc=0
     case "$tool" in
         prettier)
@@ -391,20 +394,58 @@ _gates_check_tool() { # <tool> <root>
             # explicitly named file it lists, so a tracked file someone
             # put in .gitignore passed unchecked (#199). Untracked ignored
             # files never reach this list; .prettierignore still applies.
-            "$bin" --check --ignore-path .prettierignore "${files[@]}" || rc=$?
+            "$bin" --check --ignore-path .prettierignore "${files[@]}" >"$out" 2>&1 || rc=$?
             ;;
         markdownlint)
             # --no-globs: markdownlint-cli2 UNIONS a config file's "globs"
             # with explicit file args, which would sweep in files the policy
             # excludes. The policy's file selection must be authoritative.
-            "$bin" --no-globs "${files[@]}" || rc=$?
+            "$bin" --no-globs "${files[@]}" >"$out" 2>&1 || rc=$?
             ;;
         shellcheck)
-            "$bin" "${files[@]}" || rc=$?
+            "$bin" "${files[@]}" >"$out" 2>&1 || rc=$?
             ;;
     esac
+    cat "$out"
+    if [[ "$rc" -ne 0 ]]; then
+        local finding
+        finding="$(_gates_first_finding "$tool" "$out")"
+        [[ -n "$finding" ]] && printf '##gates-fail## %s\n' "$finding"
+    fi
+    rm -f "$out"
     _gates_emit_meta "$tool" "$binname" "$count" "$count" "" "$bin"
     return "$rc"
+}
+
+# The first finding in a check tool's output, as one line, for verify.sh's
+# summary (#262): each tool opens with banner lines and closes with a
+# footer, so neither the first nor the last line names what failed.
+# ANSI escapes are dropped first: prettier colors "[warn]" whenever CI is
+# set (every GitHub Actions job), terminal or not. Empty when no line looks
+# like a finding.
+_gates_first_finding() { # <tool> <output-file>
+    local esc=$'\033'
+    case "$1" in
+        prettier)
+            # "[warn] a.md" or "[error] a.md: SyntaxError: ...", not the
+            # "Code style issues found ..." footer.
+            sed "s/${esc}\[[0-9;]*[A-Za-z]//g" "$2" | grep -E '^\[(warn|error)\] ' \
+                | grep -v 'Code style issues' | sed -n '1p' || true
+            ;;
+        markdownlint)
+            # "a.md:1:1 error MD018/... text"
+            sed "s/${esc}\[[0-9;]*[A-Za-z]//g" "$2" | grep -E '^[^[:space:]]+:[0-9]+(:[0-9]+)? ' \
+                | sed -n '1p' || true
+            ;;
+        shellcheck)
+            # "In b.sh line 2:" and the first "^-- SC2086 (info): ..." under it.
+            sed "s/${esc}\[[0-9;]*[A-Za-z]//g" "$2" | awk '
+                /^In .* line [0-9]+:$/ && loc == "" { loc = substr($0, 4, length($0) - 4) }
+                loc != "" && match($0, /SC[0-9]+ \(/) {
+                    print loc ": " substr($0, RSTART); exit
+                }' || true
+            ;;
+    esac
 }
 
 # CLI entrypoint (only when executed, not when sourced by the hooks).

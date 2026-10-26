@@ -584,6 +584,35 @@ Dispatch follows the policy's `verify-quality.orchestrator`:
 Exit codes: `0` green, `1` internal error, `2` gate failure. `--json`
 emits a single machine-readable object for workflow steps and CI.
 
+**A failing step names its own failure.** A failing or warning tool,
+task or custom step keeps the last 2000 bytes of its output as the
+gate's `detail`. The one-line text report reads the whole output: the
+last line that carries `##gates-fail## <text>` wins (the marker itself
+is stripped from the report and the `detail`, which keep the text).
+The file-linter gates mark their first finding that way (a prettier
+`[warn] <file>` line, a markdownlint `<file>:<line>` finding, shellcheck's
+`<file> line N: SC<code> ...`), since their output opens with banners and
+ends with a footer; without a marked line they show their first
+non-empty line. A task or custom step without one shows its last
+non-empty line, where such steps print their verdict.
+
+**One gate run per working tree.** Two runs in one tree see each
+other's writes (build output, test files) and fail each other, so a run
+holds `.specify/gates/.lock` (a directory, created with `mkdir`; it
+records the run's pid, boundary and start time, and `project.sh` lists
+it in `.specify/gates/.gitignore`). A second run at the agent boundary
+skips with `gates: skipped: the gate run of pid N (git) is in progress`
+and exit `0` (with `--json`, a `{"result":"skipped",...}` object), so
+the Stop hook never waits on a commit. At the git and CI boundaries (and
+without `--boundary`) it prints `gates: waiting for the gate run of pid
+N (<boundary>)` once and waits up to `GATES_LOCK_WAIT_S` seconds
+(default 600), then refuses with exit `1`, naming the holder. A lock
+whose process is gone is stale: the next run takes it over and says so.
+The lock is released on every exit, including an interrupt, and a run
+started from inside the holder (an accept block, a hook it triggers)
+finds the holder's pid in `GATES_LOCK_PID` and runs without the lock.
+`--dry-run` takes no lock.
+
 **An invalid policy runs no gate.** Before any gate, `verify.sh` validates
 the policy it enforces (`policy.json`, or `policy.effective.json` in a
 contract repo) with the same check as `policy.sh validate`: malformed
@@ -768,6 +797,11 @@ tool gates and before `parity`:
    process writes during the run; `cache/` names the directory and
    everything under it, like `cache/**`, and a pattern of only `*`, `?`
    and `/` (which would exempt everything) makes the policy invalid.
+   Writes inside a nested repository or worktree (a directory below the
+   root with its own `.git`, such as an agent's worktree under an ignored
+   `.claude/worktrees/`) are left out of the ignored-files check by
+   default; a nested repository that appears in the working tree during
+   a block still counts.
    Outside a git work tree there is nothing to check against, so blocks
    fail closed.
 

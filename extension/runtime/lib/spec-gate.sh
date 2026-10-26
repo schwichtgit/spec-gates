@@ -244,8 +244,20 @@ gates_spec_parse() { # <tasks-md> <outdir>
 # nested verify.sh appends its attestation), left out of the read-only
 # check together with the policy's spec.snapshot_exclude globs. A tracked
 # path is never exempt. gates_spec_gate sets GATES_SPEC_SNAPSHOT_EXCLUDE.
+# The gate lock (#263) is held by the run itself, not by a block.
 GATES_SPEC_SNAPSHOT_BUILTIN_EXCLUDE=".specify/gates/attestations.jsonl
-.specify/gates/.attestations.jsonl.*"
+.specify/gates/.attestations.jsonl.*
+.specify/gates/.lock/"
+
+# A directory below the root with its own .git (file or directory) is a
+# nested repository or worktree, such as an agent's worktree under
+# .claude/worktrees/. Other processes write there while a block runs, so
+# writes in it and everything under it stay out of the ignored-files
+# check (#263). A nested repository that appears in the working tree
+# during a block still counts: the block made it.
+gates_spec_nested_repo() { # <root> <path>
+    [[ -n "$2" && -e "$1/${2%/}/.git" ]]
+}
 
 gates_spec_excluded() { # <path>
     local g
@@ -474,6 +486,7 @@ gates_spec_snapshot() { # <root> <state-file>
         while IFS= read -r -d '' path; do
             path="${path%/}"
             gates_spec_excluded "$path" && continue
+            gates_spec_nested_repo "$root" "$path" && continue
             printf 'ign\t-\t%s\n' "$path"
         done <"$scratch"
     } >"$list.out" || return 1
@@ -514,14 +527,33 @@ gates_spec_ignored_writes() { # <root> <state> <marker>
         printf './%s\0' "$path"
     done <"$state" >"$state.roots"
     if [[ -s "$state.roots" ]]; then
+        # The same walk also prints each .git below a root (and does not
+        # descend into it): its parent is a nested repository, left out
+        # with everything under it (gates_spec_nested_repo).
         # shellcheck disable=SC2016  # expanded by the inner sh
-        (cd "$root" && xargs -0 sh -c 'find "$@" -cnewer "$0" -print0' "$marker" \
+        (cd "$root" && xargs -0 sh -c \
+            'find "$@" \( -name .git -prune -print0 \) -o \( -cnewer "$0" -print0 \)' "$marker" \
             <"$state.roots") >"$state.found" 2>/dev/null || true
+        local nested=() found=() n
         while IFS= read -r -d '' path; do
             path="${path#./}"
-            gates_spec_excluded "$path" && continue
-            printf 'ign\t%s\n' "$path"
+            if [[ "${path##*/}" == .git ]]; then
+                nested+=("${path%/.git}")
+            else
+                found+=("$path")
+            fi
         done <"$state.found"
+        if [[ ${#found[@]} -gt 0 ]]; then
+            for path in "${found[@]}"; do
+                gates_spec_excluded "$path" && continue
+                if [[ ${#nested[@]} -gt 0 ]]; then
+                    for n in "${nested[@]}"; do
+                        [[ "$path" == "$n" || "$path" == "$n"/* ]] && continue 2
+                    done
+                fi
+                printf 'ign\t%s\n' "$path"
+            done
+        fi
     fi
     rm -f "$state.roots" "$state.found"
 }
