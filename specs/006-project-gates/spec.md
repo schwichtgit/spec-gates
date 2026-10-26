@@ -223,8 +223,10 @@ confirm it warns as before.
 - **FR-015**: A policy without the new keys MUST behave exactly as before
   (same gates, same results, same output).
 - **FR-016**: The policy schema and the policy contract MUST cover the new
-  keys, so a baseline can pin them and a deviation (adding a skip, lowering a
-  severity, raising a time limit) is detected as weakening.
+  keys, so a baseline can pin them and a deviation that weakens enforcement
+  (removing a gate, adding a skip, lowering a severity) is detected as
+  weakening; other changes (a command, a time limit) are reported as
+  changed.
 - **FR-017**: A canary MUST prove that a failing project gate blocks, and that
   a gate declared to skip an earlier boundary still runs, and still blocks, at
   CI.
