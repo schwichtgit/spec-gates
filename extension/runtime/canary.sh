@@ -51,6 +51,9 @@ unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_PREFIX GIT_COMMON_DIR \
 #                                     -> verify.sh spec gate       (exit 2)
 #   contract -- tampered effective policy in a synced sandbox
 #                                     -> verify.sh contract gate   (exit 2)
+#   project -- failing project gate declared to skip the agent boundary
+#              blocks at ci, and is reported skipped at agent
+#                                     -> verify.sh project gates   (exit 2)
 #
 # Usage:
 #   canary.sh [--json] [--only <id>[,<id>...]]
@@ -79,7 +82,7 @@ done
 CANARY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 
-CANARY_SET="format markdown shell bash protect prhook bulk local secret credential protected branding pr spec errexit contract"
+CANARY_SET="format markdown shell bash protect prhook bulk local secret credential protected branding pr spec errexit contract project"
 
 if [[ -n "$ONLY" ]]; then
     IFS=',' read -r -a _only_ids <<<"$ONLY"
@@ -711,6 +714,32 @@ run_contract_canary() {
 }
 
 # ---------------------------------------------------------------------------
+# Project canary (feature 006, research R12): a project gate that always
+# fails, declared to skip the agent boundary. The sandboxed verify.sh must
+# fail at ci naming it (a declared skip never reaches CI, constitution
+# Principle III), and at agent report it skipped by declaration, not run.
+# The agent run clears GATES_POLICY_FILE, which applies at that boundary
+# (#196) and would replace the sandbox's policy.
+# ---------------------------------------------------------------------------
+run_project_canary() {
+    local d="$WORKDIR/project"
+    project_sandbox "$d" '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error", "gates": { "canary-fail": { "command": "exit 1", "severity": "error", "skip_at": ["agent"] } } } } }'
+    local rc=0 out agent
+    out="$(CLAUDE_PROJECT_DIR="$d" env -u GATES_SPEC_EXEC \
+        bash "$d/.specify/gates/verify.sh" --boundary ci 2>&1)" || rc=$?
+    agent="$(CLAUDE_PROJECT_DIR="$d" env -u GATES_SPEC_EXEC -u GATES_POLICY_FILE \
+        bash "$d/.specify/gates/verify.sh" --boundary agent --json 2>/dev/null \
+        | jq -r '.gates[]? | select(.name == "canary-fail") | "\(.status): \(.detail)"' 2>/dev/null)" || true
+    if [[ "$rc" -ne 2 ]] || ! grep -q '^  \[fail\] canary-fail' <<<"$out"; then
+        record project accepted "verify.sh exit $rc at ci on a failing project gate declared to skip agent -- the project gate did not block at ci" 1
+    elif [[ "$agent" != "skipped: skipped by declaration at agent" ]]; then
+        record project accepted "at agent the gate declared to skip it was reported as '${agent:-absent}', not skipped by declaration" 1
+    else
+        record project blocked "a failing project gate blocked at ci and was reported skipped by declaration at agent" 0
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # Run + report
 # ---------------------------------------------------------------------------
 for id in $CANARY_SET; do
@@ -732,6 +761,7 @@ for id in $CANARY_SET; do
         spec) run_spec_canary ;;
         errexit) run_errexit_canary ;;
         contract) run_contract_canary ;;
+        project) run_project_canary ;;
     esac
 done
 

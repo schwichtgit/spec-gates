@@ -260,6 +260,41 @@ cp "$REPO_ROOT/extension/runtime/lib/contract.sh" "$FIX/.specify/gates/lib/"
 expect "restored check -> contract canary green again (exit 0)" \
     "$(canary "$FIX" --only contract)" 0
 
+# --- FR-017 (006): the project canary catches a gate that never runs ---
+echo ""
+echo "=== project canary (feature 006) ==="
+expect "healthy fixture: project canary blocked (exit 0)" \
+    "$(canary "$FIX" --only project)" 0
+PJSON="$(CLAUDE_PROJECT_DIR="$FIX" bash "$FIX/.specify/gates/canary.sh" --json --only project)"
+expect "project canary reports status=blocked" \
+    "$(printf '%s' "$PJSON" | jq -r '.canaries[0].status')" blocked
+expect "an inherited GATES_POLICY_FILE does not empty the agent run" \
+    "$(GATES_POLICY_FILE="$WORKDIR/min-policy.json" canary "$FIX" --only project)" 0
+# A watchdog that never starts the command passes every project gate:
+# the failing gate no longer blocks at ci, an enforcement gap.
+cat >>"$FIX/.specify/gates/lib/watch.sh" <<'EOF'
+
+gates_run_watched() { return 0; }
+EOF
+RC_PRJ=0
+OUT_PRJ="$(CLAUDE_PROJECT_DIR="$FIX" bash "$FIX/.specify/gates/canary.sh" --only project 2>&1)" || RC_PRJ=$?
+expect "project gates that never run -> suite fails (exit 1)" "$RC_PRJ" 1
+expect "output names the project canary as ACCEPTED" \
+    "$(grep -c '^canary: project -- ACCEPTED' <<<"$OUT_PRJ" || true)" 1
+expect "and reports an enforcement gap" \
+    "$(grep -c 'FAILED .* 1 enforcement gap' <<<"$OUT_PRJ" || true)" 1
+cp "$REPO_ROOT/extension/runtime/lib/watch.sh" "$FIX/.specify/gates/lib/"
+expect "restored watchdog -> project canary green again (exit 0)" \
+    "$(canary "$FIX" --only project)" 0
+# Declarations ignored: the gate runs (and fails) at agent instead of being
+# reported skipped, which the canary must also refuse.
+printf '\ngates_declared_skip() { return 1; }\n' >>"$FIX/.specify/gates/lib/policy.sh"
+RC_PRJ=0
+OUT_PRJ="$(CLAUDE_PROJECT_DIR="$FIX" bash "$FIX/.specify/gates/canary.sh" --only project 2>&1)" || RC_PRJ=$?
+expect "declared skips not reported at agent -> suite fails (exit 1)" \
+    "$RC_PRJ:$(grep -c "^canary: project -- ACCEPTED.*reported as 'fail" <<<"$OUT_PRJ" || true)" "1:1"
+cp "$REPO_ROOT/extension/runtime/lib/policy.sh" "$FIX/.specify/gates/lib/"
+
 # --- skipped semantics: absent tool, and the policy-enabled gap rule ---
 echo ""
 echo "=== skipped vs enforcement-gap semantics ==="
