@@ -772,7 +772,30 @@ OUT="$(isoblock nested '  out="$(CLAUDE_PROJECT_DIR="$PWD" bash .specify/gates/v
   test -s .specify/gates/attestations.jsonl')"
 expect_contains "nested verify.sh inside a block passes" "$OUT" "EXIT=0"
 
-OUT="$(isoblock child '  (sleep 2; echo late >late.txt) &')"
+# The leftover children below record their pid when they start, live far
+# longer than the gate takes to stop them, then act. Each check waits for
+# the recorded pid to be gone (bounded) instead of a fixed time (#281): a
+# stopped child never acts, a child the gate missed acts before it exits.
+LATE="$WORKDIR/late.sh"
+# shellcheck disable=SC2016  # the script's own expansions
+printf '#!/bin/sh\necho $$ >"$1"\nshift\nsleep 30\n"$@"\n' >"$LATE"
+late_child_done() { # <pidfile>: wait until the child it names has exited
+    local n=0 pid
+    while [[ ! -s "$1" && $n -lt 50 ]]; do
+        sleep 0.1
+        n=$((n + 1))
+    done
+    # No pid file: the child was stopped before it could write one.
+    [[ -s "$1" ]] || return 0
+    pid="$(cat "$1")"
+    n=0
+    while kill -0 "$pid" 2>/dev/null && [[ $n -lt 600 ]]; do
+        sleep 0.1
+        n=$((n + 1))
+    done
+}
+
+OUT="$(isoblock child "  /bin/sh $LATE $WORKDIR/iso-child.pid touch late.txt &")"
 expect_contains "block leaving a child running blocks the run" "$OUT" "EXIT=2"
 expect_contains "leftover child is named" "$OUT" "left a process running"
 
@@ -780,22 +803,24 @@ expect_contains "leftover child is named" "$OUT" "left a process running"
 # (setsid after a fork) is found by the lease descriptor it inherited. The
 # system binaries are named by path: macOS hides their environment from ps,
 # so these pass only through the lease.
-OUT="$(isoblock setm '  /bin/bash -c "set -m; (/bin/sleep 2; git config core.hooksPath /dev/null) & disown"')"
+OUT="$(isoblock setm "  /bin/bash -c \"set -m; /bin/sh $LATE $WORKDIR/iso-setm.pid git config core.hooksPath /dev/null & disown\"")"
 expect_contains "block leaving a set -m child running blocks the run" "$OUT" "EXIT=2"
 expect_contains "detached child is named" "$OUT" "left a detached process running (stopped)"
-OUT="$(isoblock setsid '  perl -e "use POSIX; fork and exit; POSIX::setsid(); sleep 2; open(F, q(>late.txt))"')"
+OUT="$(isoblock setsid "  perl -e \"use POSIX; fork and exit; POSIX::setsid(); exec q(/bin/sh), q($LATE), q($WORKDIR/iso-setsid.pid), q(touch), q(late.txt)\"")"
 expect_contains "block leaving a setsid child running blocks the run" "$OUT" "EXIT=2"
 expect_contains "new-session child is named" "$OUT" "left a detached process running (stopped)"
 # A runtime that closes inherited descriptors (Node's spawn passes only
 # stdio) is found by the GATES_SPEC_BLOCK marker; on macOS a system shell
 # hides it, so this runs where /proc exposes every environment.
 if [[ -r /proc/self/environ ]]; then
-    OUT="$(isoblock nodespawn '  node -e "require(\"child_process\").spawn(\"sh\", [\"-c\", \"sleep 2; echo late >late.txt\"], { detached: true, stdio: \"ignore\" }).unref()"')"
+    OUT="$(isoblock nodespawn "  node -e \"require('child_process').spawn('sh', ['$LATE', '$WORKDIR/iso-nodespawn.pid', 'touch', 'late.txt'], { detached: true, stdio: 'ignore' }).unref()\"")"
     expect_contains "child without the lease descriptor is found by its marker" "$OUT" \
         "left a detached process running (stopped)"
 fi
 
-sleep 3
+for late_pid in child setm setsid nodespawn; do
+    late_child_done "$WORKDIR/iso-$late_pid.pid"
+done
 TOTAL=$((TOTAL + 1))
 if [[ ! -e "$WORKDIR/iso-child/late.txt" ]]; then
     echo "PASS: passing block's child is stopped, no late write"

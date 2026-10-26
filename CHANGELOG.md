@@ -85,6 +85,9 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   against a real pin that was not there. A shellcheck on PATH other than
   the wrapper now runs first, and the version attested is the one the
   binary that ran reports.
+- **Two spec-gate cleanup tests no longer race the machine's load**
+  (#281). They wait for the leftover child to exit instead of sleeping
+  a fixed time.
 
 ## 0.4.2 — 2026-10-25
 
