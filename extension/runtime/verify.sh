@@ -151,6 +151,16 @@ PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null 
 GATES_DIR="$PROJECT_ROOT/.specify/gates"
 POLICY_FILE="$GATES_DIR/policy.json"
 
+# A gate command runs with GATES_GATE_ROOT set to its project's root
+# (run_gate). A full run started from it on the same root would run that
+# gate again, and so on without end: every boundary would hang instead of
+# failing. Refuse it (fail closed). The walk runs no gate command, and runs
+# on other roots (sandboxes, fixtures) are not nested in themselves.
+if [[ "$WALK" != "1" && -n "${GATES_GATE_ROOT:-}" ]] \
+    && [[ "$(cd "$PROJECT_ROOT" 2>/dev/null && pwd -P)" == "$(cd "$GATES_GATE_ROOT" 2>/dev/null && pwd -P)" ]]; then
+    refuse "verify.sh called from inside a gate of the same project; a gate command must not run the full gate suite (use verify.sh --walk for the built-in walk)"
+fi
+
 if ! command -v jq >/dev/null 2>&1; then
     refuse "jq not found — cannot evaluate policy (run /speckit.gates.doctor)"
 fi
@@ -204,7 +214,8 @@ fi
 # a commit); at git, ci and without --boundary it waits up to
 # GATES_LOCK_WAIT_S seconds (default 600), then refuses (exit 1). A lock
 # whose process is gone is stale and taken over. A run started from
-# inside the holder (an accept block, a hook it triggers) finds its
+# inside the holder (an accept block, or verify.sh --walk from a gate
+# command; a full run from a gate command is refused above) finds its
 # holder's pid in GATES_LOCK_PID and runs without the lock. --dry-run
 # takes no lock.
 # ---------------------------------------------------------------------------
@@ -459,10 +470,10 @@ run_gate() { # name severity cmd...
     if [[ -n "$WATCH_S" ]]; then
         local here="$PWD"
         cd "$PROJECT_ROOT" || return 1
-        gates_run_watched "$WATCH_S" "/tmp/gates-out.$$" "$@" || rc=$?
+        GATES_GATE_ROOT="$PROJECT_ROOT" gates_run_watched "$WATCH_S" "/tmp/gates-out.$$" "$@" || rc=$?
         cd "$here" || true
     else
-        "$@" >/tmp/gates-out.$$ 2>&1 || rc=$?
+        GATES_GATE_ROOT="$PROJECT_ROOT" "$@" >/tmp/gates-out.$$ 2>&1 || rc=$?
     fi
     end="$(date +%s)"
 

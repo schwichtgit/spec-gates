@@ -444,15 +444,13 @@ expect "the takeover is noted" \
 expect "the lock is gone after the run that took it over" \
     "$([[ -e "$LOCK" ]] && echo held || echo free)" free
 
-# A run started from inside the holder (an accept block, a hook it runs)
-# must not wait on its own parent.
+# A run started from inside the holder (an accept block, verify.sh --walk
+# from a gate command) must not wait on its own parent.
 DN="$WORKDIR/lock-nested"
 project "$DN" "{ \"hooks\": { \"verify-quality\": { \"orchestrator\": \"custom\", \"severity\": \"error\", \"custom_command\": \"sh $DN/nest.sh\" } } }"
-# shellcheck disable=SC2016  # script text, expanded when it runs
 {
     echo '#!/bin/sh'
-    echo '[ -n "$INNER" ] && exit 0'
-    echo "INNER=1 CLAUDE_PROJECT_DIR='$DN' bash '$DN/.specify/gates/verify.sh' --boundary git"
+    echo "CLAUDE_PROJECT_DIR='$DN' bash '$DN/.specify/gates/verify.sh' --walk --boundary git"
 } >"$DN/nest.sh"
 rc=0
 out="$(GATES_LOCK_WAIT_S=2 CLAUDE_PROJECT_DIR="$DN" bash "$DN/.specify/gates/verify.sh" --boundary git 2>&1)" || rc=$?
@@ -460,6 +458,51 @@ expect "a nested run does not wait on its parent's lock" \
     "$rc:$(grep -c 'waiting for' <<<"$out" || true)" "0:0"
 expect "the nested run leaves the parent's lock to the parent" \
     "$([[ -e "$DN/.specify/gates/.lock" ]] && echo held || echo free)" free
+
+# A full run from a gate command on the same project would run that gate
+# again without end; it is refused (exit 1), so the gate fails within
+# seconds. A gate may still run verify.sh on another project.
+echo ""
+echo "=== a gate command running the full suite ==="
+DR="$WORKDIR/recurse"
+DR2="$WORKDIR/recurse-other"
+REC_MSG="verify.sh called from inside a gate of the same project; a gate command must not run the full gate suite (use verify.sh --walk for the built-in walk)"
+# The run is watched (lib/watch.sh, 60 s, process group stopped): without
+# the refusal it would recurse until stopped, so the case fails instead
+# of hanging the suite.
+recurse_run() { # <policy-json> [root]: sets REC_RC, REC_OUT and REC_S (seconds)
+    local t0 root="${2:-$DR}"
+    project "$DR" "$1"
+    t0="$(date +%s)"
+    REC_RC=0
+    (
+        # shellcheck source=../extension/runtime/lib/watch.sh disable=SC1091
+        source "$REPO_ROOT/extension/runtime/lib/watch.sh"
+        GATES_LOCK_WAIT_S=3 CLAUDE_PROJECT_DIR="$root" gates_run_watched 60 "$WORKDIR/recurse.out" \
+            bash "$root/.specify/gates/verify.sh" --boundary git
+    ) || REC_RC=$?
+    REC_OUT="$(cat "$WORKDIR/recurse.out")"
+    REC_S=$(($(date +%s) - t0))
+}
+recurse_run "{ \"hooks\": { \"verify-quality\": { \"orchestrator\": \"custom\", \"severity\": \"error\",
+    \"custom_command\": \"CLAUDE_PROJECT_DIR='$DR' bash '$DR/.specify/gates/verify.sh' --boundary git\" } } }"
+expect "custom calling the full suite: refused, the gate fails (exit 2)" \
+    "$REC_RC|$(grep -c "^  \[fail\] custom -- gates: $REC_MSG" <<<"$REC_OUT" || true)" "2|1"
+expect "custom calling the full suite: the run ends within 20 s" "$([[ $REC_S -le 20 ]] && echo yes || echo "no (${REC_S}s)")" yes
+# The outer run names the project through a symlink, the inner one by its
+# real path: the same directory, so it is refused too.
+ln -sfn "$DR" "$WORKDIR/recurse-link"
+recurse_run "{ \"hooks\": { \"verify-quality\": { \"orchestrator\": \"none\", \"severity\": \"error\",
+    \"gates\": { \"again\": { \"command\": \"CLAUDE_PROJECT_DIR='$DR' bash '$DR/.specify/gates/verify.sh' --boundary ci\", \"timeout_s\": 5 } } } } }" \
+    "$WORKDIR/recurse-link"
+expect "a project gate calling the full suite: refused, the gate fails (exit 2)" \
+    "$REC_RC|$(grep -c "^  \[fail\] again -- gates: $REC_MSG" <<<"$REC_OUT" || true)" "2|1"
+expect "a project gate calling the full suite: the run ends within 20 s" "$([[ $REC_S -le 20 ]] && echo yes || echo "no (${REC_S}s)")" yes
+project "$DR2" '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } } }'
+recurse_run "{ \"hooks\": { \"verify-quality\": { \"orchestrator\": \"none\", \"severity\": \"error\",
+    \"gates\": { \"other\": { \"command\": \"CLAUDE_PROJECT_DIR='$DR2' bash '$DR2/.specify/gates/verify.sh' --boundary ci\", \"timeout_s\": 60 } } } } }"
+expect "a gate running verify.sh on another project passes" \
+    "$(grep -c '^  \[pass\] other$' <<<"$REC_OUT" || true)" 1
 
 # The agent-boundary skip names what it defers (FR-019, constitution
 # Principle III). A fake holder: a live process written into the owner file.
