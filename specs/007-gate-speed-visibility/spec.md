@@ -177,10 +177,12 @@ terminal shows progress lines while the gate runs.
   as any other write would be.
 - The covering script vouches for a block of a feature that is not Complete:
   incomplete features' blocks run only on request (`--accept`) and are
-  informational; the script is consulted there too, and the report says so.
+  informational; the script is consulted there too, and the report shows the
+  block as `covered (informational)`, recording nothing as enforced.
 - A Complete feature with every block covered: the feature's outcome is
-  passed with all blocks covered, reported distinctly from "passed with all
-  blocks run".
+  passed, as when its blocks run; it is told apart by its covered count
+  equalling its block count, and the spec gate's summary names each covered
+  block.
 - The gate lock defers an agent run: deferred blocks are named as part of
   the deferred spec gate, as feature 006 already does for gates.
 - The timeline or progress file cannot be written (a read-only directory):
@@ -212,10 +214,12 @@ terminal shows progress lines while the gate runs.
   covering script can never fail a block.
 - **FR-004**: A covered block MUST NOT run, MUST NOT count as passed or
   failed, and MUST be reported by name with its reason in the text report,
-  the machine-readable output and the attestation, using feature 006's
-  declared-skip mechanism and shape.
-- **FR-005**: At the CI boundary, and at any boundary the declaration does
-  not name, the covering script MUST NOT be run and every block MUST run.
+  in the spec gate's summary (so the machine-readable output names it too)
+  and in the attestation, using feature 006's declared-skip mechanism and
+  shape.
+- **FR-005**: At the CI boundary, at any boundary the declaration does not
+  name, and in a run without a boundary, the covering script MUST NOT be run
+  and every block MUST run.
 - **FR-006**: The declared covering script MUST be protected at every
   boundary like the policy file: a commit or pull request changing it needs
   a protected-change declaration and an approver, and the agent boundary
@@ -234,7 +238,9 @@ terminal shows progress lines while the gate runs.
   timeout, covered) and duration in seconds.
 - **FR-012**: When the run is given a timeline file, the gate MUST append
   one tab-separated line per gate and per accept block as each ends: name,
-  boundary, start and end (epoch seconds), result, reason.
+  boundary, start and end (epoch seconds), result, reason. A block's name
+  identifies it uniquely within the run, also when one task holds several
+  blocks.
 - **FR-013**: When the run is given a progress file, the gate MUST append
   one line as each gate and accept block starts and as each ends.
 - **FR-014**: The pre-commit hook MUST show progress lines on the terminal
@@ -243,7 +249,9 @@ terminal shows progress lines while the gate runs.
 - **FR-015**: Timeline and progress lines MUST carry names, boundaries,
   times, results and fixed reasons only, never command or block output.
 - **FR-016**: A timeline or progress file that cannot be written MUST NOT
-  change any gate outcome; the run warns once.
+  change any gate outcome; the run warns once. Only the run the files were
+  given to writes them: commands it starts (gates, accept blocks, nested
+  runs on other directories) MUST NOT write to them.
 - **FR-017**: Without a covering script declared, a timeline or progress
   file named, or a terminal at pre-commit, every run MUST behave and print
   exactly as before.
@@ -288,7 +296,7 @@ terminal shows progress lines while the gate runs.
 - **SC-005**: With a timeline file named, a CI log can show one section per
   gate and per block with its duration, written as each ends.
 - **SC-006**: A developer committing from a terminal sees the name of the
-  gate or block that is running within 2 seconds of its start.
+  gate or block that is running before any of its own work starts.
 - **SC-007**: Every existing policy, with no new keys and no files named,
   produces the same report and exit code as before.
 

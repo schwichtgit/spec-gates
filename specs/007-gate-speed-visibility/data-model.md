@@ -19,6 +19,7 @@ The `script` path is protected at every boundary (R4).
 | Field           | Type                                             | Notes                                      |
 | --------------- | ------------------------------------------------ | ------------------------------------------ |
 | `task`          | string                                           | `T###` from the task line, or `-`          |
+| `ordinal`       | integer, 1 or more                               | position among its task's accept blocks    |
 | `verifies`      | string or null                                   | the block's `# verifies:` label            |
 | `result`        | `pass`, `fail`, `timeout`, `mutation`, `covered` |                                            |
 | `reason`        | string                                           | fixed runtime string, or the script's line |
@@ -42,7 +43,7 @@ At `ci` the left branch always applies.
 ## Timeline line
 
 `<name>\t<boundary>\t<start>\t<end>\t<result>\t<reason>`; one per ended gate
-or block. Block names: `accept <feature> <task-id>`.
+or block. Block names: `accept <feature> <task-id>#<n>` (R14).
 
 ## Progress line
 

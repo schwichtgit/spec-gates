@@ -55,7 +55,9 @@ Decisions for [plan.md](plan.md), grounded in the runtime at `655eb08`
   script's line as reason, and `declared_skip: "<boundary>"`, the same field
   name and value set as a skipped gate. The text report shows
   `spec: <feature>: "<label>" -- covered: <reason>`, and the spec gate's
-  summary counts covered blocks apart from passed ones.
+  summary counts covered blocks apart from passed ones and names each
+  (`covered at git: <feature> <task-id>#<n>, ...`), so a `--json` run names
+  them too (Principle III).
 - **Rationale**: FR-004 and the 006 design (FR-009 there): one decision
   function and one attestation field for "not run by declaration at
   boundary X", whatever the item.
@@ -92,7 +94,7 @@ Decisions for [plan.md](plan.md), grounded in the runtime at `655eb08`
 
 - **Decision**: the parity gate fails at `ci` (under `attestation.parity`
   severity) when any block entry has result `covered`, with reason
-  `accept blocks covered at ci: <feature> <task-id>, ...`. Covering never
+  `accept blocks covered at ci: <feature> <task-id>#<n>, ...`. Covering never
   runs at `ci` by construction (R1, R3), so this only fires if that
   construction breaks.
 - **Rationale**: FR-009; Principle III ("parity MUST be verified, not
@@ -117,7 +119,7 @@ Decisions for [plan.md](plan.md), grounded in the runtime at `655eb08`
   block appends one line as it ends:
   `<name>\t<boundary>\t<start>\t<end>\t<result>\t<reason>` (epoch seconds;
   tabs and newlines in the reason replaced by spaces). Block names are
-  `accept <feature> <task-id>`. The line is written with a single `printf`
+  `accept <feature> <task-id>#<n>` (R14). The line is written with a single `printf`
   append so a reader never sees half a line.
 - **Rationale**: FR-012, the downstream request verbatim. A CI step can turn
   the file into GitLab section markers or GitHub groups; the docs give a
@@ -172,3 +174,27 @@ run`). No gate outcome changes (FR-016), as with the attestation today.
   attestation entries are additive fields inside the existing `spec`
   object, and the text report gains no lines.
 - **Rationale**: FR-017, SC-007.
+
+## R14. Block identity
+
+- **Decision**: a block is `<feature> <task-id>#<n>`, where `<n>` is its
+  position (from 1) among the accept blocks of its task. Timeline and
+  progress names are `accept <feature> <task-id>#<n>`, the parity message
+  and the summary use the same form, and the attestation entry carries
+  `ordinal: <n>`. The covering script's interface is unchanged: the block
+  file already tells blocks of one task apart.
+- **Rationale**: a task can hold several accept blocks (feature 006's T014
+  has two), so `<task-id>` alone is not unique. Found by `/speckit-analyze`
+  (H1).
+
+## R15. Timeline and progress belong to one run
+
+- **Decision**: `verify.sh` reads `GATES_TIMELINE` and `GATES_PROGRESS` once
+  at startup into internal variables and unsets both for every command it
+  starts (gate commands, accept blocks, the covering script). A nested run
+  writes timeline or progress lines only when its caller sets the
+  variables for it explicitly.
+- **Rationale**: accept blocks and canaries run nested `verify.sh` on
+  fixtures and sandboxes; inherited variables would mix their lines into the
+  parent's timeline and, under pre-commit's `/dev/stderr`, into block
+  output. Found by `/speckit-analyze` (H2).
