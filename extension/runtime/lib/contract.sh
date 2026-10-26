@@ -74,9 +74,20 @@ gates_contract_merge() { # <snapshot> <overlay>
 # are not deviations. Keys starting with "_" (_comment) are annotations,
 # never enforcement, and are not compared.
 #
+# Project gates (feature 006, contracts/policy-gates.md): a baseline gate
+# under hooks.verify-quality.gates that the effective side drops is ONE
+# weakened deviation marked "removed", like a hook; a gate's skip_at
+# classifies like exclude (gaining a boundary is weakened, losing one
+# strengthened; absent is none); a gate's severity (default error) and
+# test_severity (default warning) use the severity rank; command,
+# timeout_s and gate_timeout_s are "changed". Since these keys are often
+# absent from the baseline, the effective side's skip_at, severity,
+# timeout_s, test_severity and gate_timeout_s of baseline gates are
+# compared too, not only the baseline's leaves.
+#
 # With mode "delta" (sync --update: old baseline vs new baseline) the
-# strengthenings are reported too, and a hook the new side adds is ONE
-# strengthened line marked "added": an update review needs every change.
+# strengthenings are reported too, and a hook or gate the new side adds is
+# ONE strengthened line marked "added": an update review needs every change.
 #
 # Output: one TSV line per deviation:
 #   <class>\t<dot.path>\t<baseline-value>\t<effective-value>\t<path-as-json-array>\t<summary>\t<removed|added|>
@@ -99,6 +110,17 @@ gates_contract_deviations() { # <snapshot> <effective> [delta]
         def hook_names: (.hooks // {}) | if type == "object" then
             [ to_entries[] | select(.value | type == "object") | select(.key | startswith("_") | not)
               | .key ] else [] end;
+        def gate_names: (try .hooks["verify-quality"].gates catch null) // {}
+            | if type == "object" then
+                [ to_entries[] | select(.value | type == "object") | select(.key | startswith("_") | not)
+                  | .key ] else [] end;
+        def is_gate_field($p): ($p | length) == 5 and $p[0] == "hooks" and $p[1] == "verify-quality"
+            and $p[2] == "gates";
+        def sev_default($p):
+            if is_gate_field($p) and $p[4] == "severity" then "error"
+            elif $p == ["hooks", "verify-quality", "test_severity"] then "warning"
+            else null end;
+        def sev_leaf: . == "severity" or . == "parity" or . == "test_severity";
         def summary($leaf; $bv; $ev):
             def plain: type == "boolean" or type == "number" or type == "null";
             if ($bv | type) == "array" and ($ev | type) == "array" then
@@ -108,7 +130,7 @@ gates_contract_deviations() { # <snapshot> <effective> [delta]
             elif ($ev | type) == "array" and $bv == null then "set (\($ev | length) entries)"
             elif ($bv | type) == "array" and $ev == null then "unset (was \($bv | length) entries)"
             elif (($bv | plain) and ($ev | plain))
-                 or (($leaf == "severity" or $leaf == "parity")
+                 or (($leaf | sev_leaf)
                      and (sev_rank[$bv|tostring] != null) and (sev_rank[$ev|tostring] != null)) then
                 "\($bv | tojson) -> \($ev | tojson)"
             elif $bv == null then "set"
@@ -116,7 +138,8 @@ gates_contract_deviations() { # <snapshot> <effective> [delta]
             else "value changed" end;
         def row($c; $p; $bv; $ev; $kind):
             [ $c, ($p | map(tostring) | join(".")), ($bv | tojson), ($ev | tojson), ($p | tojson),
-              (if $kind == "" then summary($p | last | tostring; $bv; $ev) else "hook \($kind)" end),
+              (if $kind == "" then summary($p | last | tostring; $bv; $ev)
+               elif ($p | length) == 4 then "gate \($kind)" else "hook \($kind)" end),
               $kind ]
             | join("\t");
         ($b[0] | del(.extends)) as $base
@@ -125,28 +148,58 @@ gates_contract_deviations() { # <snapshot> <effective> [delta]
         | ($eff | hook_names) as $eh
         | [ $bh[] | select(IN($eh[]) | not) ] as $removed
         | [ $eh[] | select(IN($bh[]) | not) ] as $added
+        # Gate rows only when the verify-quality hook itself is on both sides
+        # (a removed or added hook is already its one line).
+        | (if "verify-quality" | IN(($removed + $added)[]) then [] else ($base | gate_names) end) as $bg
+        | (if "verify-quality" | IN(($removed + $added)[]) then [] else ($eff | gate_names) end) as $eg
+        | [ $bg[] | select(IN($eg[]) | not) ] as $gremoved
+        | [ $eg[] | select(IN($bg[]) | not) ] as $gadded
         | ( $removed[] | row("weakened"; ["hooks", .]; $base.hooks[.]; null; "removed") ),
           ( if $mode == "delta" then
               $added[] | row("strengthened"; ["hooks", .]; null; $eff.hooks[.]; "added")
             else empty end ),
-          ( ( ($base | leaves) + (if $mode == "delta" then ($eff | leaves) else [] end) )
+          ( $gremoved[]
+            | row("weakened"; ["hooks", "verify-quality", "gates", .];
+                  $base.hooks["verify-quality"].gates[.]; null; "removed") ),
+          ( if $mode == "delta" then
+              $gadded[]
+              | row("strengthened"; ["hooks", "verify-quality", "gates", .];
+                    null; $eff.hooks["verify-quality"].gates[.]; "added")
+            else empty end ),
+          ( ( ($base | leaves)
+              + (if $mode == "delta" then ($eff | leaves)
+                 else [ $eff | leaves | .[]
+                        | select((. == ["hooks", "verify-quality", "test_severity"])
+                                 or (. == ["hooks", "verify-quality", "gate_timeout_s"])
+                                 or (is_gate_field(.) and (.[3] | IN($bg[])))) ] end) )
             | unique[]
             | . as $p
             | select(($p[0] == "hooks" and (($p[1] // "") | IN(($removed + $added)[])))
-                     or ($p == ["hooks"]) | not)
+                     or ($p == ["hooks"])
+                     or (($p | length) >= 4 and $p[0:3] == ["hooks", "verify-quality", "gates"]
+                         and ($p[3] | IN(($gremoved + $gadded)[]))) | not)
             | ($base | try getpath($p) catch null) as $bv
             | ($eff | try getpath($p) catch null) as $ev
             | select($bv != $ev)
             | ($p | last | tostring) as $leaf
+            | ($bv // sev_default($p)) as $bs
+            | ($ev // sev_default($p)) as $es
             | ( if ($leaf == "enabled"
                     or ($p | length) == 2 and $p[0] == "git" and ($leaf | IN(git_toggles[])))
                    and ($bv | type) == "boolean" and ($ev | type) == "boolean" then
                   (if $bv then "weakened" else "strengthened" end)
-                elif ($leaf == "severity" or $leaf == "parity")
-                     and (sev_rank[$bv|tostring] != null) and (sev_rank[$ev|tostring] != null) then
-                  ( if sev_rank[$ev|tostring] > sev_rank[$bv|tostring] then "weakened"
-                    elif sev_rank[$ev|tostring] < sev_rank[$bv|tostring] then "strengthened"
+                elif ($leaf | sev_leaf)
+                     and (sev_rank[$bs|tostring] != null) and (sev_rank[$es|tostring] != null) then
+                  ( if sev_rank[$es|tostring] > sev_rank[$bs|tostring] then "weakened"
+                    elif sev_rank[$es|tostring] < sev_rank[$bs|tostring] then "strengthened"
                     else "changed" end )
+                elif is_gate_field($p) and $leaf == "skip_at"
+                     and (($bv // []) | type) == "array" and (($ev // []) | type) == "array" then
+                  ( (($ev // []) - ($bv // []) | length) as $gained
+                    | (($bv // []) - ($ev // []) | length) as $lost
+                    | if $gained > 0 and $lost == 0 then "weakened"
+                      elif $lost > 0 and $gained == 0 then "strengthened"
+                      else "changed" end )
                 elif ($leaf == "include" or $leaf == "exclude")
                      and ($bv | type) == "array" and ($ev | type) == "array" then
                   ( ($ev - $bv | length) as $gained | ($bv - $ev | length) as $lost
@@ -204,12 +257,19 @@ gates_contract_validate_overlay() { # <overlay>
         return 4
     fi
     tmp="$(mktemp 2>/dev/null || mktemp -t gates-overlay)" || return 1
-    # Fill what only the merge supplies, then validate the values.
+    # Fill what only the merge supplies, then validate the values. A project
+    # gate may restate only what it changes (a skip_at on a baseline gate,
+    # feature 006), so its command is filled too.
     jq '.hooks = ((.hooks // {}) | with_entries(
             if (.value | type) == "object" then
                 .value |= ((if has("severity") then . else . + { severity: "error" } end)
                     | if .orchestrator == "custom" and (has("custom_command") | not)
-                      then . + { custom_command: "-" } else . end)
+                      then . + { custom_command: "-" } else . end
+                    | if (.gates | type) == "object" then
+                        .gates |= with_entries(
+                            if (.value | type) == "object" and (.value | has("command") | not)
+                            then .value += { command: "-" } else . end)
+                      else . end)
             else . end))' "$overlay" >"$tmp" 2>/dev/null || {
         rm -f "$tmp"
         return 3

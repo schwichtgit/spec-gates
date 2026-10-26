@@ -349,6 +349,29 @@ else
             | select(. == "on_missing_runner" or . == "on_missing_tests")
             | "\($k).\(.)"' "$PROJECT_ROOT/.specify/gates/policy.json" 2>/dev/null || true)
     fi
+    # Project gates (feature 006, research R9): each with its severity, time
+    # limit and the boundaries it skips by declaration, so every skip is
+    # visible outside a run. CI never skips one (constitution, Principle III).
+    if declare -f gates_project_gate_names >/dev/null 2>&1; then
+        PG_LIST="$(gates_project_gate_names)"
+        if [[ -n "$PG_LIST" ]]; then
+            echo "Project gates:"
+            PG_DEFAULT_S="$(gates_policy_get "verify-quality" "gate_timeout_s")"
+            [[ -n "$PG_DEFAULT_S" ]] || PG_DEFAULT_S=600
+            while IFS= read -r pg; do
+                [[ -n "$pg" ]] || continue
+                pg_sev="$(gates_project_gate_get "$pg" severity)"
+                [[ -n "$pg_sev" ]] || pg_sev="error"
+                pg_s="$(gates_project_gate_get "$pg" timeout_s)"
+                [[ -n "$pg_s" ]] || pg_s="$PG_DEFAULT_S"
+                pg_skip="$(gates_project_gate_skip_at "$pg")"
+                pg_where="runs at every boundary"
+                [[ -n "$pg_skip" ]] \
+                    && pg_where="skipped by declaration at $(jq -r 'join(", ")' <<<"$pg_skip" 2>/dev/null)"
+                echo "${OK}gate $pg ($pg_sev, ${pg_s}s): $pg_where"
+            done <<<"$PG_LIST"
+        fi
+    fi
 fi
 
 # Runtime projection vs installed extension (issue #33): after an extension

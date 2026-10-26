@@ -1433,6 +1433,26 @@ else
     echo "SKIP: this git ignores GIT_TEST_ASSUME_DIFFERENT_OWNER"
 fi
 fx_cleanup "$DDB"
+
+echo ""
+echo "=== project gates are listed with their declared skips (feature 006) ==="
+DPG="$WORKDIR/project-gates"
+project "$DPG" '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error", "gate_timeout_s": 900,
+    "gates": { "lint": { "command": "true" },
+               "build": { "command": "true", "skip_at": ["agent"] },
+               "manifest": { "command": "true", "severity": "warning", "timeout_s": 30, "skip_at": ["agent", "git"] } } } } }' no
+run_doctor "$DPG" >/dev/null
+has "a gate without skip_at runs at every boundary" "$DPG" "  [ok]  gate lint (error, 900s): runs at every boundary"
+has "a gate with skip_at names the boundary" "$DPG" "  [ok]  gate build (error, 900s): skipped by declaration at agent"
+has "severity, timeout_s and every skipped boundary" "$DPG" "  [ok]  gate manifest (warning, 30s): skipped by declaration at agent, git"
+DPN="$WORKDIR/project-gates-none"
+project "$DPN" '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error",
+    "gates": { "lint": { "command": "true" } } } } }' no
+run_doctor "$DPN" >/dev/null
+has "the default limit is 600s" "$DPN" "  [ok]  gate lint (error, 600s): runs at every boundary"
+project "$DPN" '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } } }' no
+run_doctor "$DPN" >/dev/null
+lacks "a policy without gates lists none" "$DPN" "Project gates:"
 echo ""
 [[ "$SKIPPED" -gt 0 ]] && echo "$SKIPPED healthy-fixture case(s) skipped: this host lacks tools doctor requires."
 echo "$PASS of $TOTAL tests passed."
