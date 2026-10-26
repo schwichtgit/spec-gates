@@ -8,7 +8,28 @@ never touches `.specify/gates/policy.json`. New policy keys take the
 defaults stated here until you set them. Releases before 0.3.3 are
 described in their [GitHub release notes](https://github.com/schwichtgit/spec-gates/releases).
 
-## [Unreleased]
+## 0.4.2 — 2026-10-25
+
+### Upgrading
+
+- Upgrade as for 0.4.1 (README "Upgrade"): one `project.sh` run, then
+  commit `.specify/gates/.projected.sha256` with the upgrade. In a script
+  or an agent session, pipe `yes` into `specify extension add`, which
+  otherwise aborts at its source prompt (#248).
+- `project.sh` adds `.lock/` to `.specify/gates/.gitignore` (#263), so
+  `project.sh --check` reports pending work until you re-project.
+- Gate runs in one working tree no longer overlap (#263). A Stop-hook
+  (agent boundary) run that finds another run in progress skips with
+  exit 0, and `--json` prints a `skipped` result; a git or CI run waits
+  up to `GATES_LOCK_WAIT_S` seconds (default 600), then fails naming the
+  holder.
+- The one-line summary of a failing gate changed (#262): it names the
+  failing line, or a step's `##gates-fail##` line. Scripts that matched
+  the old summary text may need adjusting; the `--json` detail is
+  unchanged apart from dropping that marker.
+- GitHub pipelines: merge the template's `GATES_PR_BODY` line into your
+  pr step so Dependabot and Renovate PRs pass (#248). GitLab draft MRs
+  pass without a pipeline change (#261).
 
 ### Fixed
 
