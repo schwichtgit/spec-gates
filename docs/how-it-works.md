@@ -566,6 +566,8 @@ stage('PR check') {
 
 `verify.sh --boundary agent|git|ci [--json] [--dry-run]`
 
+`verify.sh --walk [--boundary agent|git|ci] [--json] [--dry-run]`
+
 Dispatch follows the policy's `verify-quality.orchestrator`:
 
 - `none`: per-tool walk (prettier, markdownlint, shellcheck) driven by the
@@ -575,11 +577,92 @@ Dispatch follows the policy's `verify-quality.orchestrator`:
   checked even when an ignore pattern matches it (prettier runs with
   `--ignore-path .prettierignore`, so `.gitignore` never hides a tracked
   file from it, while `.prettierignore` still applies).
-- `task`: `task lint` (error class) and `task test` (warning class), the
-  fixed Taskfile convention. `policy-infer` seeds it when a Taskfile
-  declares top-level `lint` and `test` targets.
-- `custom`: a policy-supplied command, its exit code mapped through the
-  hook's severity.
+- `task`: `task lint` (error class) and `task test` (warning class, or
+  the class `test_severity` names: `"test_severity": "error"` makes a
+  failing `task test` fail the run), the fixed Taskfile convention.
+  `policy-infer` seeds it when a Taskfile declares top-level `lint` and
+  `test` targets.
+- `custom`: a policy-supplied command, run from the project root, its
+  exit code mapped through the hook's severity. Since 0.5.0 it runs from
+  the project root whatever directory `verify.sh` was started from; a
+  command that relied on the caller's directory changes directory
+  itself.
+
+Every gate command can read the boundary it runs at from
+`GATES_BOUNDARY` (`agent`, `git`, `ci`, or `none` for a run without
+`--boundary`).
+
+**Project gates.** A project declares its own checks next to whatever
+the orchestrator runs, under `hooks.verify-quality.gates`, an object
+keyed by gate name:
+
+```json
+"verify-quality": {
+  "orchestrator": "none",
+  "severity": "error",
+  "gate_timeout_s": 900,
+  "gates": {
+    "lint": { "command": "npm run -s lint" },
+    "typecheck": { "command": "npm run -s typecheck" },
+    "test": { "command": "npm test -- --coverage", "timeout_s": 1200 },
+    "build": { "command": "npm run -s build", "skip_at": ["agent"] }
+  }
+}
+```
+
+They run after the orchestrator's gates, in key order, each as
+`sh -c "<command>"` from the project root, and each is its own gate in
+the text report, `--json` and the attestation. `severity` (`error`,
+`warning`, `info`; default `error`) maps a non-zero exit as for any
+gate, and the failure summary follows the rules below. Each runs under a
+time limit: its `timeout_s`, else `gate_timeout_s`, else 600 seconds. A
+gate over its limit fails with `timeout after <n>s at load <x>`, and its
+process group is stopped (TERM, a two-second grace, KILL); a process
+that leaves the group (a new session, a double fork) is not tracked. A
+command that cannot start (exit 126 or 127) fails with `command not
+found or not executable`. Project gates are not read-only by contract,
+unlike accept blocks: a gate may write files (a coverage report, a
+build), and what it writes is the project's to manage.
+
+Gate names match `^[a-z0-9][a-z0-9_-]{0,39}$` and may not take a
+built-in name (`prettier`, `markdownlint`, `shellcheck`, `task-lint`,
+`task-test`, `custom`, `spec`, `contract`, `parity`, `policy`, `lock`,
+`constitution`). An older runtime refuses the new keys rather than
+dropping the gates.
+
+**Declared skips, never at CI.** `skip_at` keeps a slow or
+network-bound gate out of an earlier boundary: `["agent"]` keeps it out
+of the Stop hook, `["agent", "git"]` out of pre-commit too. CI cannot
+be named: `skip_at: ["ci"]` is refused like any invalid policy (exit
+`1`), because CI runs the full policy (constitution, Principle III). A
+skipped gate starts no process and is reported by name, never as
+passed: `[skipped] build -- skipped by declaration at agent` in the
+report and `--json`, and `"result": "skipped", "declared_skip": "agent"`
+in the attestation. The parity gate proves it: at CI every declared gate
+must have run, and at an earlier boundary every declared gate that did
+not run must carry a declaration naming that boundary; otherwise parity
+fails with `declared gates not run at <boundary>: <names>`. Doctor lists
+each gate with its severity, time limit and skips.
+
+**The built-in walk on its own.** `verify.sh --walk` runs only the
+built-in per-tool walk (prettier, markdownlint, shellcheck, as the
+policy enables them), whatever the orchestrator: no contract, project,
+spec or parity gate, and no attestation line. It is the stable way for a
+custom command to include the built-in checks; doctor recommends it
+when a `custom_command` or a project gate calls `lib/formatter-dispatch.sh`
+directly. Inside a gate run it joins that run's lock and prints one
+`##gates-fail##` line for its first failure, so the calling gate's
+summary names the failing file. A walk started from inside a walk
+refuses (exit `1`): the walk never runs the orchestrator, so a
+`custom_command` that calls it cannot recurse.
+
+**A gate cannot run the suite it belongs to.** Each gate command runs
+with `GATES_GATE_ROOT` set to the project root, and a full (not
+`--walk`) `verify.sh` run on that same root refuses with exit `1`, so
+the calling gate fails instead of recursing. Runs against other
+directories (a sandbox, a fixture) are unaffected. A gate that runs
+`git commit` in its own project, and so triggers the pre-commit gate
+run, is refused the same way.
 
 Exit codes: `0` green, `1` internal error, `2` gate failure. `--json`
 emits a single machine-readable object for workflow steps and CI.
@@ -602,8 +685,13 @@ holds `.specify/gates/.lock` (a directory, created with `mkdir`; it
 records the run's pid, boundary and start time, and `project.sh` lists
 it in `.specify/gates/.gitignore`). A second run at the agent boundary
 skips with `gates: skipped: the gate run of pid N (git) is in progress`
-and exit `0` (with `--json`, a `{"result":"skipped",...}` object), so
-the Stop hook never waits on a commit. At the git and CI boundaries (and
+and exit `0`, so the Stop hook never waits on a commit. It names what it
+does not run: `deferred: <gates>` (the gates it would have run) and the
+gates its policy skips at the agent boundary by declaration; with
+`--json`, a `{"result":"skipped",...}` object with `"deferred": [...]`
+(`null` when the policy cannot be read at that point) and
+`"declared_skip": [...]`. Principle III
+requires every gate a boundary does not run to be named. At the git and CI boundaries (and
 without `--boundary`) it prints `gates: waiting for the gate run of pid
 N (<boundary>)` once and waits up to `GATES_LOCK_WAIT_S` seconds
 (default 600), then refuses with exit `1`, naming the holder. A lock

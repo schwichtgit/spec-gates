@@ -98,6 +98,11 @@ A gate with `skip_at: ["agent"]` would not have run, so it is not in
 <names>` and under `--json` as `"declared_skip": ["<names>"]`, so every gate
 the run does not run is named (constitution, Principle III).
 
+When the policy cannot be read at that point (it changed under the run),
+the text says `deferred: all gates (policy not read)` and `--json` gives
+`"deferred": null`. `deferred` lists gates in run order (`contract`
+first when the policy extends a baseline).
+
 ## Exit codes
 
 Unchanged (feature 001 CLI contract): 0 every gate green (warnings

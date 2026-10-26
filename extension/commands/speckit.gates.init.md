@@ -57,6 +57,12 @@ files must survive the extension being removed.
   by section (one hook entry at a time: include globs, exclude globs,
   orchestrator, severity). Apply requested edits. This is a conversation,
   not a dump — the user must understand what will be enforced.
+- Ask whether the project has its own checks to run as gates (lint, type
+  check, tests with a coverage floor, a manifest validator). The seed
+  infers none. For each, add an entry under
+  `hooks.verify-quality.gates` (`"<name>": { "command": "..." }`, plus
+  `timeout_s` for a long one), and ask whether it is slow or needs the
+  network; if so, offer `"skip_at": ["agent"]` (CI always runs it).
 - Offer the settings the seed leaves at their defaults, one question each:
   `git.block_bulk_staging` (refuse `git add`/`git stage` with `-A`,
   `--all`, `--no-ignore-removal`, `--pathspec-from-file`, `.`, `:/` and

@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-25
 
-**Status**: Draft
+**Status**: Complete
 
 **Input**: User description: "Project quality gates alongside the built-in
 walk, selectable per boundary (GitHub issue #243; constitution v1.1.0
