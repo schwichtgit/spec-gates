@@ -191,14 +191,14 @@ warning.
 
 **Independent Test**: quickstart section 7.
 
-- [ ] T029 [US4] In `extension/runtime/verify.sh`, read `hooks.verify-quality.test_severity` (default `warning`) for `run_gate "task-test"`; `task-lint` stays error
-- [ ] T030 [US4] Tests in `tests/test-gate.sh` with a fake `task` on PATH whose `test` target fails: default warns (exit 0); `test_severity: "error"` fails (exit 2); mutation-check
+- [x] T029 [US4] In `extension/runtime/verify.sh`, read `hooks.verify-quality.test_severity` (default `warning`) for `run_gate "task-test"`; `task-lint` stays error
+- [x] T030 [US4] Tests in `tests/test-gate.sh` with a fake `task` on PATH whose `test` target fails: default warns (exit 0); `test_severity: "error"` fails (exit 2); mutation-check
 
   ```accept
   # verifies: FR-014
   set -eu
   . tests/lib/fixture.sh
-  d="$(fx_gates_project '{"hooks":{"verify-quality":{"orchestrator":"task","test_severity":"error"}}}')"
+  d="$(fx_gates_project '{"hooks":{"verify-quality":{"orchestrator":"task","severity":"error","test_severity":"error"}}}')"
   trap 'fx_cleanup "$d"' EXIT
   mkdir "$d/bin"
   printf '#!/bin/sh\n[ "$1" = test ] && exit 1\nexit 0\n' >"$d/bin/task"

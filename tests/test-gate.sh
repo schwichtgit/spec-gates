@@ -843,6 +843,36 @@ expect "--dry-run plans a skipped gate and names the skip" \
         | jq -r '.gates[] | select(.name == "build") | "\(.status): \(.detail)"' | sed "s|$PG|PG|"):$(ran)" \
     "planned: touch 'PG/ran-build' (time limit 600s; skipped by declaration at agent):none"
 
+# --- test_severity (feature 006, US4): the task orchestrator's test step ---
+# A fake task on PATH: `task lint` passes, `task test` fails.
+echo ""
+echo "=== task test severity ==="
+TS="$WORKDIR/task-sev"
+mkdir -p "$TS/bin"
+# shellcheck disable=SC2016  # script text for the fake task
+printf '#!/bin/sh\n[ "$1" = test ] && { echo "TASK-TEST-FAILED"; exit 1; }\nexit 0\n' >"$TS/bin/task"
+chmod +x "$TS/bin/task"
+task_sev() { # <policy-json>: "<exit>|<task-lint line>|<task-test line>"
+    local rc=0 out
+    project "$TS" "$1"
+    out="$(PATH="$TS/bin:$PATH" CLAUDE_PROJECT_DIR="$TS" bash "$TS/.specify/gates/verify.sh" --boundary git 2>&1)" || rc=$?
+    printf '%s|%s|%s\n' "$rc" "$(grep '^  \[[a-z]*\] task-lint' <<<"$out" || true)" \
+        "$(grep '^  \[[a-z]*\] task-test' <<<"$out" || true)"
+}
+expect "without test_severity a failing task test warns (exit 0)" \
+    "$(task_sev '{ "hooks": { "verify-quality": { "orchestrator": "task", "severity": "error" } } }')" \
+    "0|  [pass] task-lint|  [warn] task-test -- TASK-TEST-FAILED"
+expect "test_severity error: a failing task test fails the run (exit 2)" \
+    "$(task_sev '{ "hooks": { "verify-quality": { "orchestrator": "task", "severity": "error", "test_severity": "error" } } }')" \
+    "2|  [pass] task-lint|  [fail] task-test -- TASK-TEST-FAILED"
+expect "test_severity info: a failing task test does not fail the run" \
+    "$(task_sev '{ "hooks": { "verify-quality": { "orchestrator": "task", "severity": "error", "test_severity": "info" } } }' | cut -d'|' -f1)" 0
+# shellcheck disable=SC2016  # script text for the fake task
+printf '#!/bin/sh\n[ "$1" = lint ] && exit 1\nexit 0\n' >"$TS/bin/task"
+expect "test_severity leaves task-lint at error" \
+    "$(task_sev '{ "hooks": { "verify-quality": { "orchestrator": "task", "severity": "error", "test_severity": "info" } } }' | cut -d'|' -f1,2)" \
+    "2|  [fail] task-lint"
+
 # --- lib/watch.sh: gates_run_watched (feature 006) ---
 echo ""
 echo "=== gates_run_watched ==="

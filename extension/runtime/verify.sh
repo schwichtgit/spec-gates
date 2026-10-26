@@ -553,7 +553,8 @@ fi
 # ---------------------------------------------------------------------------
 # Gate dispatch. Orchestrator semantics carried over from CPF (ADR-005):
 #   "none"   -> per-tool walk driven by policy include/exclude globs
-#   "task"   -> `task lint` (error class) and `task test` (warning class)
+#   "task"   -> `task lint` (error class) and `task test` (severity from
+#               hooks.verify-quality.test_severity, default warning; 006)
 #   "custom" -> policy-supplied command, exit code mapped via severity
 # The per-tool walk delegates to lib/formatter-dispatch.sh in check mode.
 # ---------------------------------------------------------------------------
@@ -562,8 +563,10 @@ ORCH="$(gates_policy_get "verify-quality" "orchestrator")"
 
 case "$ORCH" in
     task)
-        run_gate "task-lint" "error"   task lint
-        run_gate "task-test" "warning" task test
+        TEST_SEV="$(gates_policy_get "verify-quality" "test_severity")"
+        [[ -z "$TEST_SEV" ]] && TEST_SEV="warning"
+        run_gate "task-lint" "error"     task lint
+        run_gate "task-test" "$TEST_SEV" task test
         ;;
     custom)
         CUSTOM_CMD="$(gates_policy_get "verify-quality" "custom_command")"
