@@ -26,7 +26,9 @@ authoritative version; the short form:
 - **Provable enforcement** — a new gate class ships with attestation output,
   a canary that proves it still blocks, and test-suite coverage.
 - **One policy, three boundaries** — agent, git, and CI all route through
-  `verify.sh`; never re-implement a check in a boundary.
+  `verify.sh`; never re-implement a check in a boundary. CI runs the whole
+  policy; an earlier boundary may skip only what the policy declares, and
+  reports each skip by name.
 - **Projection** — the runtime is copied into consuming repos; nothing may
   assume the extension stays installed or the network is reachable.
 

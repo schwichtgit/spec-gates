@@ -44,8 +44,11 @@ enforcement half lives on here.
 
 **The parity property:** if the agent boundary passed, the git boundary
 passes; if the git boundary passed, CI passes. Every boundary runs the
-same `verify.sh` with the same policy — `tests/test-parity.sh` asserts it:
-identical results at every boundary, and no boundary re-implements the gate.
+same `verify.sh` with the same policy, and CI runs all of it. An earlier
+boundary runs less only where the policy says so, and names what it skipped
+(constitution, Principle III). `tests/test-parity.sh` asserts it: with
+nothing declared, identical results at every boundary, and no boundary
+re-implements the gate.
 A fourth, server-side boundary (branch protection requiring the CI check) is
 available via `/speckit.gates.ci github --protect`.
 
