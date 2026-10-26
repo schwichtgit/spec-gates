@@ -160,9 +160,9 @@ built-in walk; doctor points custom commands at it.
 
 **Independent Test**: quickstart section 6.
 
-- [ ] T026 [US3] Add `--walk` to `extension/runtime/verify.sh` (research R8): run only the built-in per-tool walk (prettier, markdownlint, shellcheck when the policy enables each), whatever the orchestrator; skip the spec, contract, parity and project gates; write no attestation; take the gate lock unless nested (`GATES_LOCK_PID` set by the holder); honor `--boundary` and `--json`; exit codes as verify.sh; update the usage text
-- [ ] T027 [US3] In `extension/runtime/doctor.sh`, a `[rec]` when `custom_command` or any project gate command contains `formatter-dispatch.sh`: `use \`bash .specify/gates/verify.sh --walk\` (stable)`
-- [ ] T028 [US3] Tests in `tests/test-gate.sh`: `--walk` fails naming a badly formatted file and passes once fixed; it prints only built-in gates; it appends no attestation line; a custom orchestrator calling `verify.sh --walk` inside a gate run neither deadlocks nor writes a second attestation; mutation-check; and in `tests/test-doctor.sh` the `[rec]`
+- [x] T026 [US3] Add `--walk` to `extension/runtime/verify.sh` (research R8): run only the built-in per-tool walk (prettier, markdownlint, shellcheck when the policy enables each), whatever the orchestrator; skip the spec, contract, parity and project gates; write no attestation; take the gate lock unless nested (`GATES_LOCK_PID` set by the holder); honor `--boundary` and `--json`; exit codes as verify.sh; update the usage text
+- [x] T027 [US3] In `extension/runtime/doctor.sh`, a `[rec]` when `custom_command` or any project gate command contains `formatter-dispatch.sh`: `use \`bash .specify/gates/verify.sh --walk\` (stable)`
+- [x] T028 [US3] Tests in `tests/test-gate.sh`: `--walk` fails naming a badly formatted file and passes once fixed; it prints only built-in gates; it appends no attestation line; a custom orchestrator calling `verify.sh --walk` inside a gate run neither deadlocks nor writes a second attestation; mutation-check; and in `tests/test-doctor.sh` the `[rec]`
 
   ```accept
   # verifies: FR-013
@@ -175,7 +175,7 @@ built-in walk; doctor points custom commands at it.
   # The fixture has no node_modules: prettier comes from the repository's.
   rc=0; out="$(PATH="$PWD/node_modules/.bin:$PATH" CLAUDE_PROJECT_DIR="$d" bash "$d/.specify/gates/verify.sh" --boundary git 2>&1)" || rc=$?
   test "$rc" -eq 2
-  grep -q '^  \[fail\] custom' <<<"$out"
+  grep -q '^  \[fail\] custom -- .*bad\.md' <<<"$out"
   after="$(wc -l <"$d/.specify/gates/attestations.jsonl")"
   test "$after" -eq "$((before + 1))"
   ```

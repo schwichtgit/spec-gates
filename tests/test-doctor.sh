@@ -1453,6 +1453,26 @@ has "the default limit is 600s" "$DPN" "  [ok]  gate lint (error, 600s): runs at
 project "$DPN" '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } } }' no
 run_doctor "$DPN" >/dev/null
 lacks "a policy without gates lists none" "$DPN" "Project gates:"
+
+echo ""
+echo "=== a command calling formatter-dispatch.sh is pointed at --walk (feature 006) ==="
+DWK="$WORKDIR/walk-rec"
+project "$DWK" '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error",
+    "custom_command": "bash .specify/gates/lib/formatter-dispatch.sh --check --tool prettier",
+    "gates": { "fmt": { "command": "bash .specify/gates/lib/formatter-dispatch.sh --check --tool shellcheck" },
+               "lint": { "command": "true" } } } } }' no
+run_doctor "$DWK" >/dev/null
+# shellcheck disable=SC2016  # literal backticks
+has "custom_command calling the dispatch gets the [rec]" "$DWK" \
+    '  [rec] custom_command calls lib/formatter-dispatch.sh: use `bash .specify/gates/verify.sh --walk` (stable)'
+# shellcheck disable=SC2016  # literal backticks
+has "a project gate calling the dispatch gets the [rec]" "$DWK" \
+    '  [rec] gate fmt calls lib/formatter-dispatch.sh: use `bash .specify/gates/verify.sh --walk` (stable)'
+lacks "a gate not calling the dispatch gets none" "$DWK" "gate lint calls"
+project "$DWK" '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error",
+    "custom_command": "bash .specify/gates/verify.sh --walk" } } }' no
+run_doctor "$DWK" >/dev/null
+lacks "a custom_command calling --walk gets no [rec]" "$DWK" "calls lib/formatter-dispatch.sh"
 echo ""
 [[ "$SKIPPED" -gt 0 ]] && echo "$SKIPPED healthy-fixture case(s) skipped: this host lacks tools doctor requires."
 echo "$PASS of $TOTAL tests passed."

@@ -843,6 +843,103 @@ expect "--dry-run plans a skipped gate and names the skip" \
         | jq -r '.gates[] | select(.name == "build") | "\(.status): \(.detail)"' | sed "s|$PG|PG|"):$(ran)" \
     "planned: touch 'PG/ran-build' (time limit 600s; skipped by declaration at agent):none"
 
+# --- verify.sh --walk (feature 006, US3): the built-in walk alone ---
+# The policy's orchestrator and project gate both fail, so a walk that ran
+# either (or the spec or parity gate) could not pass once bad.md is fixed.
+echo ""
+echo "=== verify.sh --walk ==="
+DW="$WORKDIR/walk"
+WALK_POL='{ "hooks": { "prettier": { "include": ["**/*.md"], "severity": "error" },
+    "shellcheck": { "include": ["**/*.sh"], "severity": "error" },
+    "verify-quality": { "orchestrator": "custom", "severity": "error", "custom_command": "false",
+        "gates": { "never": { "command": "false" } } } } }'
+project "$DW" "$WALK_POL"
+att_lines() { wc -l <"$DW/.specify/gates/attestations.jsonl" 2>/dev/null | tr -d ' ' || echo 0; }
+walk() { # [arg...]: verify.sh --walk in the walk fixture; "<exit>" then the output
+    local rc=0 out
+    out="$(cd "$DW" && CLAUDE_PROJECT_DIR="$DW" bash "$DW/.specify/gates/verify.sh" --walk "$@" 2>&1)" || rc=$?
+    printf '%s\n%s\n' "$rc" "$out"
+}
+walk_json() { # [arg...]: stdout of verify.sh --walk --json in the walk fixture
+    (cd "$DW" && CLAUDE_PROJECT_DIR="$DW" bash "$DW/.specify/gates/verify.sh" --walk --json "$@" 2>/dev/null) || true
+}
+expect "--accept with --walk is a usage error" "$(walk --accept all | sed -n 1p)" 1
+W="$(GATES_IN_WALK=1 walk)"
+expect "a walk inside a walk is refused (exit 1), not run" \
+    "$(sed -n 1p <<<"$W")|$(grep -c 'verify.sh --walk called from inside a walk; the built-in walk never runs the orchestrator' <<<"$W")" "1|1"
+# A policy that extends a baseline with no synced snapshot fails the
+# contract gate of a full run; the walk does not run that gate.
+project "$DW" '{ "extends": { "source": "x", "version": "v1" },
+    "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } } }'
+expect "--walk runs no contract gate" "$(walk_json | jq -c '[.failed, [.gates[].name]]')" '[0,[]]'
+project "$DW" "$WALK_POL"
+if have_node_linters; then
+    printf '#  Bad   md\n\n\n- x\n' >"$DW/bad.md"
+    W="$(walk --boundary git)"
+    expect "--walk fails on a badly formatted file and names it" \
+        "$(sed -n 1p <<<"$W")|$(grep -c '^  \[fail\] prettier -- \[warn\] bad\.md$' <<<"$W")" "2|1"
+    expect "--walk prints only the built-in gates" \
+        "$(grep -o '^  \[[a-z]*\] [a-z-]*' <<<"$W" | sed 's/.*\] //' | paste -sd ' ' -)" "prettier shellcheck"
+    expect "--walk --json lists only the built-in gates, no attestation" \
+        "$(walk_json | jq -c '[[.gates[].name], has("attestation"), .failed]')" '[["prettier","shellcheck"],false,1]'
+    expect "--walk without --boundary does not warn about it" "$(grep -c 'deprecated' <<<"$(walk)" || true)" 0
+    expect "--walk by hand prints no ##gates-fail## marker" "$(grep -c 'gates-fail##' <<<"$(walk)" || true)" 0
+    printf '# Title\n\nBody text.\n' >"$DW/bad.md"
+    expect "--walk passes once the file is fixed" "$(walk --boundary git | sed -n 1p)" 0
+    expect "--walk appended no attestation line" "$(att_lines)" 0
+
+    # Called from a custom command inside a gate run: the walk joins the
+    # holder's lock (a walk that waited would give up after
+    # GATES_LOCK_WAIT_S and fail the gate with the lock message), writes no
+    # record of its own, and its first failure is the custom gate's summary
+    # though shellcheck, after it, passed. The command runs from the
+    # caller's cwd (#276), so the outer run starts in the fixture.
+    project "$DW" '{ "hooks": { "prettier": { "include": ["**/*.md"], "severity": "error" },
+        "shellcheck": { "include": ["**/*.sh"], "severity": "error" },
+        "verify-quality": { "orchestrator": "custom", "severity": "error",
+            "custom_command": "bash .specify/gates/verify.sh --walk" } } }'
+    printf '#  Bad   md\n\n\n- x\n' >"$DW/bad.md"
+    rc=0
+    t0="$(date +%s)"
+    out="$(cd "$DW" && GATES_LOCK_WAIT_S=3 CLAUDE_PROJECT_DIR="$DW" bash "$DW/.specify/gates/verify.sh" --boundary git 2>&1)" || rc=$?
+    TOTAL=$((TOTAL + 1))
+    if [[ $(($(date +%s) - t0)) -le 60 ]]; then
+        echo "PASS: nested walk: the run ends within 60 s"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL: nested walk took $(($(date +%s) - t0))s"
+        FAIL=$((FAIL + 1))
+    fi
+    [[ -n "${GATES_TEST_VERBOSE:-}" ]] && echo "  nested walk: $out"
+    expect "nested walk: the custom gate fails, its summary names the file" \
+        "$rc|$(grep '^  \[fail\] custom' <<<"$out" || true)" "2|  [fail] custom -- prettier -- [warn] bad.md"
+    expect "nested walk: one attestation line, the outer run's" \
+        "$(att_lines)|$(tail -n 1 "$DW/.specify/gates/attestations.jsonl" | jq -c '[.gates[].name]')" '1|["custom","spec","parity"]'
+    expect "nested walk: the outer report carries no ##gates-fail## marker" \
+        "$(grep -c 'gates-fail##' <<<"$out" || true)" 0
+    expect "nested walk: the lock is released" \
+        "$([[ -e "$DW/.specify/gates/.lock" ]] && echo held || echo free)" free
+    printf '# Title\n\nBody text.\n' >"$DW/bad.md"
+    rc=0
+    (cd "$DW" && GATES_LOCK_WAIT_S=3 CLAUDE_PROJECT_DIR="$DW" bash "$DW/.specify/gates/verify.sh" --boundary git >/dev/null 2>&1) || rc=$?
+    expect "nested walk: passes once the file is fixed" "$rc|$(att_lines)" "0|2"
+else
+    skip "verify.sh --walk" "run npm ci to install pinned prettier"
+fi
+# Standalone it takes the lock: at agent, under another run's lock, it
+# skips and defers only the walk tools.
+sleep 120 &
+FAKE=$!
+project "$DW" "$WALK_POL"
+mkdir -p "$DW/.specify/gates/.lock"
+printf '%s\ngit\n\n' "$FAKE" >"$DW/.specify/gates/.lock/owner"
+expect "--walk at agent under a held lock defers only the walk tools" \
+    "$(walk_json --boundary agent | jq -c '[.result, .deferred]')" \
+    '["skipped",["prettier","shellcheck"]]'
+kill "$FAKE" 2>/dev/null || true
+wait "$FAKE" 2>/dev/null || true
+rm -rf "$DW/.specify/gates/.lock"
+
 # --- test_severity (feature 006, US4): the task orchestrator's test step ---
 # A fake task on PATH: `task lint` passes, `task test` fails.
 echo ""

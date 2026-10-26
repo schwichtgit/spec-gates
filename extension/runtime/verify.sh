@@ -15,10 +15,18 @@ set -euo pipefail
 #
 # Usage:
 #   verify.sh --boundary agent|git|ci [--json] [--dry-run] [--accept <feature|all>]
+#   verify.sh --walk [--boundary agent|git|ci] [--json] [--dry-run]
 #
 # --accept additionally executes the named incomplete feature(s)' accept
 # blocks as informational output (feature 002); complete features are
 # enforced on every run regardless.
+#
+# --walk (feature 006, research R8) runs only the built-in per-tool walk
+# (prettier, markdownlint, shellcheck, each when the policy enables it),
+# whatever the orchestrator: no contract, project, spec or parity gate and
+# no attestation (the run that calls it records its own gate). It is the
+# stable entry point for custom commands; lib/formatter-dispatch.sh is
+# internal. Called from inside a gate run it joins the holder's lock.
 #
 # Exit codes: 0 = all gates green, 1 = internal error (bad arguments, no jq,
 # no or invalid policy; no gate ran), 2 = gate failure.
@@ -31,6 +39,7 @@ BOUNDARY="unspecified"
 JSON=0
 DRY_RUN=0
 ACCEPT_ARG=""
+WALK=0
 
 # --json is known before the argument loop so an argument error can answer
 # in JSON too.
@@ -60,6 +69,7 @@ refuse() { # <message>: no gate ran; stderr message, exit 1
 usage() { # <message>: argument error, exit 1
     echo "gates: $1" >&2
     echo "usage: verify.sh --boundary agent|git|ci [--json] [--dry-run] [--accept <feature|all>]" >&2
+    echo "       verify.sh --walk [--boundary agent|git|ci] [--json] [--dry-run]" >&2
     refused "$1"
 }
 
@@ -78,6 +88,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         --json)     JSON=1; shift ;;
         --dry-run)  DRY_RUN=1; shift ;;
+        --walk)     WALK=1; shift ;;
         --accept)
             [[ $# -ge 2 && -n "$2" && "$2" != -* ]] || usage "--accept needs a feature name or all"
             ACCEPT_ARG="$2"
@@ -86,10 +97,21 @@ while [[ $# -gt 0 ]]; do
         *) usage "unknown argument: $1" ;;
     esac
 done
+# The walk runs no accept blocks.
+[[ "$WALK" == "1" && -n "$ACCEPT_ARG" ]] && usage "--accept cannot be combined with --walk"
+# A walk never runs the orchestrator, so a walk started from inside a
+# walk means that rule broke: a custom command calling --walk would then
+# start walks without end and hang every boundary. Fail closed instead.
+if [[ "$WALK" == "1" ]]; then
+    [[ -n "${GATES_IN_WALK:-}" ]] \
+        && refuse "verify.sh --walk called from inside a walk; the built-in walk never runs the orchestrator"
+    export GATES_IN_WALK=1
+fi
 # Without --boundary the run is the 0.3.6 one (#216): every gate, boundary
 # "unspecified". It warns instead of refusing, so callers written for
 # 0.3.6 keep working after an upgrade; a later release may require it.
-if [[ "$BOUNDARY" == "unspecified" ]]; then
+# The walk takes --boundary as optional (research R8), so it does not warn.
+if [[ "$BOUNDARY" == "unspecified" && "$WALK" != "1" ]]; then
     echo "gates: warning: verify.sh without --boundary is deprecated; it runs every gate as before, and a later release may refuse it. Pass --boundary agent|git|ci" >&2
 fi
 # Every gate command (project gates, the task and custom steps, the walk)
@@ -238,6 +260,14 @@ gates_lock_deferred() {
     local file orch tool name deferred="" declared=""
     file="$(gates_policy_file)"
     [[ -f "$file" ]] && jq -e 'type == "object"' "$file" >/dev/null 2>&1 || return 1
+    if [[ "$WALK" == "1" ]]; then
+        # --walk runs the enabled walk tools and nothing else.
+        for tool in prettier markdownlint shellcheck; do
+            [[ -n "$(gates_policy_list "$tool" "include")" ]] && deferred="$deferred$tool"$'\n'
+        done
+        LOCK_DEFERRED="$(printf '%s' "$deferred" | jq -Rsc 'split("\n") | map(select(. != ""))')" || return 1
+        return 0
+    fi
     gates_contract_declared "$GATES_DIR/policy.json" && deferred="contract"$'\n'
     orch="$(gates_policy_get "verify-quality" "orchestrator")"
     case "$orch" in
@@ -522,7 +552,11 @@ run_gate() { # name severity cmd...
 # ---------------------------------------------------------------------------
 CONTRACT_ATT_JSON=""
 contract_start="$(date +%s)"
-gates_contract_check "$PROJECT_ROOT"
+if [[ "$WALK" == "1" ]]; then
+    CONTRACT_STATUS="dormant" # --walk runs the built-in walk only
+else
+    gates_contract_check "$PROJECT_ROOT"
+fi
 contract_end="$(date +%s)"
 if [[ "$CONTRACT_STATUS" != "dormant" ]]; then
     if [[ "$DRY_RUN" == "1" ]]; then
@@ -560,6 +594,8 @@ fi
 # ---------------------------------------------------------------------------
 ORCH="$(gates_policy_get "verify-quality" "orchestrator")"
 [[ -z "$ORCH" ]] && ORCH="none"
+# --walk is the per-tool walk whatever the orchestrator (research R8).
+[[ "$WALK" == "1" ]] && ORCH="none"
 
 case "$ORCH" in
     task)
@@ -610,9 +646,11 @@ run_project_gate() { # name severity timeout-s command
 }
 
 declare -a PROJECT_GATES=()
-while IFS= read -r pg_name; do
-    [[ -n "$pg_name" ]] && PROJECT_GATES+=("$pg_name")
-done < <(gates_project_gate_names)
+if [[ "$WALK" != "1" ]]; then
+    while IFS= read -r pg_name; do
+        [[ -n "$pg_name" ]] && PROJECT_GATES+=("$pg_name")
+    done < <(gates_project_gate_names)
+fi
 if [[ ${#PROJECT_GATES[@]} -gt 0 ]]; then
     PG_DEFAULT_S="$(gates_policy_get "verify-quality" "gate_timeout_s")"
     [[ -z "$PG_DEFAULT_S" ]] && PG_DEFAULT_S=600
@@ -644,6 +682,7 @@ fi
 # reason (text, --json and the attestation) instead of dropping it (#164).
 # ---------------------------------------------------------------------------
 SPEC_ENABLED="$(gates_policy_section_get spec enabled)"
+[[ "$WALK" == "1" ]] && SPEC_ENABLED="false"
 SPEC_ATT_JSON=""
 if [[ "$SPEC_ENABLED" != "false" && -n "${GATES_SPEC_EXEC:-}" ]]; then
     SPEC_SKIP_REASON="GATES_SPEC_EXEC is set (run from inside an accept block), so accept blocks did not run"
@@ -698,6 +737,9 @@ elif [[ "$SPEC_ENABLED" != "false" ]]; then
 fi
 
 ATT_ENABLED="$(gates_policy_section_get attestation enabled)"
+# --walk writes no attestation and so runs no parity gate: the run that
+# calls it attests its own gate (research R8).
+[[ "$WALK" == "1" ]] && ATT_ENABLED="false"
 
 # ---------------------------------------------------------------------------
 # Synthetic parity gate (R7): every boundary compares the tool versions just
@@ -844,7 +886,18 @@ else
             else
                 echo "  [$status] $name"
             fi
+            [[ "$status" == "fail" && -z "${WALK_FIRST_FAIL:-}" ]] \
+                && WALK_FIRST_FAIL="$name -- $detail"
         done
+    fi
+    # A walk inside a gate run (the holder's GATES_LOCK_PID is not this
+    # run's) marks its first failure for the calling gate's summary
+    # (##gates-fail##, as formatter-dispatch does), so a custom command's
+    # report line names the file even when a later tool passed. The caller
+    # strips the marker; a walk run by hand prints none.
+    if [[ "$WALK" == "1" && -n "${WALK_FIRST_FAIL:-}" \
+        && -n "${GATES_LOCK_PID:-}" && "$GATES_LOCK_PID" != "$$" ]]; then
+        echo "##gates-fail## $WALK_FIRST_FAIL"
     fi
 fi
 
