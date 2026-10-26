@@ -328,7 +328,7 @@ protected_range_check() { # -> 0 pass/skip, 1 violations, 2 setup error
     FULL_LIST=true
     if ! gates_protected_trailer_enabled; then
         FULL_LIST=false
-        echo "pr-check: git.protected_change_trailer is false -- checking only the always-protected paths ($ALWAYS_NAMES)"
+        echo "pr-check: git.protected_change_trailer is false -- checking only the always-protected paths ($ALWAYS_NAMES, the covering script)"
     fi
 
     BODY_DECLARED="$(printf '%s\n' "$BODY" | gates_trailer_values protected-change)"
@@ -404,7 +404,13 @@ protected_range_check() { # -> 0 pass/skip, 1 violations, 2 setup error
     # paths over and over. gates_match_protected reads paths with `read`,
     # which trims blanks, so the paths are trimmed the same way first.
     local -a set_keys=() set_vals=() prot=()
-    local idx j key patterns changed protected trailers declared approvers path
+    local idx j key patterns changed protected trailers declared approvers path always="$ALWAYS_PROTECTED"
+    # The covering script (spec.cover.script, feature 007) is protected like
+    # the policy, so it stays checked with the trailer rule off: the one
+    # declared by the base or any commit of the range, for every commit.
+    if [[ "$FULL_LIST" != "true" ]]; then
+        always="$always"$'\n'"$(gates_cover_protected "$BASE" "${commits[@]+"${commits[@]}"}" 2>/dev/null)"
+    fi
     for ((idx = 0; idx < n; idx++)); do
         key="${pkeys[idx]:-all}"
         for ((j = 0; j < ${#set_keys[@]}; j++)); do
@@ -414,7 +420,7 @@ protected_range_check() { # -> 0 pass/skip, 1 violations, 2 setup error
             if [[ "$FULL_LIST" == "true" ]]; then
                 patterns="$(gates_protected_list "$BASE" "${commits[idx]}^" "${commits[idx]}" 2>/dev/null)"$'\n'"$ALWAYS_PROTECTED"
             else
-                patterns="$ALWAYS_PROTECTED"
+                patterns="$always"
             fi
             set_keys[j]="$key"
             set_vals[j]="$patterns"

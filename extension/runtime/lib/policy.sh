@@ -339,7 +339,10 @@ gates_policy_at_rev() { # <rev> <dest>
 # own rules in hooks.local.d (#95) and the policy-contract artifacts, which
 # decide what is enforced exactly like policy.json (#137). Changing one is a
 # reviewed change with a Protected-Change trailer, like any
-# protected_files.extra entry. One entry per line.
+# protected_files.extra entry. One entry per line. gates_protected_list adds
+# a declared covering script (spec.cover.script, feature 007) of every
+# policy it reads next to these: it decides which accept blocks are
+# skipped, so it is protected like the policy.
 GATES_BUILTIN_PROTECTED=".specify/gates/hooks.local.d/**
 .specify/gates/baseline.json
 .specify/gates/baseline.lock.json
@@ -349,13 +352,15 @@ GATES_BUILTIN_PROTECTED=".specify/gates/hooks.local.d/**
 # plus the worktree policy when called with no revs (worktree + HEAD). Reading
 # the committed copy means a staged policy.json that drops its own protection
 # is still judged by the protection it removes (issue #47). The built-in
-# entries above always come first.
+# entries above always come first, then the covering script each of those
+# policies declares (gates_cover_protected), whatever extra says.
 # shellcheck disable=SC2120  # revs are passed by protected-range.sh
 gates_protected_list() { # [rev...]
     local tmp rev
     local -a revs=("$@")
     {
         printf '%s\n' "$GATES_BUILTIN_PROTECTED"
+        gates_cover_protected "$@"
         if [[ "${#revs[@]}" -eq 0 ]]; then
             gates_policy_section_list protected_files extra
             revs=(HEAD)
@@ -370,6 +375,31 @@ gates_protected_list() { # [rev...]
             rm -f "$tmp"
         fi
     } | awk 'NF && !seen[$0]++'
+}
+
+# The spec.cover.script paths of the policies committed at <rev>..., plus
+# the worktree policy when called with no revs (worktree + HEAD), one per
+# line, normalized as git names paths (./a, a//b and a/./b are a, a/b).
+# Used by gates_protected_list and by pr-check with the trailer rule off.
+# shellcheck disable=SC2120  # revs are passed by pr-check.sh
+gates_cover_protected() { # [rev...]
+    local tmp rev
+    local -a revs=("$@")
+    {
+        if [[ "${#revs[@]}" -eq 0 ]]; then
+            gates_cover_script
+            revs=(HEAD)
+        fi
+        tmp="$(mktemp 2>/dev/null || mktemp -t gates-policy)" || tmp=""
+        if [[ -n "$tmp" ]]; then
+            for rev in "${revs[@]}"; do
+                if gates_policy_at_rev "$rev" "$tmp"; then
+                    GATES_POLICY_FILE="$tmp" gates_cover_script
+                fi
+            done
+            rm -f "$tmp"
+        fi
+    } | sed -e 's#//*#/#g' -e 's#/\(\./\)*#/#g' -e 's#^\(\./\)*##' | awk 'NF && !seen[$0]++'
 }
 
 # Filter paths on stdin down to those matching a protected entry in

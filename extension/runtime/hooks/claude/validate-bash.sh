@@ -971,10 +971,42 @@ elif [[ -f "$POLICY" ]]; then
     fi
     EXTRA_WHY="the policy is malformed or invalid; run /speckit.gates.doctor"
 fi
+# The covering script (spec.cover.script, feature 007) is protected like
+# the policy whatever extra says: read from policy.json and, in a contract
+# repository, the effective policy. Without jq, raw_cover reads a plain
+# string in a flat cover object; a cover it cannot read asks for any
+# command that changes something.
+raw_cover() { # <policy>
+    local flat v
+    flat="$(tr '\n' ' ' <"$1")"
+    grep -qE '"cover"[[:space:]]*:' <<<"$flat" || return 0
+    v="$(sed -nE 's/.*"cover"[[:space:]]*:[[:space:]]*\{[^{}]*"script"[[:space:]]*:[[:space:]]*"([^"\\]*)".*/=\1/p' <<<"$flat")"
+    [[ -n "$v" ]] || return 2
+    printf '%s\n' "${v#=}"
+}
+COVER_PATHS=""
+COVER_UNREAD=0
+for _cp in "$POLICY" "$LROOT/.specify/gates/policy.effective.json"; do
+    [[ -f "$_cp" ]] || continue
+    if [[ -n "$DEGRADED" ]]; then
+        rc=0
+        _cv="$(raw_cover "$_cp")" || rc=$?
+        [[ "$rc" -eq 0 ]] || COVER_UNREAD=1
+    else
+        _cv="$(jq -r '(.spec.cover.script // empty) | strings' "$_cp" 2>/dev/null)" || _cv=""
+    fi
+    if [[ -n "$_cv" ]]; then
+        COVER_PATHS="$COVER_PATHS$_cv"$'\n'
+    fi
+done
 protected_prefixes() {
     printf '%s\n' ".specify/gates/hooks.local.d" ".specify/gates/baseline.json" \
         ".specify/gates/baseline.lock.json" ".specify/gates/policy.effective.json" \
         ".specify/gates/policy.json" ".specify/memory/constitution.md"
+    # ./a, a//b and a/./b name the same file as a, a/b.
+    if [[ -n "$COVER_PATHS" ]]; then
+        printf '%s' "$COVER_PATHS" | sed -e 's#//*#/#g' -e 's#/\(\./\)*#/#g' -e 's#^\(\./\)*##'
+    fi
     {
         if [[ -n "$DEGRADED" ]]; then
             [[ -n "$RAW_EXTRA" ]] && printf '%s\n' "$RAW_EXTRA"
@@ -1044,6 +1076,9 @@ if grep -qE "$MUTATE_VERB|$MUTATE_EDIT|$MUTATE_FIND|$MUTATE_INTERP|$MUTATE_TOOL"
 fi
 if [[ "$EXTRA_UNREAD" -eq 1 ]] && [[ "$MUTATES" -eq 1 || "$WRITE_REDIRECT" -eq 1 ]]; then
     defer_ask "policy protected_files.extra cannot be read ($EXTRA_WHY); confirm this command changes no protected path"
+fi
+if [[ "$COVER_UNREAD" -eq 1 ]] && [[ "$MUTATES" -eq 1 || "$WRITE_REDIRECT" -eq 1 ]]; then
+    defer_ask "policy spec.cover.script cannot be read ($DEGRADED); confirm this command does not change the covering script"
 fi
 ere_escape() { printf '%s' "$1" | sed 's/[][\.*^$+?(){}|/]/\\&/g'; }
 # shellcheck disable=SC2016

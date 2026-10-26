@@ -1102,6 +1102,16 @@ if [[ "$got" == 'scripts/c.sh|["agent","git"]|7;30;||30' ]]; then
 else
     fail "cover accessors: $got"
 fi
+# The protected list carries the declared script, normalized as git names
+# paths, whatever protected_files.extra says (feature 007, FR-006).
+CVL="$(write_policy cover-list "$(sc '{ "script": "./scripts//./c.sh", "at": ["git"] }')")"
+got="$(cd "$WORKDIR" && GATES_POLICY_FILE="$CVL" gates_protected_list | grep -c '^scripts/c\.sh$' || true)"
+got="$got/$(cd "$WORKDIR" && GATES_POLICY_FILE="$CVN" gates_protected_list | grep -c 'c\.sh' || true)"
+if [[ "$got" == "1/0" ]]; then
+    pass "gates_protected_list adds the covering script (normalized), only when declared"
+else
+    fail "gates_protected_list and the covering script: $got"
+fi
 CVD="$(fx_gates_project "$(sc '{ "script": "c.sh", "at": ["ci"] }')")"
 printf '#!/bin/sh\necho covered\n' >"$CVD/c.sh"
 chmod +x "$CVD/c.sh"
