@@ -327,6 +327,24 @@ if have_node_linters; then
     linter_summary markdownlint '{ "hooks": { "markdownlint": { "include": ["**/*.md"], "orchestrator": "none", "severity": "error" }, "verify-quality": { "orchestrator": "none", "severity": "error" } } }' md '#Bad md\n'
     expect "markdownlint: the summary names the first finding, not the banner" \
         "$(grep -cE '^  \[fail\] markdownlint -- bad[0-9]+\.md:1(:1)? error MD' <<<"$S")" 1
+    # The dispatch's marker repeats a finding the output already holds, so
+    # the detail must not name the file a second time (#279).
+    # <tool> <bad-content> <needle>: one file with one finding, whose line
+    # <needle> matches; markdownlint's banner names its files too.
+    named_once() {
+        local d="$WORKDIR/once-$1" txt json det
+        project "$d" "{ \"hooks\": { \"$1\": { \"include\": [\"**/*.md\"], \"orchestrator\": \"none\", \"severity\": \"error\" }, \"verify-quality\": { \"orchestrator\": \"none\", \"severity\": \"error\" } } }"
+        printf '%b' "$2" >"$d/once-bad.md"
+        txt="$(CLAUDE_PROJECT_DIR="$d" bash "$d/.specify/gates/verify.sh" --boundary ci 2>&1 || true)"
+        json="$(CLAUDE_PROJECT_DIR="$d" bash "$d/.specify/gates/verify.sh" --boundary ci --json 2>/dev/null || true)"
+        det="$(jq -r --arg t "$1" '.gates[] | select(.name == $t) | .detail' <<<"$json")"
+        expect "$1: the text report names the failing file once" \
+            "$(grep -c 'once-bad\.md' <<<"$txt" || true)" 1
+        expect "$1: the --json detail names the finding once" \
+            "$(grep -cE "$3" <<<"$det" || true)" 1
+    }
+    named_once prettier '# Title\n\n- x\n-   y\n' 'once-bad\.md'
+    named_once markdownlint '# Title\n\n#Bad\n' '^once-bad\.md:3(:1)? error MD018'
 else
     skip "prettier and markdownlint summaries" "run npm ci to install pinned linters"
 fi

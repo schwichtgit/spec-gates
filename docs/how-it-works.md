@@ -671,7 +671,9 @@ emits a single machine-readable object for workflow steps and CI.
 task or custom step keeps the last 2000 bytes of its output as the
 gate's `detail`. The one-line text report reads the whole output: the
 last line that carries `##gates-fail## <text>` wins (the marker itself
-is stripped from the report and the `detail`, which keep the text).
+is stripped from the report and the `detail`, which keep the text; a
+file linter's marked line repeats a finding its output holds, so its
+`detail` leaves that line out).
 The file-linter gates mark their first finding that way (a prettier
 `[warn] <file>` line, a markdownlint `<file>:<line>` finding, shellcheck's
 `<file> line N: SC<code> ...`), since their output opens with banners and

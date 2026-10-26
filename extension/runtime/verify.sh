@@ -503,10 +503,18 @@ run_gate() { # name severity cmd...
     # linters' dispatch marks their first finding so), else, for a file
     # linter, the first non-empty line, and for a task or custom step,
     # which ends on its verdict, the last one. The marker is machinery
-    # too and never shows in the detail.
+    # too and never shows in the detail. A file linter's marker line
+    # repeats a finding its output already holds, so the detail drops the
+    # whole line there (#279); a step's marker keeps its text, which may
+    # be the step's only statement of what failed.
     local detail summary
-    detail="$(grep -v '##gates-meta##' /tmp/gates-out.$$ \
-        | sed 's/##gates-fail##[[:space:]]*//' | tail -c 2000 || true)"
+    if [[ -n "$meta" ]]; then
+        detail="$(grep -v -e '##gates-meta##' -e '##gates-fail##' /tmp/gates-out.$$ \
+            | tail -c 2000 || true)"
+    else
+        detail="$(grep -v '##gates-meta##' /tmp/gates-out.$$ \
+            | sed 's/##gates-fail##[[:space:]]*//' | tail -c 2000 || true)"
+    fi
     summary="$(grep '##gates-fail##' /tmp/gates-out.$$ 2>/dev/null | tail -n 1 \
         | sed 's/.*##gates-fail##[[:space:]]*//' || true)"
     if [[ -z "$summary" ]]; then
