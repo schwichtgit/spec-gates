@@ -119,7 +119,11 @@
         "checked": { "type": ["integer", "null"], "minimum": 0 },
         "result": { "enum": ["pass", "fail", "warn", "skipped", "planned"] },
         "reason": { "type": "string" },
-        "duration_s": { "type": "integer", "minimum": 0 }
+        "duration_s": { "type": "integer", "minimum": 0 },
+        "declared_skip": {
+          "description": "Feature 006: the boundary whose skip declaration (a project gate's skip_at) kept the gate from running; present only on such a skipped entry. CI cannot be declared.",
+          "enum": ["agent", "git"]
+        }
       }
     }
   }

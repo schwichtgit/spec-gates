@@ -753,6 +753,55 @@ expect "no gates key: the report is unchanged" \
 expect "no gates key: the attestation lists the same gates" \
     "$(pg_att "$PG" '[.gates[].name]')" '["custom","spec","parity"]'
 
+# --- declared skips (feature 006, US2): skip_at keeps a gate out of the
+# agent or git boundary, reported by name, never out of CI ---
+echo ""
+echo "=== project gates: declared skips ==="
+PG="$WORKDIR/pg-skip"
+project "$PG" "{ \"hooks\": { \"verify-quality\": { \"orchestrator\": \"none\", \"severity\": \"error\",
+    \"gates\": { \"build\": { \"command\": \"touch '$PG/ran-build'\", \"skip_at\": [\"agent\"] },
+                 \"pkg\": { \"command\": \"touch '$PG/ran-pkg'\", \"skip_at\": [\"git\"] } } } } }"
+ran() { # which of the two gates started a process: "build pkg", "pkg", ...
+    local r=""
+    [[ -e "$PG/ran-build" ]] && r="build"
+    [[ -e "$PG/ran-pkg" ]] && r="${r:+$r }pkg"
+    rm -f "$PG/ran-build" "$PG/ran-pkg"
+    printf '%s' "${r:-none}"
+}
+OUT="$(pg_run "$PG" --boundary agent)"
+expect_has "skip_at agent: skipped at agent, by name" "$OUT" "  [skipped] build -- skipped by declaration at agent"
+expect_has "skip_at git: runs at agent" "$OUT" "  [pass] pkg"
+expect_has "a declared skip counts as neither failed nor warned" "$OUT" "gates: boundary=agent failed=0 warnings=0"
+expect "skip_at agent: no process started at agent" "$(ran)" "pkg"
+expect "attestation: result skipped, the reason, declared_skip agent" \
+    "$(pg_att "$PG" '.gates[] | select(.name == "build") | [.result, .reason, .declared_skip, .duration_s]')" \
+    '["skipped","skipped by declaration at agent","agent",0]'
+expect "attestation: a gate that ran has no declared_skip" \
+    "$(pg_att "$PG" '.gates[] | select(.name == "pkg") | has("declared_skip")')" false
+expect "--json: skipped, with the declaration as detail" \
+    "$(CLAUDE_PROJECT_DIR="$PG" bash "$PG/.specify/gates/verify.sh" --boundary agent --json 2>/dev/null \
+        | jq -c '.gates[] | select(.name == "build") | [.status, .detail]')" \
+    '["skipped","skipped by declaration at agent"]'
+ran >/dev/null
+OUT="$(pg_run "$PG" --boundary git)"
+expect_has "skip_at git: skipped at git" "$OUT" "  [skipped] pkg -- skipped by declaration at git"
+expect_has "skip_at agent: runs at git" "$OUT" "  [pass] build"
+expect "at git only the agent-skipped gate started" "$(ran)" "build"
+OUT="$(pg_run "$PG" --boundary ci)"
+expect "at ci every gate runs" "$(ran)" "build pkg"
+expect "at ci no entry carries declared_skip" \
+    "$(pg_att "$PG" '[.gates[] | select(has("declared_skip"))] | length')" 0
+OUT="$(pg_run "$PG" 2>&1)"
+expect "without --boundary every gate runs" "$(ran)" "build pkg"
+expect "a skipped gate is never counted as passed" \
+    "$(CLAUDE_PROJECT_DIR="$PG" bash "$PG/.specify/gates/verify.sh" --boundary agent --json 2>/dev/null \
+        | jq -c '[.gates[] | select(.status == "pass") | .name]')" '["pkg","spec","parity"]'
+ran >/dev/null
+expect "--dry-run plans a skipped gate and names the skip" \
+    "$(CLAUDE_PROJECT_DIR="$PG" bash "$PG/.specify/gates/verify.sh" --boundary agent --dry-run --json 2>/dev/null \
+        | jq -r '.gates[] | select(.name == "build") | "\(.status): \(.detail)"' | sed "s|$PG|PG|"):$(ran)" \
+    "planned: touch 'PG/ran-build' (time limit 600s; skipped by declaration at agent):none"
+
 # --- lib/watch.sh: gates_run_watched (feature 006) ---
 echo ""
 echo "=== gates_run_watched ==="

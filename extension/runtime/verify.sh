@@ -326,11 +326,13 @@ record() { # name status detail [summary]
 
 # Append a GateEntry (attestation shape, data-model.md) for an evaluated
 # gate. Empty strings become JSON null for the nullable fields.
-att_gate() { # name bin version pinned candidates checked result reason duration_s
+# [declared_skip] is the boundary a skip declaration named (feature 006):
+# written only when set, so every other entry keeps the feature 001 shape.
+att_gate() { # name bin version pinned candidates checked result reason duration_s [declared_skip]
     ATT_GATES+=("$(jq -cn \
         --arg name "$1" --arg bin "$2" --arg version "$3" --arg pinned "$4" \
         --arg candidates "$5" --arg checked "$6" --arg result "$7" \
-        --arg reason "$8" --arg duration "$9" '
+        --arg reason "$8" --arg duration "$9" --arg declared_skip "${10:-}" '
         def num_or_null: if . == "" then null else tonumber end;
         def str_or_null: if . == "" then null else . end;
         { name: $name,
@@ -341,7 +343,8 @@ att_gate() { # name bin version pinned candidates checked result reason duration
           checked: ($checked | num_or_null),
           result: $result,
           reason: $reason,
-          duration_s: ($duration | tonumber) }')")
+          duration_s: ($duration | tonumber) }
+        + (if $declared_skip == "" then {} else { declared_skip: $declared_skip } end)')")
 }
 
 # Watched mode (project gates, feature 006): run_project_gate sets
@@ -530,6 +533,10 @@ esac
 # --json and the attestation; the tool fields stay null (a command, not a
 # resolved tool). A timeout or a command that cannot start (126, 127)
 # fails; any other non-zero exit maps through the gate's severity.
+# A gate whose skip_at names this boundary (agent or git; never ci) does not
+# start: it is recorded as skipped "by declaration at <boundary>", counts as
+# neither passed, failed nor warned, and its attestation entry carries
+# declared_skip (gates_declared_skip, lib/policy.sh, research R6).
 # ---------------------------------------------------------------------------
 run_project_gate() { # name severity timeout-s command
     WATCH_S="$3"
@@ -553,6 +560,15 @@ if [[ ${#PROJECT_GATES[@]} -gt 0 ]]; then
         [[ -z "$pg_sev" ]] && pg_sev="error"
         pg_s="$(gates_project_gate_get "$pg_name" timeout_s)"
         [[ -z "$pg_s" ]] && pg_s="$PG_DEFAULT_S"
+        if pg_skip="$(gates_declared_skip "$BOUNDARY" "$(gates_project_gate_skip_at "$pg_name")")"; then
+            if [[ "$DRY_RUN" == "1" ]]; then
+                record "$pg_name" "planned" "$(gates_project_gate_get "$pg_name" command) (time limit ${pg_s}s; $pg_skip)"
+            else
+                record "$pg_name" "skipped" "$pg_skip"
+                att_gate "$pg_name" "" "" "" "" "" "skipped" "$pg_skip" 0 "$BOUNDARY"
+            fi
+            continue
+        fi
         run_project_gate "$pg_name" "$pg_sev" "$pg_s" "$(gates_project_gate_get "$pg_name" command)"
     done
 fi
