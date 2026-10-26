@@ -120,7 +120,7 @@ every declared gate (constitution 1.1.0, Principle III).
   # verifies: FR-007, FR-008, FR-010
   set -eu
   . tests/lib/fixture.sh
-  d="$(fx_gates_project '{"hooks":{"verify-quality":{"orchestrator":"none","gates":{"build":{"command":"echo boundary=$GATES_BOUNDARY; exit 1","skip_at":["agent"]}}}}}')"
+  d="$(fx_gates_project '{"hooks":{"verify-quality":{"orchestrator":"none","severity":"error","gates":{"build":{"command":"echo boundary=$GATES_BOUNDARY; exit 1","skip_at":["agent"]}}}}}')"
   trap 'fx_cleanup "$d"' EXIT
   v="$d/.specify/gates/verify.sh"
   out="$(CLAUDE_PROJECT_DIR="$d" bash "$v" --boundary agent 2>&1)"
@@ -135,7 +135,7 @@ every declared gate (constitution 1.1.0, Principle III).
   # verifies: FR-007, SC-003
   set -eu
   . tests/lib/fixture.sh
-  d="$(fx_gates_project '{"hooks":{"verify-quality":{"orchestrator":"none","gates":{"build":{"command":"true","skip_at":["ci"]}}}}}')"
+  d="$(fx_gates_project '{"hooks":{"verify-quality":{"orchestrator":"none","severity":"error","gates":{"build":{"command":"true","skip_at":["ci"]}}}}}')"
   trap 'fx_cleanup "$d"' EXIT
   rc=0; out="$(CLAUDE_PROJECT_DIR="$d" bash "$d/.specify/gates/verify.sh" --boundary ci 2>&1)" || rc=$?
   test "$rc" -eq 1
