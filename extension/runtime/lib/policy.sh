@@ -9,6 +9,7 @@
 #   gates_project_gate_names           # project gate names, key order
 #   gates_project_gate_get <name> <field>
 #   gates_project_gate_skip_at <name>  # compact JSON array or empty
+#   gates_project_gates_declared       # [{name, skip_at}] for parity
 #   gates_declared_skip <boundary> <skip_at-json>  # the boundary-skip
 #                                      # decision; feature 007 reuses it
 #
@@ -188,6 +189,24 @@ gates_project_gate_skip_at() { # <name>: compact JSON array, empty when absent
         ((.hooks["verify-quality"].gates // {})[$n] // {}).skip_at
         | if type == "array" then . else empty end
     ' "$file" 2>/dev/null || true
+}
+
+# The declared gate set for the parity gate (research R7): a compact JSON
+# array of {"name", "skip_at"} in key order, read from the policy afresh
+# (not from the list verify.sh ran). Unlike the accessors above it fails
+# (status 1, no output) when the policy cannot be read, so parity fails
+# closed instead of comparing against an empty set.
+gates_project_gates_declared() {
+    local file
+    file="$(gates_policy_file)"
+    [[ -f "$file" ]] || return 1
+    jq -ce '
+        (.hooks["verify-quality"].gates // {})
+        | if type == "object" then
+            [ to_entries[] | select(.value != null)
+              | { name: .key, skip_at: (.value.skip_at // []) } ]
+          else [] end
+    ' "$file" 2>/dev/null
 }
 
 # The one boundary-skip decision (research R6): an item whose declaration

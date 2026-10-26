@@ -666,6 +666,16 @@ elif [[ "$DRY_RUN" != "1" &&"$ATT_ENABLED" != "false" && "$PARITY_SEV" != "off" 
         done | awk 'NF && !seen[$0]++ { printf "%s%s", sep, $0; sep = "; " }')"
     fi
     [[ -n "$pin_problems" ]] && PARITY_DRIFT="$pin_problems${PARITY_DRIFT:+; $PARITY_DRIFT}"
+    # The gate set (feature 006, research R7): every project gate the policy
+    # declares ran, or, at agent and git, was skipped by a declaration naming
+    # this boundary. At ci every declared gate must have run (constitution,
+    # Principle III). Reported next to any version drift, not instead of it.
+    if pg_declared="$(gates_project_gates_declared)"; then
+        pg_unrun="$(gates_declared_not_run "$GATES_BOUNDARY" "$pg_declared" "$parity_input")"
+    else
+        pg_unrun="declared gates not run at $GATES_BOUNDARY: the policy's gate set could not be read"
+    fi
+    [[ -n "$pg_unrun" ]] && PARITY_DRIFT="${PARITY_DRIFT:+$PARITY_DRIFT; }$pg_unrun"
     if [[ -z "$PARITY_DRIFT" ]]; then
         record "parity" "pass" ""
         att_gate "parity" "" "" "" "" "" "pass" "" 0

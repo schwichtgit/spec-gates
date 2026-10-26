@@ -267,6 +267,94 @@ else
     else
         fail "boundary label wrong: $LABEL"
     fi
+
+    # Project gates without skip_at (feature 006) run at every boundary:
+    # the same results again, and the parity gate's set check passes.
+    printf '%s' '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error", "custom_command": "true",
+        "gates": { "lint": { "command": "true" }, "soft": { "command": "exit 1", "severity": "warning" } } } } }' \
+        >"$WORKDIR/.specify/gates/policy.json"
+    A="$(run_boundary agent)"
+    G="$(run_boundary git)"
+    C="$(run_boundary ci)"
+    if [[ "$A" == "$G" && "$G" == "$C" ]] \
+        && [[ "$(jq -c '[.gates[] | [.name, .status]]' <<<"$C")" == '[["custom","pass"],["lint","pass"],["soft","warn"],["spec","pass"],["parity","pass"]]' ]]; then
+        pass "project gates without skip_at: agent == git == ci, parity passes"
+    else
+        fail "project gates without skip_at: boundary results diverged or parity failed"
+        printf 'agent: %s\ngit:   %s\nci:    %s\n' "$A" "$G" "$C"
+    fi
+fi
+
+# ===========================================================================
+# Part 4: the parity gate's gate-set check (feature 006, research R7)
+# ===========================================================================
+# gates_declared_not_run is fed the declared set and this run's gate
+# entries directly: a run of verify.sh cannot drop a gate on purpose.
+echo ""
+echo "=== parity: every declared gate ran, or was skipped by declaration ==="
+unrun() { # <boundary> <declared-json> <gates-json>
+    (
+        # shellcheck source=../extension/runtime/lib/attest.sh disable=SC1091
+        source "$REPO_ROOT/extension/runtime/lib/attest.sh"
+        gates_declared_not_run "$@"
+    )
+}
+expect_unrun() { # <name> <wanted> <boundary> <declared-json> <gates-json>
+    local got
+    got="$(unrun "$3" "$4" "$5")"
+    if [[ "$got" == "$2" ]]; then
+        pass "$1"
+    else
+        fail "$1 (got '$got', want '$2')"
+    fi
+}
+DECL='[{"name":"lint","skip_at":[]},{"name":"build","skip_at":["agent"]}]'
+RAN_LINT='{"name":"lint","result":"pass"}'
+expect_unrun "ci: a declared gate missing from the run is named" \
+    "declared gates not run at ci: build" ci "$DECL" "[$RAN_LINT]"
+expect_unrun "ci: every gate missing is named, in declared order" \
+    "declared gates not run at ci: lint, build" ci "$DECL" '[{"name":"spec","result":"pass"}]'
+expect_unrun "ci: passes when every declared gate ran (fail and warn count as ran)" \
+    "" ci "$DECL" '[{"name":"lint","result":"fail"},{"name":"build","result":"warn"}]'
+expect_unrun "ci: a declared skip never covers a gate at ci" \
+    "declared gates not run at ci: build" ci "$DECL" \
+    "[$RAN_LINT,{\"name\":\"build\",\"result\":\"skipped\",\"declared_skip\":\"agent\"}]"
+expect_unrun "agent: a gate skipped by a declaration naming agent is covered" \
+    "" agent "$DECL" "[$RAN_LINT,{\"name\":\"build\",\"result\":\"skipped\",\"declared_skip\":\"agent\"}]"
+expect_unrun "agent: a skip the declaration does not name (only git) fails" \
+    "declared gates not run at agent: build" agent '[{"name":"build","skip_at":["git"]}]' \
+    '[{"name":"build","result":"skipped","declared_skip":"agent"}]'
+DECL_B='[{"name":"build","skip_at":["agent","git"]}]'
+expect_unrun "git: a skip recorded for another boundary fails" \
+    "declared gates not run at git: build" git "$DECL_B" \
+    '[{"name":"build","result":"skipped","declared_skip":"agent"}]'
+expect_unrun "agent: a skip without declared_skip (not a declaration) fails" \
+    "declared gates not run at agent: build" agent "$DECL_B" '[{"name":"build","result":"skipped"}]'
+expect_unrun "none (no --boundary): a declared skip does not cover" \
+    "declared gates not run at none: build" none "$DECL_B" \
+    '[{"name":"build","result":"skipped","declared_skip":"agent"}]'
+expect_unrun "no declared gates: nothing to report" "" ci '[]' "[$RAN_LINT]"
+expect_unrun "unreadable input fails closed" \
+    "declared gates not run at ci: the gate set could not be compared" ci 'not-json' '[]'
+
+# Through verify.sh: a runner that lists no project gate (stubbed in the
+# projected lib/policy.sh) runs none, and parity names the declared one.
+if command -v jq >/dev/null 2>&1; then
+    PD="$(mktemp -d 2>/dev/null || mktemp -d -t gates-parity-set)"
+    mkdir -p "$PD/.specify/gates/lib"
+    cp "$REPO_ROOT/extension/runtime/verify.sh" "$PD/.specify/gates/"
+    cp "$REPO_ROOT/extension/runtime/lib/"*.sh "$PD/.specify/gates/lib/"
+    printf '%s' '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error",
+        "gates": { "lint": { "command": "true" } } } } }' >"$PD/.specify/gates/policy.json"
+    printf '\ngates_project_gate_names() { :; }\n' >>"$PD/.specify/gates/lib/policy.sh"
+    rc=0
+    out="$(CLAUDE_PROJECT_DIR="$PD" bash "$PD/.specify/gates/verify.sh" --boundary ci 2>&1)" || rc=$?
+    if [[ "$rc" == 2 ]] && grep -qx '  \[fail\] parity -- declared gates not run at ci: lint' <<<"$out"; then
+        pass "verify.sh: parity fails naming a declared gate the run dropped (exit 2)"
+    else
+        fail "verify.sh: parity did not name the dropped gate (exit $rc): $out"
+    fi
+    rm -rf "$PD"
 fi
 
 # --- version lockstep: every version-bearing file agrees ---
