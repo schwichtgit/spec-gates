@@ -762,7 +762,10 @@ cp -R "$BH" "$LONGB"
 NM="$WORKDIR/node-mods"
 hooked_repo "$NM" "$LONGB" v1.9.0 '.hooks.prettier = {"include": ["**/*.md"], "orchestrator": "none", "severity": "error"}'
 mkdir -p "$NM/node_modules/.bin"
-printf '#!/bin/sh\npwd >>"%s"\nexit 0\n' "$WORKDIR/node-mods.ran" >"$NM/node_modules/.bin/prettier"
+# The gate asks the binary that ran for its version (#274); answer that
+# without logging, so only check runs are counted.
+# shellcheck disable=SC2016  # the fake's $1 is expanded by the fake, not here
+printf '#!/bin/sh\n[ "$1" = --version ] && { echo 3.9.9; exit 0; }\npwd >>"%s"\nexit 0\n' "$WORKDIR/node-mods.ran" >"$NM/node_modules/.bin/prettier"
 chmod +x "$NM/node_modules/.bin/prettier"
 printf '# doc\n' >"$NM/doc.md"
 git -C "$NM" add doc.md

@@ -671,7 +671,10 @@ emits a single machine-readable object for workflow steps and CI.
 task or custom step keeps the last 2000 bytes of its output as the
 gate's `detail`. The one-line text report reads the whole output: the
 last line that carries `##gates-fail## <text>` wins (the marker itself
-is stripped from the report and the `detail`, which keep the text).
+is stripped from the report and the `detail`, which keep the text; the
+`detail` leaves a marked line out when another line of the output
+already holds its text, such as a linter's finding or a nested
+`verify.sh --walk` report line, and always for the file linters).
 The file-linter gates mark their first finding that way (a prettier
 `[warn] <file>` line, a markdownlint `<file>:<line>` finding, shellcheck's
 `<file> line N: SC<code> ...`), since their output opens with banners and
@@ -1204,6 +1207,10 @@ The pin sources, in precedence order:
 1. `package-lock.json`, for the node-resolved linters (prettier,
    markdownlint-cli2) only. The npm `shellcheck` package is a downloader
    wrapper whose version is no shellcheck release, so it pins nothing.
+   The gate runs a shellcheck on PATH other than that wrapper when there
+   is one, since the pins below describe such an install, and attests
+   the version the binary it ran reports, never the wrapper's
+   `package.json`.
 2. mise: the `[tools]` table of the first project config mise documents
    that names the tool (`.mise.toml`, `mise.toml`, `mise/config.toml`,
    `.mise/config.toml`, `.config/mise.toml`, `.config/mise/mise.toml`,

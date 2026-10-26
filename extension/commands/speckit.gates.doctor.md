@@ -46,7 +46,8 @@ nothing is checked.
      one **fails** with the validator's errors (every boundary refuses to
      run the gates until it is fixed), and the linters are not listed.
    - **Policy-enabled linters**: each linter the policy turns on must
-     resolve (`node_modules/.bin`, then PATH). A missing one is an
+     resolve (`node_modules/.bin`, then PATH; shellcheck from PATH first,
+     the npm wrapper in `node_modules` only without one). A missing one is an
      enforcement gap, so it fails. A deprecated field that no gate reads
      (`on_missing_runner`, `on_missing_tests`) gets a `[rec]` line to remove
      it; it does not fail.

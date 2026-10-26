@@ -317,6 +317,15 @@ if command -v shellcheck >/dev/null 2>&1; then
     linter_summary shellcheck "$NONE_SHELL" sh '#!/bin/bash\nrm -rf $HOME/x\n'
     expect "shellcheck: the summary names the first finding, not the footer" \
         "$(grep -cE '^  \[fail\] shellcheck -- bad[0-9]+\.sh line 2: SC2086 \(info\): ' <<<"$S")" 1
+    # Its mark joins two of its lines, so no line holds it verbatim; the
+    # detail still names the file once (#279).
+    sc1="$WORKDIR/once-shellcheck"
+    project "$sc1" "$NONE_SHELL"
+    # shellcheck disable=SC2016  # the bad file's literal $HOME
+    printf '#!/bin/bash\nrm -rf $HOME/x\n' >"$sc1/once-bad.sh"
+    expect "shellcheck: the --json detail names the failing file once" \
+        "$(CLAUDE_PROJECT_DIR="$sc1" bash "$sc1/.specify/gates/verify.sh" --boundary ci --json 2>/dev/null \
+            | jq -r '.gates[] | select(.name == "shellcheck") | .detail' | grep -c 'once-bad\.sh' || true)" 1
 else
     skip "shellcheck summary" "shellcheck not installed"
 fi
@@ -327,6 +336,24 @@ if have_node_linters; then
     linter_summary markdownlint '{ "hooks": { "markdownlint": { "include": ["**/*.md"], "orchestrator": "none", "severity": "error" }, "verify-quality": { "orchestrator": "none", "severity": "error" } } }' md '#Bad md\n'
     expect "markdownlint: the summary names the first finding, not the banner" \
         "$(grep -cE '^  \[fail\] markdownlint -- bad[0-9]+\.md:1(:1)? error MD' <<<"$S")" 1
+    # The dispatch's marker repeats a finding the output already holds, so
+    # the detail must not name the file a second time (#279).
+    # <tool> <bad-content> <needle>: one file with one finding, whose line
+    # <needle> matches; markdownlint's banner names its files too.
+    named_once() {
+        local d="$WORKDIR/once-$1" txt json det
+        project "$d" "{ \"hooks\": { \"$1\": { \"include\": [\"**/*.md\"], \"orchestrator\": \"none\", \"severity\": \"error\" }, \"verify-quality\": { \"orchestrator\": \"none\", \"severity\": \"error\" } } }"
+        printf '%b' "$2" >"$d/once-bad.md"
+        txt="$(CLAUDE_PROJECT_DIR="$d" bash "$d/.specify/gates/verify.sh" --boundary ci 2>&1 || true)"
+        json="$(CLAUDE_PROJECT_DIR="$d" bash "$d/.specify/gates/verify.sh" --boundary ci --json 2>/dev/null || true)"
+        det="$(jq -r --arg t "$1" '.gates[] | select(.name == $t) | .detail' <<<"$json")"
+        expect "$1: the text report names the failing file once" \
+            "$(grep -c 'once-bad\.md' <<<"$txt" || true)" 1
+        expect "$1: the --json detail names the finding once" \
+            "$(grep -cE "$3" <<<"$det" || true)" 1
+    }
+    named_once prettier '# Title\n\n- x\n-   y\n' 'once-bad\.md'
+    named_once markdownlint '# Title\n\n#Bad\n' '^once-bad\.md:3(:1)? error MD018'
 else
     skip "prettier and markdownlint summaries" "run npm ci to install pinned linters"
 fi
@@ -975,6 +1002,13 @@ if have_node_linters; then
     rc=0
     (GATES_LOCK_WAIT_S=3 CLAUDE_PROJECT_DIR="$DW" bash "$DW/.specify/gates/verify.sh" --boundary git >/dev/null 2>&1) || rc=$?
     expect "nested walk: passes once the file is fixed" "$rc|$(att_lines)" "0|2"
+    # The walk's mark repeats its own report line, so the custom gate's
+    # detail names the file once (#279).
+    printf '#  Bad   md\n\n\n- x\n' >"$DW/bad.md"
+    nw_det="$(GATES_LOCK_WAIT_S=3 CLAUDE_PROJECT_DIR="$DW" bash "$DW/.specify/gates/verify.sh" --boundary git --json 2>/dev/null \
+        | jq -r '.gates[] | select(.name == "custom") | .detail' || true)"
+    expect "nested walk: the custom gate's --json detail names the file once" \
+        "$(grep -c 'bad\.md' <<<"$nw_det" || true)" 1
 else
     skip "verify.sh --walk" "run npm ci to install pinned prettier"
 fi
