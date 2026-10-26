@@ -7,6 +7,7 @@
 #   gates_pin_version <pkgname> <root>   # lockfile pin, empty when absent (R2)
 #   gates_pin_problems <pkgname> <root>  # conflicting pins, unreadable mise files
 #   gates_attest_append <json> <log> <max>  # append + cap the JSONL log (R4)
+#   gates_declared_not_run <b> <declared> <gates>  # parity's gate-set check (006)
 #
 # All bash 3.2 + jq. Version/pin lookups print an empty string when the
 # answer is unknown -- callers map empty to JSON null.
@@ -359,6 +360,32 @@ gates_pin_mismatches() { # <gates-json-array>
             + (if .name == "shellcheck" then "(install the pinned version: bash .specify/gates/install-shellcheck.sh)"
                else "(run npm ci)" end) ]
         | join("; ")' 2>/dev/null || true
+}
+
+# Gate-set comparison for the synthetic parity gate (feature 006, research
+# R7): <declared-json> is the policy's project gates as
+# [{"name": ..., "skip_at": [...]}] in declared order, <gates-json> this
+# run's GateEntry objects. A declared gate counts as covered when its entry
+# ran (pass, fail, warn), or, at agent or git only, when its entry is
+# skipped with declared_skip naming <boundary> AND its skip_at names it
+# too. Prints "declared gates not run at <boundary>: <names>" naming every
+# other declared gate, or nothing. At ci (and none) that means every
+# declared gate ran: CI runs the full policy (constitution, Principle III).
+gates_declared_not_run() { # <boundary> <declared-json> <gates-json>
+    jq -rn --arg b "${1:-}" --argjson d "${2:-[]}" --argjson g "${3:-[]}" '
+        [ $d[]
+          | . as $decl
+          | ([ $g[] | select(.name == $decl.name) ] | first) as $e
+          | select(
+                ($e != null and ($e.result | IN("pass", "fail", "warn")))
+                or ($e != null and ($b | IN("agent", "git"))
+                    and $e.result == "skipped" and $e.declared_skip == $b
+                    and (($decl.skip_at // []) | index($b)) != null)
+              | not)
+          | $decl.name ]
+        | if length == 0 then empty
+          else "declared gates not run at \($b): \(join(", "))" end' 2>/dev/null \
+        || printf 'declared gates not run at %s: the gate set could not be compared\n' "${1:-}"
 }
 
 # Keep the attestation log out of version control (#69): it is disposable

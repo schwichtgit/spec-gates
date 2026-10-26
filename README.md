@@ -69,7 +69,7 @@ self-evidencing:
   in `--json`: the policy's SHA-256, and per gate the resolved binary,
   detected version, lockfile pin, candidate vs checked file counts,
   result, and duration. Evidence, never file contents.
-- **Canaries** — `canary.sh` plants 16 known violations in disposable
+- **Canaries** — `canary.sh` plants 17 known violations in disposable
   sandboxes (dirty and lint-failing files, dangerous tool calls with and
   without jq, staged secrets, undeclared protected changes, branding,
   failing accept blocks, a tampered effective policy, and more) and requires

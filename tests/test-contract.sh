@@ -538,6 +538,104 @@ printf '%s' '{"git":{"ai_branding":{"terms":["x"]}}}' >"$CL/new.json"
 expect_contains "dropped branding terms are a weakening" "$(devs delta)" "- weakened: git.ai_branding.terms"
 
 echo ""
+echo "=== project gate classification (feature 006, contracts/policy-gates.md) ==="
+# gdev <baseline-vq-json> <effective-vq-json> [delta]: the deviations of
+# hooks.verify-quality, one "<class> <path> <kind>" line each (kind empty
+# unless removed or added).
+gdev() {
+    printf '{"hooks":{"verify-quality":%s}}' "$1" >"$CL/gb.json"
+    printf '{"hooks":{"verify-quality":%s}}' "$2" >"$CL/ge.json"
+    (
+        # shellcheck source=/dev/null
+        source "$REPO_ROOT/extension/runtime/lib/contract.sh"
+        gates_contract_deviations "$CL/gb.json" "$CL/ge.json" "${3:-}" \
+            | awk -F'\t' '{ sub(/ $/, "", $7); print $1 " " $2 (($7 != "") ? " " $7 : "") }'
+    )
+}
+VQ='"orchestrator":"none","severity":"error"'
+GP="hooks.verify-quality.gates"
+expect "a baseline gate set to null is one weakened deviation, removed" \
+    "$(gdev "{$VQ,\"gates\":{\"build\":{\"command\":\"make\",\"severity\":\"error\",\"skip_at\":[\"agent\"]}}}" \
+        "{$VQ,\"gates\":{\"build\":null}}")" "weakened $GP.build removed"
+expect "a baseline gate absent from the effective policy is one weakened deviation, removed" \
+    "$(gdev "{$VQ,\"gates\":{\"build\":{\"command\":\"make\"},\"lint\":{\"command\":\"l\"}}}" \
+        "{$VQ,\"gates\":{\"lint\":{\"command\":\"l\"}}}")" "weakened $GP.build removed"
+expect "a removed gates object removes each baseline gate" \
+    "$(gdev "{$VQ,\"gates\":{\"build\":{\"command\":\"make\"}}}" "{$VQ}")" "weakened $GP.build removed"
+expect "skip_at gaining a boundary (from none) is weakened" \
+    "$(gdev "{$VQ,\"gates\":{\"build\":{\"command\":\"make\"}}}" \
+        "{$VQ,\"gates\":{\"build\":{\"command\":\"make\",\"skip_at\":[\"agent\"]}}}")" "weakened $GP.build.skip_at"
+expect "skip_at gaining a boundary is weakened" \
+    "$(gdev "{$VQ,\"gates\":{\"build\":{\"command\":\"make\",\"skip_at\":[\"agent\"]}}}" \
+        "{$VQ,\"gates\":{\"build\":{\"command\":\"make\",\"skip_at\":[\"agent\",\"git\"]}}}")" "weakened $GP.build.skip_at"
+expect "skip_at losing a boundary is strengthened (delta), no overlay deviation" \
+    "$(gdev "{$VQ,\"gates\":{\"build\":{\"command\":\"make\",\"skip_at\":[\"agent\",\"git\"]}}}" \
+        "{$VQ,\"gates\":{\"build\":{\"command\":\"make\",\"skip_at\":[\"agent\"]}}}" delta)|$(gdev \
+        "{$VQ,\"gates\":{\"build\":{\"command\":\"make\",\"skip_at\":[\"agent\",\"git\"]}}}" \
+        "{$VQ,\"gates\":{\"build\":{\"command\":\"make\",\"skip_at\":[\"agent\"]}}}")" "strengthened $GP.build.skip_at|"
+expect "dropping skip_at entirely is strengthened (delta)" \
+    "$(gdev "{$VQ,\"gates\":{\"build\":{\"command\":\"make\",\"skip_at\":[\"agent\"]}}}" \
+        "{$VQ,\"gates\":{\"build\":{\"command\":\"make\"}}}" delta)" "strengthened $GP.build.skip_at"
+expect "a gate's severity moving right is weakened" \
+    "$(gdev "{$VQ,\"gates\":{\"t\":{\"command\":\"x\",\"severity\":\"error\"}}}" \
+        "{$VQ,\"gates\":{\"t\":{\"command\":\"x\",\"severity\":\"warning\"}}}")" "weakened $GP.t.severity"
+expect "a gate's severity set to warning over the default error is weakened" \
+    "$(gdev "{$VQ,\"gates\":{\"t\":{\"command\":\"x\"}}}" \
+        "{$VQ,\"gates\":{\"t\":{\"command\":\"x\",\"severity\":\"warning\"}}}")" "weakened $GP.t.severity"
+expect "test_severity moving right is weakened" \
+    "$(gdev "{$VQ,\"test_severity\":\"error\"}" "{$VQ,\"test_severity\":\"warning\"}")" \
+    "weakened hooks.verify-quality.test_severity"
+expect "test_severity set to info over the default warning is weakened" \
+    "$(gdev "{$VQ}" "{$VQ,\"test_severity\":\"info\"}")" "weakened hooks.verify-quality.test_severity"
+expect "test_severity moving left is strengthened (delta)" \
+    "$(gdev "{$VQ,\"test_severity\":\"warning\"}" "{$VQ,\"test_severity\":\"error\"}" delta)" \
+    "strengthened hooks.verify-quality.test_severity"
+expect "a gate's command is changed" \
+    "$(gdev "{$VQ,\"gates\":{\"t\":{\"command\":\"x\"}}}" "{$VQ,\"gates\":{\"t\":{\"command\":\"y\"}}}")" \
+    "changed $GP.t.command"
+expect "a gate's timeout_s is changed, longer or shorter" \
+    "$(gdev "{$VQ,\"gates\":{\"t\":{\"command\":\"x\",\"timeout_s\":60}}}" \
+        "{$VQ,\"gates\":{\"t\":{\"command\":\"x\",\"timeout_s\":6000}}}")|$(gdev \
+        "{$VQ,\"gates\":{\"t\":{\"command\":\"x\"}}}" "{$VQ,\"gates\":{\"t\":{\"command\":\"x\",\"timeout_s\":5}}}")" \
+    "changed $GP.t.timeout_s|changed $GP.t.timeout_s"
+expect "gate_timeout_s is changed" \
+    "$(gdev "{$VQ,\"gate_timeout_s\":600}" "{$VQ,\"gate_timeout_s\":900}")" "changed hooks.verify-quality.gate_timeout_s"
+expect "a gate the baseline does not have is no deviation" \
+    "$(gdev "{$VQ,\"gates\":{\"t\":{\"command\":\"x\"}}}" \
+        "{$VQ,\"gates\":{\"t\":{\"command\":\"x\"},\"extra\":{\"command\":\"y\",\"skip_at\":[\"agent\"]}}}")" ""
+expect "delta: a gate the new baseline adds is one strengthened line, added" \
+    "$(gdev "{$VQ}" "{$VQ,\"gates\":{\"extra\":{\"command\":\"y\",\"skip_at\":[\"agent\"]}}}" delta)" \
+    "strengthened $GP.extra added"
+expect "a policy without the new keys: no new deviations" \
+    "$(gdev "{$VQ}" "{$VQ,\"custom_command\":\"x\"}")" ""
+OUT="$(printf '{"hooks":{"verify-quality":{"gates":{"build":{"command":"m"}}}}}' >"$CL/gb.json"
+    printf '{"hooks":{"verify-quality":{"gates":{"build":null}}}}' >"$CL/ge.json"
+    (
+        # shellcheck source=/dev/null
+        source "$REPO_ROOT/extension/runtime/lib/contract.sh"
+        gates_contract_deviations "$CL/gb.json" "$CL/ge.json" | gates_contract_print_deviations "deviation "
+        gates_contract_deviations "$CL/gb.json" "$CL/ge.json" delta | gates_contract_print_deviations "- " delta
+    ))"
+expect "a removed gate prints as removed, in both forms" "$OUT" \
+    "$(printf 'deviation (weakened): %s.build: removed\n- removed (weakened): %s.build' "$GP" "$GP")"
+# Through sync: an overlay restates only what it changes on a baseline gate.
+BG="$WORKDIR/base-gates"
+mkbaseline "$BG" v1.0.0 '{"hooks":{"verify-quality":{"orchestrator":"none","severity":"error","gates":{"build":{"command":"touch built"},"lint":{"command":"true"}}}}}'
+OG="$WORKDIR/overlay-gates"
+project "$OG" "$(overlay_for "$BG" '.hooks["verify-quality"].gates = {"build":{"skip_at":["agent"]},"lint":null}')"
+OUT="$(contract "$OG" sync)"
+expect_contains "an overlay adding skip_at to a baseline gate syncs" "$OUT" "EXIT=0"
+expect_contains "the added skip is a weakened deviation" "$OUT" "deviation (weakened): $GP.build.skip_at"
+expect_contains "the removed baseline gate is a weakened deviation" "$OUT" "deviation (weakened): $GP.lint: removed"
+expect "the effective gate keeps the baseline's command" \
+    "$(jq -c '.hooks["verify-quality"].gates.build' "$OG/.specify/gates/policy.effective.json")" \
+    '{"command":"touch built","skip_at":["agent"]}'
+OUT="$(gate_out "$OG")"
+expect_contains "ci runs the baseline gate and passes" "$OUT" "EXIT=0"
+expect "the merged gate ran at ci; the removed one is not listed" \
+    "$([[ -f "$OG/built" ]] && echo ran):$(grep -c '\] lint' <<<"$OUT" || true)" "ran:0"
+
+echo ""
 echo "=== partial overlays (#135) ==="
 OX="$WORKDIR/overlay-extends-only"
 project "$OX" "$(jq -nc --arg src "$B" '{extends: {source: $src, version: "v1.0.0"}}')"

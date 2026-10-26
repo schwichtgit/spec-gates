@@ -461,6 +461,47 @@ expect "a nested run does not wait on its parent's lock" \
 expect "the nested run leaves the parent's lock to the parent" \
     "$([[ -e "$DN/.specify/gates/.lock" ]] && echo held || echo free)" free
 
+# The agent-boundary skip names what it defers (FR-019, constitution
+# Principle III). A fake holder: a live process written into the owner file.
+DLD="$WORKDIR/lock-deferred"
+sleep 120 &
+FAKE=$!
+deferred_run() { # <policy-json> [--json]: the agent run's stderr (or stdout with --json)
+    rm -rf "$DLD"
+    project "$DLD" "$1"
+    mkdir -p "$DLD/.specify/gates/.lock"
+    printf '%s\ngit\n\n' "$FAKE" >"$DLD/.specify/gates/.lock/owner"
+    if [[ "${2:-}" == "--json" ]]; then
+        CLAUDE_PROJECT_DIR="$DLD" bash "$DLD/.specify/gates/verify.sh" --boundary agent --json 2>/dev/null || true
+    else
+        { CLAUDE_PROJECT_DIR="$DLD" bash "$DLD/.specify/gates/verify.sh" --boundary agent >/dev/null; } 2>&1 || true
+    fi
+}
+DPOL='{ "hooks": { "prettier": { "include": ["**/*.md"], "severity": "error" },
+    "shellcheck": { "include": ["**/*.sh"], "severity": "error" },
+    "verify-quality": { "orchestrator": "none", "severity": "error",
+        "gates": { "lint": { "command": "true" }, "build": { "command": "true", "skip_at": ["agent"] },
+                   "pkg": { "command": "true", "skip_at": ["git"] } } } } }'
+expect "the deferral names the gates it does not run, and the declared skips" \
+    "$(deferred_run "$DPOL")" \
+    "gates: skipped: the gate run of pid $FAKE (git) is in progress; deferred: prettier, shellcheck, lint, pkg, spec, parity; skipped by declaration at agent: build"
+expect "--json: deferred and declared_skip, the reason unchanged" \
+    "$(deferred_run "$DPOL" --json | jq -c '[.result, .reason, .deferred, .declared_skip]')" \
+    "[\"skipped\",\"skipped: the gate run of pid $FAKE (git) is in progress\",[\"prettier\",\"shellcheck\",\"lint\",\"pkg\",\"spec\",\"parity\"],[\"build\"]]"
+TPOL='{ "hooks": { "verify-quality": { "orchestrator": "task", "severity": "error" } },
+    "spec": { "enabled": false }, "attestation": { "parity": "off" } }'
+expect "task orchestrator, spec and parity off: only the task steps" \
+    "$(deferred_run "$TPOL")" \
+    "gates: skipped: the gate run of pid $FAKE (git) is in progress; deferred: task-lint, task-test"
+expect "--json: no declared_skip without declared skips" \
+    "$(deferred_run "$TPOL" --json | jq -c '[.deferred, has("declared_skip")]')" '[["task-lint","task-test"],false]'
+expect "a policy that extends a baseline defers the contract gate first" \
+    "$(deferred_run '{ "extends": { "source": "x", "version": "v1" },
+        "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error", "custom_command": "true" } } }' --json \
+        | jq -c '.deferred')" '["contract","custom","spec","parity"]'
+kill "$FAKE" 2>/dev/null || true
+wait "$FAKE" 2>/dev/null || true
+
 # --- empty gate set does not crash under bash 3.2, and --json is well-formed ---
 echo ""
 echo "=== empty gate set (bash 3.2 regression) ==="
@@ -752,6 +793,55 @@ expect "no gates key: the report is unchanged" \
     "$(pg_run "$PG" --boundary ci)" "$(printf 'gates: boundary=ci failed=0 warnings=0\n  [pass] custom\n  [pass] spec\n  [pass] parity\nEXIT=0')"
 expect "no gates key: the attestation lists the same gates" \
     "$(pg_att "$PG" '[.gates[].name]')" '["custom","spec","parity"]'
+
+# --- declared skips (feature 006, US2): skip_at keeps a gate out of the
+# agent or git boundary, reported by name, never out of CI ---
+echo ""
+echo "=== project gates: declared skips ==="
+PG="$WORKDIR/pg-skip"
+project "$PG" "{ \"hooks\": { \"verify-quality\": { \"orchestrator\": \"none\", \"severity\": \"error\",
+    \"gates\": { \"build\": { \"command\": \"touch '$PG/ran-build'\", \"skip_at\": [\"agent\"] },
+                 \"pkg\": { \"command\": \"touch '$PG/ran-pkg'\", \"skip_at\": [\"git\"] } } } } }"
+ran() { # which of the two gates started a process: "build pkg", "pkg", ...
+    local r=""
+    [[ -e "$PG/ran-build" ]] && r="build"
+    [[ -e "$PG/ran-pkg" ]] && r="${r:+$r }pkg"
+    rm -f "$PG/ran-build" "$PG/ran-pkg"
+    printf '%s' "${r:-none}"
+}
+OUT="$(pg_run "$PG" --boundary agent)"
+expect_has "skip_at agent: skipped at agent, by name" "$OUT" "  [skipped] build -- skipped by declaration at agent"
+expect_has "skip_at git: runs at agent" "$OUT" "  [pass] pkg"
+expect_has "a declared skip counts as neither failed nor warned" "$OUT" "gates: boundary=agent failed=0 warnings=0"
+expect "skip_at agent: no process started at agent" "$(ran)" "pkg"
+expect "attestation: result skipped, the reason, declared_skip agent" \
+    "$(pg_att "$PG" '.gates[] | select(.name == "build") | [.result, .reason, .declared_skip, .duration_s]')" \
+    '["skipped","skipped by declaration at agent","agent",0]'
+expect "attestation: a gate that ran has no declared_skip" \
+    "$(pg_att "$PG" '.gates[] | select(.name == "pkg") | has("declared_skip")')" false
+expect "--json: skipped, with the declaration as detail" \
+    "$(CLAUDE_PROJECT_DIR="$PG" bash "$PG/.specify/gates/verify.sh" --boundary agent --json 2>/dev/null \
+        | jq -c '.gates[] | select(.name == "build") | [.status, .detail]')" \
+    '["skipped","skipped by declaration at agent"]'
+ran >/dev/null
+OUT="$(pg_run "$PG" --boundary git)"
+expect_has "skip_at git: skipped at git" "$OUT" "  [skipped] pkg -- skipped by declaration at git"
+expect_has "skip_at agent: runs at git" "$OUT" "  [pass] build"
+expect "at git only the agent-skipped gate started" "$(ran)" "build"
+OUT="$(pg_run "$PG" --boundary ci)"
+expect "at ci every gate runs" "$(ran)" "build pkg"
+expect "at ci no entry carries declared_skip" \
+    "$(pg_att "$PG" '[.gates[] | select(has("declared_skip"))] | length')" 0
+OUT="$(pg_run "$PG" 2>&1)"
+expect "without --boundary every gate runs" "$(ran)" "build pkg"
+expect "a skipped gate is never counted as passed" \
+    "$(CLAUDE_PROJECT_DIR="$PG" bash "$PG/.specify/gates/verify.sh" --boundary agent --json 2>/dev/null \
+        | jq -c '[.gates[] | select(.status == "pass") | .name]')" '["pkg","spec","parity"]'
+ran >/dev/null
+expect "--dry-run plans a skipped gate and names the skip" \
+    "$(CLAUDE_PROJECT_DIR="$PG" bash "$PG/.specify/gates/verify.sh" --boundary agent --dry-run --json 2>/dev/null \
+        | jq -r '.gates[] | select(.name == "build") | "\(.status): \(.detail)"' | sed "s|$PG|PG|"):$(ran)" \
+    "planned: touch 'PG/ran-build' (time limit 600s; skipped by declaration at agent):none"
 
 # --- lib/watch.sh: gates_run_watched (feature 006) ---
 echo ""

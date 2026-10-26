@@ -679,7 +679,7 @@ because no legitimate run looks like that.
 
 **Canaries.** `canary.sh` (projected next to `verify.sh`) plants known
 violations in `mktemp` sandboxes and requires the real entrypoints to
-reject them, 16 probes in all:
+reject them, 17 probes in all:
 
 - the format, markdown and shell probes run through `verify.sh` itself;
   when the tool is missing but the policy enables it, the probe fails as
@@ -696,6 +696,10 @@ reject them, 16 probes in all:
   protected file without its trailer, and a message naming a branding term;
 - `pr` runs `pr-check.sh` over a sandbox range with an undeclared protected
   change and over a description containing an AI-ism;
+- `project` declares a project gate that always fails and skips the agent
+  boundary: `verify.sh --boundary ci` must fail naming it, and the agent
+  run must report it `skipped by declaration at agent`, since a declared
+  skip never reaches CI (constitution, Principle III);
 - `spec`, `errexit` and `contract` are described with their gates below.
 
 Hooks run by path, as Claude Code runs them, so their shebang picks the
