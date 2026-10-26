@@ -328,11 +328,26 @@ _gates_find_files() { # <root> <dir>: files under <dir>, relative to <root>
 # Resolve the binary for <tool> under <root>, preferring the project-pinned
 # install so the version is deterministic across the agent, git, and CI
 # boundaries. Order: node_modules/.bin (lockfile-pinned) -> PATH -> none.
+# The exception is shellcheck (#274): the npm "shellcheck" package is a
+# downloader wrapper that fetches whatever release is latest at install
+# time, so package-lock.json pins nothing for it; its pins (mise,
+# .tool-versions, install-shellcheck.sh) describe a PATH install, which
+# wins, and the wrapper runs only when PATH has no other shellcheck. A
+# wrapper on PATH (npm scripts put node_modules/.bin first) is passed over
+# the same way, so the result is then a full path.
 # Deliberately NOT `npx <tool>`: bare npx downloads "latest" (or a stale cached
 # version), which manufactures a tool version and breaks parity. Echoes the
 # binary path, or nothing when the tool is unavailable.
 _gates_tool_bin() { # <binary-name> <root>
-    local binname="$1" root="$2"
+    local binname="$1" root="$2" p
+    if [[ "$binname" == shellcheck ]]; then
+        while IFS= read -r p; do
+            [[ -z "$p" || "$p" == */node_modules/.bin/shellcheck ]] && continue
+            [[ "$p" == "$(command -v shellcheck)" ]] && p=shellcheck
+            printf '%s\n' "$p"
+            return 0
+        done <<<"$(type -ap shellcheck 2>/dev/null)"
+    fi
     if [[ -x "$root/node_modules/.bin/$binname" ]]; then
         printf '%s\n' "$root/node_modules/.bin/$binname"
     elif command -v "$binname" >/dev/null 2>&1; then

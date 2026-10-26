@@ -79,6 +79,12 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   first finding twice: once from the tool, once from the marked line the
   text report's summary is read from. The detail now leaves the marked
   line out; a task or custom step's marked text stays.
+- **The attested shellcheck version is the binary's** (#274). With the
+  npm `shellcheck` downloader wrapper in `node_modules`, the gate ran it
+  and attested its `package.json` version, so parity reported drift
+  against a real pin that was not there. A shellcheck on PATH other than
+  the wrapper now runs first, and the version attested is the one the
+  binary that ran reports.
 
 ## 0.4.2 — 2026-10-25
 

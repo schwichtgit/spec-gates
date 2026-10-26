@@ -37,11 +37,15 @@ gates_sha256() { # <file>
 _GATES_VER_KEYS=()
 _GATES_VER_VALS=()
 
-# Detect a tool's version once per run. Node-resolved tools read
-# node_modules/<pkg>/package.json (fast, exact, cannot hang); PATH tools run
-# their version command once and take the first version-shaped token.
-gates_tool_version() { # <binname> <root>
-    local bin="${1:-}" root="${2:-}"
+# Detect a tool's version once per run. The node linters resolved from
+# node_modules read node_modules/<pkg>/package.json (fast, exact, cannot
+# hang); any other tool runs its version command once and takes the first
+# version-shaped token. <path> is the binary the gate ran, when known: the
+# version is that binary's. The npm "shellcheck" wrapper's package.json
+# carries the wrapper's own version, no shellcheck release (#274), so for
+# that tool the binary is always asked.
+gates_tool_version() { # <binname> <root> [path]
+    local bin="${1:-}" root="${2:-}" path="${3:-}"
     [[ -z "$bin" ]] && return 0
     local i=0
     while [[ $i -lt ${#_GATES_VER_KEYS[@]} ]]; do
@@ -52,10 +56,12 @@ gates_tool_version() { # <binname> <root>
         i=$((i + 1))
     done
     local ver=""
-    if [[ -x "$root/node_modules/.bin/$bin" && -f "$root/node_modules/$bin/package.json" ]]; then
+    [[ -z "$path" ]] && path="$bin"
+    if [[ "$_GATES_NODE_LINTERS" == *" $bin "* && -x "$root/node_modules/.bin/$bin" \
+        && -f "$root/node_modules/$bin/package.json" ]]; then
         ver="$(jq -r '.version // empty' "$root/node_modules/$bin/package.json" 2>/dev/null || true)"
-    elif command -v "$bin" >/dev/null 2>&1; then
-        ver="$("$bin" --version 2>/dev/null | grep -Eo '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n 1 || true)"
+    elif command -v "$path" >/dev/null 2>&1; then
+        ver="$("$path" --version 2>/dev/null | grep -Eo '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n 1 || true)"
     fi
     _GATES_VER_KEYS+=("$bin")
     _GATES_VER_VALS+=("$ver")

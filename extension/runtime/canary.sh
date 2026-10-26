@@ -142,10 +142,19 @@ record() { # <id> <blocked|accepted|skipped> <outcome> <counts-as-failure:0|1>
 
 # ---------------------------------------------------------------------------
 # Host lookups: tool resolution mirrors the gate's own order
-# (node_modules/.bin -> PATH), and "policy-enabled" mirrors doctor's gap
+# (node_modules/.bin -> PATH; for shellcheck a PATH install other than the
+# npm wrapper first, #274), and "policy-enabled" mirrors doctor's gap
 # rule — a policy-enabled tool that is missing fails the suite.
 # ---------------------------------------------------------------------------
 host_tool_bin() { # <binname>
+    local p
+    if [[ "$1" == shellcheck ]]; then
+        while IFS= read -r p; do
+            [[ -z "$p" || "$p" == */node_modules/.bin/shellcheck ]] && continue
+            printf '%s\n' "$p"
+            return 0
+        done <<<"$(type -ap shellcheck 2>/dev/null)"
+    fi
     if [[ -x "$PROJECT_ROOT/node_modules/.bin/$1" ]]; then
         printf '%s\n' "$PROJECT_ROOT/node_modules/.bin/$1"
     elif command -v "$1" >/dev/null 2>&1; then

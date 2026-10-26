@@ -527,7 +527,7 @@ run_gate() { # name severity cmd...
 
     local version="" pinned=""
     if [[ -n "$binname" ]]; then
-        version="$(gates_tool_version "$binname" "$PROJECT_ROOT")"
+        version="$(gates_tool_version "$binname" "$PROJECT_ROOT" "$bin")"
         pinned="$(gates_pin_version "$binname" "$PROJECT_ROOT")"
         PIN_TOOLS+=("$binname")
     fi

@@ -455,6 +455,49 @@ expect "npm shellcheck wrapper beside .tool-versions: the .tool-versions pin" \
 expect "npm shellcheck wrapper beside .tool-versions: no conflict" "$(problems_of shellcheck "$DS")" ""
 rm -f "$DS/package-lock.json" "$DS/.tool-versions"
 
+# --- 10c: the npm shellcheck wrapper in node_modules (#274) ---
+# Its package.json carries the wrapper's version (0.5.0 here), no release
+# of the linter. A shellcheck on PATH other than the wrapper runs and
+# is the one versioned; the wrapper runs only without one, and then its
+# version is what the binary answers (0.10.0 here), not its package's.
+echo ""
+echo "=== npm shellcheck wrapper: the binary that runs is versioned (#274) ==="
+DW="$WORKDIR/sc-wrapper"
+project "$DW" '{ "hooks": { "shellcheck": { "include": ["**/*.sh"], "exclude": [".specify/**"], "orchestrator": "none", "severity": "error" }, "verify-quality": { "orchestrator": "none", "severity": "error" } } }'
+rm -f "$DW/node_modules" "$DW/package-lock.json"
+mkdir -p "$DW/node_modules/.bin" "$DW/node_modules/shellcheck" "$WORKDIR/sc-real"
+printf '{"name":"shellcheck","version":"0.5.0"}\n' >"$DW/node_modules/shellcheck/package.json"
+# shellcheck disable=SC2016  # the fakes' own expansions
+printf '#!/bin/sh\necho "$*" >>"%s"\n[ "$1" = --version ] && echo "version: 0.10.0"\nexit 0\n' \
+    "$WORKDIR/sc-wrapper-ran" >"$DW/node_modules/.bin/shellcheck"
+# shellcheck disable=SC2016
+printf '#!/bin/sh\n[ "$1" = --version ] && echo "version: 0.11.0"\nexit 0\n' >"$WORKDIR/sc-real/shellcheck"
+chmod +x "$DW/node_modules/.bin/shellcheck" "$WORKDIR/sc-real/shellcheck"
+printf 'shellcheck 0.11.0\n' >"$DW/.tool-versions"
+printf '#!/bin/sh\necho ok\n' >"$DW/ok.sh"
+sc_att() { # <PATH>: "<version>|<bin>|<parity result>" from a --json run
+    PATH="$1" gate_json "$DW" | jq -r '.attestation.gates
+        | "\(.[] | select(.name == "shellcheck") | .version)|\(.[] | select(.name == "shellcheck") | .bin)|\(.[] | select(.name == "parity") | .result)"'
+}
+rm -f "$WORKDIR/sc-wrapper-ran"
+expect "wrapper in node_modules, shellcheck 0.11.0 on PATH: that binary runs, no drift" \
+    "$(sc_att "$WORKDIR/sc-real:$PATH")" "0.11.0|shellcheck|pass"
+expect "wrapper ahead on PATH (npm scripts): passed over, by full path" \
+    "$(sc_att "$DW/node_modules/.bin:$WORKDIR/sc-real:$PATH")" "0.11.0|$WORKDIR/sc-real/shellcheck|pass"
+expect "the wrapper never ran" "$([[ -e "$WORKDIR/sc-wrapper-ran" ]] && echo ran || echo idle)" idle
+# Wrapper only: PATH holds just the tools the lookup needs.
+mkdir -p "$WORKDIR/sc-tools"
+for t in grep head; do ln -sf "$(command -v "$t")" "$WORKDIR/sc-tools/$t"; done
+sc_lone() { # the resolved binary and its version, with no shellcheck on PATH
+    # shellcheck disable=SC2123  # the narrowed PATH is the point
+    (source "$REPO_ROOT/extension/runtime/lib/attest.sh" \
+        && source "$REPO_ROOT/extension/runtime/lib/formatter-dispatch.sh" \
+        && PATH="$WORKDIR/sc-tools" && b="$(_gates_tool_bin shellcheck "$DW")" \
+        && printf '%s|%s' "${b#"$DW"/}" "$(gates_tool_version shellcheck "$DW" "$b")")
+}
+expect "wrapper only: it runs, versioned by its own answer, not package.json" \
+    "$(sc_lone)" "node_modules/.bin/shellcheck|0.10.0"
+
 # --- 11: the spec object (feature 002, FR-008) ---
 echo ""
 echo "=== spec object: counts, outcomes, policy-disabled absence ==="
