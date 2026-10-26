@@ -281,6 +281,131 @@ expect "--json detail carries no ##gates-fail## marker" \
 expect "text report carries no ##gates-fail## marker" \
     "$(cd "$DS" && CLAUDE_PROJECT_DIR="$DS" bash "$DS/.specify/gates/verify.sh" --boundary ci 2>&1 | grep -c 'gates-fail##' || true)" 0
 
+# --- one gate run per working tree (#263) ---
+# A second run used to see the first one's writes and fail on them. The
+# holder's custom step blocks until the test creates "release", so the
+# timing does not depend on machine load.
+echo ""
+echo "=== gate lock ==="
+DL="$WORKDIR/lock"
+project "$DL" "{ \"hooks\": { \"verify-quality\": { \"orchestrator\": \"custom\", \"severity\": \"error\", \"custom_command\": \"sh $DL/hold.sh\" } } }"
+# shellcheck disable=SC2016  # script text, expanded when it runs
+{
+    echo '#!/bin/sh'
+    echo "d='$DL'"
+    echo ': >"$d/started"'
+    # Gives up after two minutes or once the work dir is gone, so a
+    # failed test cannot leave it running.
+    echo 'n=0'
+    echo 'while [ ! -f "$d/release" ] && [ -d "$d" ] && [ $n -lt 1200 ]; do sleep 0.1; n=$((n + 1)); done'
+    echo 'exit "${HOLD_RC:-0}"'
+} >"$DL/hold.sh"
+LOCK="$DL/.specify/gates/.lock"
+wait_for() { # <seconds> <test-args...>: poll until the test holds
+    local n=0 limit=$(($1 * 10))
+    shift
+    while ! test "$@"; do
+        [[ $n -ge $limit ]] && return 1
+        sleep 0.1
+        n=$((n + 1))
+    done
+}
+vrun() { # <boundary> [arg...]: verify.sh in the lock fixture
+    local b="$1"
+    shift
+    CLAUDE_PROJECT_DIR="$DL" bash "$DL/.specify/gates/verify.sh" --boundary "$b" "$@"
+}
+start_holder() { # <boundary>: sets HOLDER, returns once its step runs
+    rm -f "$DL/started" "$DL/release"
+    # Not through vrun: $! must be verify.sh's own pid.
+    CLAUDE_PROJECT_DIR="$DL" bash "$DL/.specify/gates/verify.sh" --boundary "$1" \
+        >"$WORKDIR/holder.out" 2>&1 &
+    HOLDER=$!
+    wait_for 60 -f "$DL/started" || echo "FAIL: the holder's step never started"
+}
+
+start_holder git
+expect "the holder owns the lock (pid and boundary)" \
+    "$(head -n 2 "$LOCK/owner" 2>/dev/null | paste -sd ' ' -)" "$HOLDER git"
+rc=0
+out="$(vrun agent 2>&1)" || rc=$?
+expect "agent boundary under a held lock: exit 0" "$rc" 0
+expect "agent boundary: skips naming the holder" \
+    "$(grep -c "gates: skipped: the gate run of pid $HOLDER (git) is in progress" <<<"$out")" 1
+expect "agent boundary: no gate ran" "$(grep -c '^gates: boundary=' <<<"$out" || true)" 0
+out="$(vrun agent --json 2>/dev/null)" || true
+expect "agent boundary --json: one skipped object" \
+    "$(jq -r '"\(.result) \(.boundary)"' <<<"$out" 2>/dev/null)" "skipped agent"
+rc=0
+out="$(vrun git --dry-run 2>&1)" || rc=$?
+expect "--dry-run takes no lock and does not wait" \
+    "$rc:$(grep -c 'waiting for' <<<"$out" || true)" "0:0"
+rc=0
+out="$(GATES_LOCK_WAIT_S=1 vrun ci 2>&1)" || rc=$?
+expect "ci boundary: gives up after GATES_LOCK_WAIT_S (exit 1)" "$rc" 1
+expect "ci boundary: the refusal names the holder" \
+    "$(grep -c "the gate run of pid $HOLDER (git) still holds" <<<"$out")" 1
+GATES_LOCK_WAIT_S=120 CLAUDE_PROJECT_DIR="$DL" bash "$DL/.specify/gates/verify.sh" \
+    --boundary git >"$WORKDIR/waiter.out" 2>&1 &
+WAITER=$!
+wait_for 60 -s "$WORKDIR/waiter.out" || true
+sleep 3 # a few polls, each of which could repeat the message
+expect "git boundary: says once whom it waits for" \
+    "$(grep -c "^gates: waiting for the gate run of pid $HOLDER (git)$" "$WORKDIR/waiter.out")" 1
+: >"$DL/release"
+rc=0
+wait "$HOLDER" || rc=$?
+expect "the holder passes" "$rc" 0
+rc=0
+wait "$WAITER" || rc=$?
+expect "git boundary: runs once the holder ends, and passes" "$rc" 0
+expect "the waiter ran its gates" "$(grep -c '^  \[pass\] custom' "$WORKDIR/waiter.out")" 1
+expect "the lock is gone after both runs" "$([[ -e "$LOCK" ]] && echo held || echo free)" free
+
+rc=0
+HOLD_RC=1 vrun git >/dev/null 2>&1 || rc=$?
+expect "a failing run exits 2" "$rc" 2
+expect "the lock is gone after a failing run" "$([[ -e "$LOCK" ]] && echo held || echo free)" free
+
+start_holder git
+kill -TERM "$HOLDER"
+# The shell runs the trap once the foreground step ends, as after Ctrl-C.
+: >"$DL/release"
+rc=0
+wait "$HOLDER" || rc=$?
+expect "an interrupted run exits 143" "$rc" 143
+expect "the lock is gone after an interrupted run" "$([[ -e "$LOCK" ]] && echo held || echo free)" free
+
+sh -c 'exit 0' &
+DEAD=$!
+wait "$DEAD" || true
+mkdir -p "$LOCK"
+printf '%s\nci\n\n' "$DEAD" >"$LOCK/owner"
+rc=0
+out="$(GATES_LOCK_WAIT_S=5 vrun git 2>&1)" || rc=$?
+expect "a stale lock is taken over: the run passes" "$rc" 0
+expect "the takeover is noted" \
+    "$(grep -c "taking over the stale gate lock of pid $DEAD (ci)" <<<"$out")" 1
+expect "the lock is gone after the run that took it over" \
+    "$([[ -e "$LOCK" ]] && echo held || echo free)" free
+
+# A run started from inside the holder (an accept block, a hook it runs)
+# must not wait on its own parent.
+DN="$WORKDIR/lock-nested"
+project "$DN" "{ \"hooks\": { \"verify-quality\": { \"orchestrator\": \"custom\", \"severity\": \"error\", \"custom_command\": \"sh $DN/nest.sh\" } } }"
+# shellcheck disable=SC2016  # script text, expanded when it runs
+{
+    echo '#!/bin/sh'
+    echo '[ -n "$INNER" ] && exit 0'
+    echo "INNER=1 CLAUDE_PROJECT_DIR='$DN' bash '$DN/.specify/gates/verify.sh' --boundary git"
+} >"$DN/nest.sh"
+rc=0
+out="$(GATES_LOCK_WAIT_S=2 CLAUDE_PROJECT_DIR="$DN" bash "$DN/.specify/gates/verify.sh" --boundary git 2>&1)" || rc=$?
+expect "a nested run does not wait on its parent's lock" \
+    "$rc:$(grep -c 'waiting for' <<<"$out" || true)" "0:0"
+expect "the nested run leaves the parent's lock to the parent" \
+    "$([[ -e "$DN/.specify/gates/.lock" ]] && echo held || echo free)" free
+
 # --- empty gate set does not crash under bash 3.2, and --json is well-formed ---
 echo ""
 echo "=== empty gate set (bash 3.2 regression) ==="

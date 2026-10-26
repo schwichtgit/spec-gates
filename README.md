@@ -49,6 +49,12 @@ identical results at every boundary, and no boundary re-implements the gate.
 A fourth, server-side boundary (branch protection requiring the CI check) is
 available via `/speckit.gates.ci github --protect`.
 
+One gate run holds a working tree at a time (`.specify/gates/.lock`): a
+Stop-hook run that finds a commit's run in progress skips and lets the
+session end, while a git or CI run waits for the other one, up to
+`GATES_LOCK_WAIT_S` seconds (default 600). Details in
+[How it works](docs/how-it-works.md#one-entrypoint).
+
 ## Provable enforcement
 
 Enforcement that can silently stop enforcing is worse than none — you
@@ -144,7 +150,9 @@ section, with its defaults:
 read-only check skips, for a cache another process writes while blocks
 run; `cache/` covers the directory and everything under it, and a pattern
 of only `*`, `?` and `/` (which would match every path) makes the policy
-invalid.
+invalid. Writes inside nested repositories and worktrees (a directory
+with its own `.git`, such as agents' worktrees under `.claude/worktrees/`)
+are skipped without it.
 
 ## Policy as a versioned contract
 

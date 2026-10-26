@@ -86,6 +86,17 @@ ok "manifest header" grep -q '^# spec-gates-manifest v1 version=' "$D/.specify/g
 ok "manifest verifies against the tree" bash -c "cd '$D' && tail -n +2 .specify/gates/.projected.sha256 | { sha256sum -c --quiet 2>/dev/null || shasum -a 256 -c --quiet; }"
 ok ".runtime-version recorded" test -s "$D/.specify/gates/.runtime-version"
 ok "attestations ignored" grep -qxF attestations.jsonl "$D/.specify/gates/.gitignore"
+ok "the gate lock ignored (#263)" grep -qxF .lock/ "$D/.specify/gates/.gitignore"
+# An upgrade from a release that listed only the log adds the lock on a
+# line of its own, also after a last line without its newline.
+GI_SAVED="$(cat "$D/.specify/gates/.gitignore")"
+printf 'attestations.jsonl' >"$D/.specify/gates/.gitignore"
+rc_is "an upgrade adds the missing ignore line" 0 "$D" --skip-canary
+ok "the plan names the added line" grep -qF 'add .lock/ to .specify/gates/.gitignore' <<<"$OUT"
+ok "both ignore lines are whole lines" \
+    test "$(cat "$D/.specify/gates/.gitignore")" == "attestations.jsonl
+.lock/"
+printf '%s\n' "$GI_SAVED" >"$D/.specify/gates/.gitignore"
 ok "settings carry the protect-files hook" jq -e '[.hooks.PreToolUse[].hooks[].command] | any(test("protect-files"))' "$D/.claude/settings.json"
 ok "policy.json untouched" grep -qx '{ "hooks": {} }' "$D/.specify/gates/policy.json"
 

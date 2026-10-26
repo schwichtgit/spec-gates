@@ -165,6 +165,141 @@ if [[ -n "$ACCEPT_ARG" && "$ACCEPT_ARG" != "all" ]]; then
     fi
 fi
 
+# ---------------------------------------------------------------------------
+# Gate-level lock (#263): two runs in one working tree see each other's
+# writes (build output, test files) and fail each other. A run holds the
+# directory .specify/gates/.lock (mkdir is atomic; macOS has no flock),
+# with its pid, boundary and process start time in .lock/owner. A second
+# run at the agent boundary skips (exit 0: the Stop hook must not wait on
+# a commit); at git, ci and without --boundary it waits up to
+# GATES_LOCK_WAIT_S seconds (default 600), then refuses (exit 1). A lock
+# whose process is gone is stale and taken over. A run started from
+# inside the holder (an accept block, a hook it triggers) finds its
+# holder's pid in GATES_LOCK_PID and runs without the lock. --dry-run
+# takes no lock.
+# ---------------------------------------------------------------------------
+LOCK_DIR="$GATES_DIR/.lock"
+LOCK_HELD=0
+LOCK_PID=""
+LOCK_BOUNDARY=""
+LOCK_START=""
+
+gates_proc_start() { # <pid>: its start time as ps prints it; empty if unknown
+    ps -o lstart= -p "$1" 2>/dev/null || true
+}
+
+gates_lock_read() { # sets LOCK_PID, LOCK_BOUNDARY, LOCK_START from .lock/owner
+    LOCK_PID=""; LOCK_BOUNDARY=""; LOCK_START=""
+    [[ -f "$LOCK_DIR/owner" ]] || return 0
+    { IFS= read -r LOCK_PID; IFS= read -r LOCK_BOUNDARY; IFS= read -r LOCK_START; } \
+        <"$LOCK_DIR/owner" 2>/dev/null || true
+    [[ "$LOCK_PID" =~ ^[0-9]+$ ]] || LOCK_PID=""
+}
+
+gates_lock_alive() { # true if the process in LOCK_PID still runs (same start)
+    [[ -n "$LOCK_PID" ]] || return 1
+    kill -0 "$LOCK_PID" 2>/dev/null || ps -p "$LOCK_PID" >/dev/null 2>&1 || return 1
+    # A reused pid (the holder died, e.g. kill -9 or a reboot) is another
+    # process: compare start times when ps reports them.
+    local now
+    now="$(gates_proc_start "$LOCK_PID")"
+    [[ -z "$LOCK_START" || -z "$now" || "$now" == "$LOCK_START" ]]
+}
+
+# shellcheck disable=SC2329  # called from the traps below
+gates_lock_release() {
+    rm -f "/tmp/gates-out.$$"
+    [[ "$LOCK_HELD" == "1" ]] || return 0
+    LOCK_HELD=0
+    gates_lock_read
+    [[ "$LOCK_PID" == "$$" ]] && rm -rf "$LOCK_DIR"
+    return 0
+}
+
+gates_lock_acquire() {
+    local limit="${GATES_LOCK_WAIT_S:-600}" waited=0 announced=0 unowned=0 own_start
+    [[ "$limit" =~ ^[0-9]+$ ]] || limit=600
+    # Known before the mkdir, so owner follows it within a printf and a mv.
+    own_start="$(gates_proc_start $$)"
+    while :; do
+        if mkdir "$LOCK_DIR" 2>/dev/null; then
+            LOCK_HELD=1
+            if ! printf '%s\n%s\n%s\n' "$$" "$BOUNDARY" "$own_start" \
+                    >"$LOCK_DIR/owner.$$" 2>/dev/null \
+                || ! mv -f "$LOCK_DIR/owner.$$" "$LOCK_DIR/owner" 2>/dev/null; then
+                echo "gates: warning: could not write $LOCK_DIR/owner; another gate run may treat the lock as stale" >&2
+            fi
+            export GATES_LOCK_PID="$$"
+            return 0
+        fi
+        if [[ ! -e "$LOCK_DIR" ]]; then
+            # Not creatable (a read-only checkout): run unlocked, say so.
+            echo "gates: warning: cannot create $LOCK_DIR; running without the gate lock" >&2
+            return 0
+        fi
+        gates_lock_read
+        if [[ -z "$LOCK_PID" ]]; then
+            # The holder writes owner right after its mkdir; give it a few
+            # seconds before an ownerless lock counts as stale.
+            unowned=$((unowned + 1))
+            if [[ "$unowned" -lt 3 ]]; then
+                sleep 1
+                waited=$((waited + 1))
+                continue
+            fi
+        elif [[ "$LOCK_PID" == "${GATES_LOCK_PID:-}" ]] && gates_lock_alive; then
+            return 0 # nested in the holder's run
+        elif gates_lock_alive; then
+            unowned=0
+            if [[ "$BOUNDARY" == "agent" ]]; then
+                local why="skipped: the gate run of pid $LOCK_PID ($LOCK_BOUNDARY) is in progress"
+                echo "gates: $why" >&2
+                if [[ "$JSON" == "1" ]]; then
+                    printf '{"result":"skipped","boundary":%s,"reason":%s}\n' \
+                        "$(json_str "$BOUNDARY")" "$(json_str "$why")"
+                fi
+                exit 0
+            fi
+            if [[ "$waited" -ge "$limit" ]]; then
+                refuse "the gate run of pid $LOCK_PID ($LOCK_BOUNDARY) still holds $LOCK_DIR after ${limit}s, no gate ran (GATES_LOCK_WAIT_S sets the wait)"
+            fi
+            if [[ "$announced" == "0" ]]; then
+                echo "gates: waiting for the gate run of pid $LOCK_PID ($LOCK_BOUNDARY)" >&2
+                announced=1
+            fi
+            sleep 1
+            waited=$((waited + 1))
+            continue
+        fi
+        echo "gates: note: taking over the stale gate lock of pid ${LOCK_PID:-unknown} (${LOCK_BOUNDARY:-unknown}), which is no longer running" >&2
+        unowned=0
+        # Renamed first, then checked: of two runs taking over at once, the
+        # later mv may catch the lock the first one just made, and puts it
+        # back. Best effort; the window is a few file operations wide.
+        local stale_pid="$LOCK_PID" moved="$LOCK_DIR.stale.$$"
+        if mv "$LOCK_DIR" "$moved" 2>/dev/null; then
+            LOCK_PID=""
+            [[ -f "$moved/owner" ]] && { IFS= read -r LOCK_PID <"$moved/owner" || true; } 2>/dev/null
+            # (mv onto an existing directory would move it inside.)
+            if [[ -n "$LOCK_PID" && "$LOCK_PID" != "$stale_pid" && ! -e "$LOCK_DIR" ]] \
+                && mv "$moved" "$LOCK_DIR" 2>/dev/null; then
+                continue
+            fi
+            rm -rf "$moved" 2>/dev/null || true
+        elif [[ -e "$LOCK_DIR" ]]; then
+            echo "gates: warning: cannot remove the stale $LOCK_DIR; running without the gate lock" >&2
+            return 0
+        fi
+    done
+}
+
+if [[ "$DRY_RUN" != "1" ]]; then
+    trap 'gates_lock_release' EXIT
+    trap 'gates_lock_release; exit 130' INT
+    trap 'gates_lock_release; exit 143' TERM
+    gates_lock_acquire
+fi
+
 FAILED=0
 WARNINGS=0
 declare -a RESULTS=()

@@ -51,3 +51,12 @@ to the message on stderr:
 (`boundary` is `unspecified` when no valid `--boundary` was given). A run that
 evaluated gates prints the result object with `gates[]` instead, which has
 no `result` key.
+
+One gate run holds the working tree at a time. When another run holds it,
+this command (agent boundary) skips: exit `0`, the message
+`gates: skipped: the gate run of pid N (<boundary>) is in progress`, and
+with `--json` the object `{"result":"skipped","boundary":"agent","reason":...}`.
+Report the skip and re-run once the other run (usually a commit's
+pre-commit hook) has finished; do not delete `.specify/gates/.lock`. At the
+git and CI boundaries a run waits for the lock instead, up to
+`GATES_LOCK_WAIT_S` seconds (default 600), and then refuses with exit `1`.

@@ -51,6 +51,14 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   output, a line wherever the cut fell. It now prints the last
   non-empty line, or the step's last `##gates-fail## <text>` line; the
   marker never shows in the report or the `--json` detail.
+- **Two gate runs in one working tree no longer fail each other** (#263).
+  `verify.sh` holds `.specify/gates/.lock` for the run. A Stop-hook run
+  that finds another run skips (exit 0); a git or CI run waits up to
+  `GATES_LOCK_WAIT_S` seconds (default 600), then refuses naming the
+  holder. A stale lock is taken over, nested runs share their parent's
+  lock, and `project.sh` adds `.lock/` to `.specify/gates/.gitignore`.
+  The accept-block read-only check also skips writes inside nested
+  repositories and worktrees, such as `.claude/worktrees/`.
 
 ## 0.4.1 — 2026-10-07
 
