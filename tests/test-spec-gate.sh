@@ -1023,6 +1023,239 @@ expect "hook env: the canary sandboxes leave no tag in the caller's repository" 
 expect "hook env: the canary leaves the caller's index unchanged" \
     "$(git -C "$WT" diff --cached --name-only | sort | tr '\n' ' ')" "$BEFORE"
 
+# --- covered accept blocks (feature 007, US1 and US3) ------------------------
+# A covering script declared in spec.cover is asked about each block at the
+# boundaries spec.cover.at names (agent, git); a clean one-line answer
+# covers the block: not run, named with its reason. Everywhere else every
+# block runs. Blocks and scripts mark that they ran with files outside the
+# fixture repository, so the read-only check never sees them.
+echo ""
+echo "=== covered accept blocks (feature 007) ==="
+# shellcheck source=lib/fixture.sh disable=SC1091
+source "$REPO_ROOT/tests/lib/fixture.sh"
+CVM="$WORKDIR/cover-marks"
+mkdir -p "$CVM"
+cv_project() { # <name> <cover-json, or "" for none>: fixture dir on stdout
+    local d="$WORKDIR/cover-$1" spec='{ "severity": "error" }'
+    [[ -n "$2" ]] && spec="{ \"severity\": \"error\", \"cover\": $2 }"
+    project "$d" "{ \"hooks\": { \"verify-quality\": { \"orchestrator\": \"none\", \"severity\": \"error\" } }, \"spec\": $spec }"
+    printf '%s\n' "$d"
+}
+cv_script() { # <dir> <sh body>: write the covering script scripts/cover.sh
+    mkdir -p "$1/scripts"
+    printf '#!/bin/sh\n%s\n' "$2" >"$1/scripts/cover.sh"
+    chmod +x "$1/scripts/cover.sh"
+}
+cv_run() { # <dir> <boundary or ""> [flag...]: stdout+stderr, EXIT=<rc> last
+    local dir="$1" b="$2" rc=0 out
+    shift 2
+    local args=()
+    [[ -n "$b" ]] && args=(--boundary "$b")
+    out="$(CLAUDE_PROJECT_DIR="$dir" env -u GATES_SPEC_EXEC -u GATES_POLICY_FILE \
+        bash "$dir/.specify/gates/verify.sh" ${args[@]+"${args[@]}"} "$@" 2>&1)" || rc=$?
+    printf '%s\nEXIT=%d\n' "$out" "$rc"
+}
+cv_last() { # <dir> <jq filter on the last attestation>
+    tail -n 1 "$1/.specify/gates/attestations.jsonl" | jq -c "$2"
+}
+GIT_COVER='{ "script": "scripts/cover.sh", "at": ["git"] }'
+
+# Covered at git: the reason is shown, the block's command never runs.
+D="$(cv_project git "$GIT_COVER")"
+fx_spec_feature "$D" 900-demo T001 "touch $CVM/git-block-ran" T002 "touch $CVM/git-t2-ran"
+# shellcheck disable=SC2016  # expanded by the covering script
+cv_script "$D" '[ "$2" = T001 ] || exit 1
+echo "proven by $1 $2 at $GATES_BOUNDARY"; echo noise >&2'
+OUT="$(cv_run "$D" git)"
+expect_contains "covered: the report names the block and the reason" "$OUT" \
+    'spec: 900-demo: "T001 900-demo task" -- covered: proven by 900-demo T001 at git'
+expect "covered: the block's command did not run" "$([[ -e "$CVM/git-block-ran" ]] && echo ran || echo not-run)" not-run
+expect "covered: the block the script declined ran" "$([[ -e "$CVM/git-t2-ran" ]] && echo ran || echo not-run)" ran
+expect "covered: the run passes" "${OUT##*EXIT=}" 0
+expect "covered: stderr of the script is not shown" "$(grep -c noise <<<"$OUT" || true)" 0
+expect_contains "covered: the spec summary counts and names the covered block" "$OUT" \
+    '[pass] spec -- 1 features, 2 blocks: 1 passed, 1 covered at git: 900-demo T001#1'
+expect "covered: attestation counts (parsed, executed, passed, covered)" \
+    "$(cv_last "$D" '.spec.results[0] | [.blocks_parsed, .blocks_executed, .blocks_passed, .blocks_failed, .blocks_covered, .outcome]')" \
+    '[2,1,1,0,1,"enforced-pass"]'
+# shellcheck disable=SC2016  # a jq program
+expect "covered: the attestation entry of the covered block" \
+    "$(cv_last "$D" '[.spec.results[0].blocks[] | (.duration_s | type == "number" and . >= 0) as $d | del(.duration_s) + {d: $d}]')" \
+    '[{"task":"T001","ordinal":1,"verifies":null,"result":"covered","reason":"proven by 900-demo T001 at git","declared_skip":"git","d":true}]'
+expect "covered: run-wide spec counts leave covered blocks out" \
+    "$(cv_last "$D" '.spec | [.parsed, .executed, .passed, .failed]')" '[2,1,1,0]'
+expect "covered: --json detail names the covered block" \
+    "$(cv_run "$D" git --json | sed '$d' | jq -r '.gates[] | select(.name == "spec") | .detail')" \
+    '1 features, 2 blocks: 1 passed, 1 covered at git: 900-demo T001#1'
+rm -f "$CVM"/*
+
+# At ci the script is never asked and every block runs.
+cv_script "$D" "touch $CVM/ci-asked; echo covered"
+OUT="$(cv_run "$D" ci)"
+expect "ci: the covering script is not called" "$([[ -e "$CVM/ci-asked" ]] && echo called || echo not-called)" not-called
+expect "ci: every block runs" "$(cv_last "$D" '.spec.results[0] | [.blocks_executed, has("blocks_covered")]')" '[2,false]'
+expect_contains "ci: nothing covered, the report is unchanged" "$OUT" '[pass] spec'
+expect "ci: no covered line" "$(grep -c 'covered' <<<"$OUT" || true)" 0
+# Without --boundary nothing is covered either.
+rm -f "$CVM"/*
+OUT="$(cv_run "$D" "")"
+expect "no --boundary: the covering script is not called" "$([[ -e "$CVM/ci-asked" ]] && echo called || echo not-called)" not-called
+expect "no --boundary: every block runs" "$(cv_last "$D" '.spec.results[0].blocks_executed')" 2
+# at: ["git"] does not cover at agent.
+OUT="$(cv_run "$D" agent)"
+expect "agent, at git only: the script is not called" "$([[ -e "$CVM/ci-asked" ]] && echo called || echo not-called)" not-called
+expect "agent, at git only: every block runs" "$(cv_last "$D" '.spec.results[0].blocks_executed')" 2
+# at: ["agent", "git"] covers at agent.
+D2="$(cv_project agent '{ "script": "scripts/cover.sh", "at": ["agent", "git"] }')"
+fx_spec_feature "$D2" 900-demo T001 "touch $CVM/agent-block-ran"
+cv_script "$D2" 'echo "agent ok"'
+OUT="$(cv_run "$D2" agent)"
+expect_contains "agent declared: the block is covered" "$OUT" 'task" -- covered: agent ok'
+expect "agent declared: the block did not run" "$([[ -e "$CVM/agent-block-ran" ]] && echo ran || echo not-run)" not-run
+expect "agent declared: declared_skip is agent" "$(cv_last "$D2" '.spec.results[0].blocks[0].declared_skip')" '"agent"'
+# No spec.cover: every block runs, the report is unchanged.
+D3="$(cv_project none "")"
+fx_spec_feature "$D3" 900-demo T001 "touch $CVM/none-block-ran"
+cv_script "$D3" "touch $CVM/none-asked; echo covered"
+OUT="$(cv_run "$D3" git)"
+expect "no spec.cover: the block runs, the script is not called" \
+    "$([[ -e "$CVM/none-block-ran" ]] && echo ran)-$([[ -e "$CVM/none-asked" ]] && echo asked)" "ran-"
+expect "no spec.cover: no blocks_covered or blocks in the record" \
+    "$(cv_last "$D3" '.spec.results[0] | [has("blocks_covered"), has("blocks")]')" '[false,false]'
+
+# Any answer but exit 0 with exactly one non-empty line runs the block.
+D4="$(cv_project answers '{ "script": "scripts/cover.sh", "at": ["git"], "timeout_s": 2 }')"
+fx_spec_feature "$D4" 900-demo T001 "touch $CVM/answer-block-ran"
+while IFS='|' read -r what body; do
+    [[ -n "$what" ]] || continue
+    rm -f "$CVM"/*
+    cv_script "$D4" "$body"
+    OUT="$(cv_run "$D4" git)"
+    expect "not covered ($what): the block runs" \
+        "$([[ -e "$CVM/answer-block-ran" ]] && echo ran || echo not-run)/$(grep -c -- '-- covered' <<<"$OUT" || true)" "ran/0"
+done <<'EOF'
+non-zero exit with one line|echo "covered"; exit 1
+exit 0 with no output|exit 0
+exit 0 with an empty line|echo
+exit 0 with a blank line|echo "   "
+exit 0 with two lines|echo one; echo two
+exit 0 with a line and an empty one|echo one; echo
+exit 124 with a line|echo covered; exit 124
+EOF
+rm -f "$CVM"/*
+cv_script "$D4" 'echo covered'
+chmod -x "$D4/scripts/cover.sh"
+OUT="$(cv_run "$D4" git)"
+expect "not covered (script not executable): the block runs" \
+    "$([[ -e "$CVM/answer-block-ran" ]] && echo ran || echo not-run)/${OUT##*EXIT=}" "ran/0"
+# A script over its time limit is stopped and the block runs.
+rm -f "$CVM"/*
+cv_script "$D4" 'sleep 67
+echo late'
+T0="$(date +%s)"
+OUT="$(cv_run "$D4" git)"
+T1="$(date +%s)"
+expect "timeout: the block runs" "$([[ -e "$CVM/answer-block-ran" ]] && echo ran || echo not-run)" ran
+expect "timeout: the run ends within 7s of a 2s limit" "$([[ $((T1 - T0)) -le 7 ]] && echo yes || echo "no ($((T1 - T0))s)")" yes
+sleep 0.5
+# shellcheck disable=SC2009  # pgrep -x matches the name, not "sleep 67"
+expect "timeout: the script's sleep is stopped" \
+    "$(ps -A -o command= 2>/dev/null | grep -c '^sleep 67$' || true)" 0
+
+# Reason hygiene (FR-008): control characters removed, cut to 200.
+D5="$(cv_project hygiene "$GIT_COVER")"
+mkfeature "$D5" 900-demo Complete <<'MD'
+- [x] T001 One task, two blocks
+
+  ```accept
+  true
+  ```
+
+  ```accept
+  true
+  ```
+MD
+# shellcheck disable=SC2016  # expanded by the covering script
+cv_script "$D5" 'printf "a\tb\033[1mc%0300d\r\n" 0'
+OUT="$(cv_run "$D5" git)"
+WANT_REASON="ab[1mc$(printf '%0194d' 0)"
+expect "hygiene: the recorded reason" "$(cv_last "$D5" '.spec.results[0].blocks[0].reason')" "\"$WANT_REASON\""
+expect "hygiene: reason length is 200" "$(cv_last "$D5" '.spec.results[0].blocks[0].reason | length')" 200
+expect "hygiene: two blocks of one task are #1 and #2" \
+    "$(cv_last "$D5" '[.spec.results[0].blocks[] | "\(.task)#\(.ordinal)"]')" '["T001#1","T001#2"]'
+expect_contains "hygiene: both are named in the summary" "$OUT" 'covered at git: 900-demo T001#1, 900-demo T001#2'
+
+# A task line without a T### id is named "-".
+D6="$(cv_project noid "$GIT_COVER")"
+mkfeature "$D6" 900-demo Complete <<'MD'
+- [x] Write the thing
+
+  ```accept
+  # verifies: FR-1
+  true
+  ```
+MD
+# shellcheck disable=SC2016  # expanded by the covering script
+cv_script "$D6" 'echo "task $2"'
+OUT="$(cv_run "$D6" git)"
+expect_contains "no task id: the script gets - and the block is named -#1" "$OUT" \
+    'spec: 900-demo: "FR-1" -- covered: task -'
+expect "no task id: the entry" "$(cv_last "$D6" '.spec.results[0].blocks[0] | [.task, .ordinal, .verifies]')" '["-",1,"FR-1"]'
+
+# A script that writes to the tree does not fail the next block as a
+# mutation: that block's before-snapshot is taken after the script ran.
+D7="$(cv_project writes "$GIT_COVER")"
+fx_spec_feature "$D7" 900-demo T001 'true' T002 'true'
+# shellcheck disable=SC2016  # expanded by the covering script
+cv_script "$D7" '[ "$2" = T002 ] && echo x >cover-scratch.txt; exit 1'
+OUT="$(cv_run "$D7" git)"
+expect "script writes to the tree: the next block still passes" "${OUT##*EXIT=}" 0
+
+# --accept on an incomplete feature: covered, informational.
+D8="$(cv_project accept "$GIT_COVER")"
+mkfeature "$D8" 900-draft Draft <<MD
+- [x] T001 Draft task
+
+  \`\`\`accept
+  touch $CVM/draft-block-ran
+  \`\`\`
+MD
+cv_script "$D8" 'echo "draft ok"'
+rm -f "$CVM"/*
+OUT="$(cv_run "$D8" git --accept 900-draft)"
+expect_contains "--accept: the block is covered (informational)" "$OUT" \
+    'spec: 900-draft: "T001 Draft task" -- covered (informational): draft ok'
+expect "--accept: the block did not run" "$([[ -e "$CVM/draft-block-ran" ]] && echo ran || echo not-run)" not-run
+
+# A declared script that is missing, or resolves outside the project,
+# refuses the run: exit 1, no gate ran.
+D9="$(cv_project missing "$GIT_COVER")"
+fx_spec_feature "$D9" 900-demo T001 "touch $CVM/missing-block-ran"
+for b in git ci; do
+    OUT="$(cv_run "$D9" "$b")"
+    expect "missing script ($b): exit 1" "${OUT##*EXIT=}" 1
+    expect_contains "missing script ($b): the path is named" "$OUT" 'spec.cover.script scripts/cover.sh: not found; no gate ran'
+    expect "missing script ($b): no gate ran" "$(grep -c '^gates: boundary=' <<<"$OUT" || true)/$([[ -e "$CVM/missing-block-ran" ]] && echo ran)" "0/"
+done
+mkdir -p "$D9/scripts"
+printf '#!/bin/sh\necho covered\n' >"$WORKDIR/outside-cover.sh"
+chmod +x "$WORKDIR/outside-cover.sh"
+ln -s "$WORKDIR/outside-cover.sh" "$D9/scripts/cover.sh"
+OUT="$(cv_run "$D9" git)"
+expect_contains "symlink out of the project: refused" "$OUT" 'scripts/cover.sh: resolves outside the project; no gate ran'
+expect "symlink out of the project: exit 1" "${OUT##*EXIT=}" 1
+rm -f "$D9/scripts/cover.sh"
+mkdir -p "$D9/scripts/cover.sh"
+OUT="$(cv_run "$D9" git)"
+expect_contains "a directory: refused" "$OUT" 'scripts/cover.sh: not a regular file; no gate ran'
+rm -rf "$D9/scripts/cover.sh"
+mkdir -p "$D9/lib"
+printf '#!/bin/sh\necho "via link"\n' >"$D9/lib/real-cover.sh"
+chmod +x "$D9/lib/real-cover.sh"
+ln -s ../lib/real-cover.sh "$D9/scripts/cover.sh"
+OUT="$(cv_run "$D9" git)"
+expect_contains "symlink inside the project: followed" "$OUT" 'task" -- covered: via link'
+
 echo ""
 echo "$PASS of $TOTAL tests passed"
 if [[ "$FAIL" -eq 0 ]]; then

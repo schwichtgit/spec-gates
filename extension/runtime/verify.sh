@@ -196,6 +196,16 @@ if ! gates_validate_policy "$(gates_policy_file)"; then
     refuse "invalid policy, no gate ran; fix the errors above (run /speckit.gates.doctor)"
 fi
 
+# A declared covering script (spec.cover, feature 007) that is not a
+# regular file inside the project is a broken configuration (research R5):
+# refused like an invalid policy, at every boundary, before any gate runs.
+# The walk runs no accept blocks and does not check it.
+COVER_SCRIPT="$(gates_cover_script)"
+if [[ -n "$COVER_SCRIPT" && "$WALK" != "1" ]] \
+    && ! cover_why="$(gates_cover_script_check "$PROJECT_ROOT" "$COVER_SCRIPT")"; then
+    refuse "spec.cover.script $COVER_SCRIPT: $cover_why; no gate ran (fix spec.cover in the policy, run /speckit.gates.doctor)"
+fi
+
 # An unknown --accept name is an argument error: refuse it here, before
 # any gate runs (also under --dry-run), not after the lint gates (#179).
 if [[ -n "$ACCEPT_ARG" && "$ACCEPT_ARG" != "all" ]]; then
@@ -758,10 +768,18 @@ elif [[ "$SPEC_ENABLED" != "false" ]]; then
         SPEC_ENF_BLOCKS="$(jq -r \
             '[.[] | select(.outcome | startswith("enforced")) | .blocks_parsed] | add // 0' \
             <<<"$SPEC_RESULTS_JSON")"
+        # A covered block (feature 007) was looked at, by the covering
+        # script, so it counts as checked: a run whose every block was
+        # covered is not the no-op signature doctor looks for.
         SPEC_ENF_EXECUTED="$(jq -r \
-            '[.[] | select(.outcome | startswith("enforced")) | .blocks_executed] | add // 0' \
+            '[.[] | select(.outcome | startswith("enforced")) | .blocks_executed + (.blocks_covered // 0)] | add // 0' \
             <<<"$SPEC_RESULTS_JSON")"
-        if [[ "$SPEC_RESULT" == "pass" ]]; then
+        if [[ "$SPEC_RESULT" == "pass" && "$SPEC_COVERED" -gt 0 ]]; then
+            # The summary names every covered block (Principle III).
+            record "spec" "pass" "$SPEC_DETAIL"
+            att_gate "spec" "" "" "" "$SPEC_ENF_BLOCKS" "$SPEC_ENF_EXECUTED" \
+                "pass" "" "$((spec_end - spec_start))"
+        elif [[ "$SPEC_RESULT" == "pass" ]]; then
             record "spec" "pass" ""
             att_gate "spec" "" "" "" "$SPEC_ENF_BLOCKS" "$SPEC_ENF_EXECUTED" \
                 "pass" "" "$((spec_end - spec_start))"

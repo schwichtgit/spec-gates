@@ -247,6 +247,36 @@ gates_cover_timeout() { # seconds, default 30
     printf '%s\n' "${t:-30}"
 }
 
+# Is the declared script <path> a regular file inside <root> (research R5)?
+# Symlinks are followed, and one whose target leaves the project counts as
+# outside. Returns 0 when it is; otherwise prints why on stdout, returns 1.
+gates_cover_script_check() { # <root> <path>
+    local root real p="$2" dir t n=0
+    root="$(cd "$1" 2>/dev/null && pwd -P)" || { echo "project root not found"; return 1; }
+    p="$root/$p"
+    while [[ -L "$p" && $n -lt 40 ]]; do
+        t="$(readlink "$p" 2>/dev/null)" || break
+        [[ "$t" == /* ]] || t="${p%/*}/$t"
+        p="$t"
+        n=$((n + 1))
+    done
+    if [[ ! -e "$p" && ! -L "$p" ]]; then
+        echo "not found"
+        return 1
+    fi
+    dir="$(cd "${p%/*}" 2>/dev/null && pwd -P)" || { echo "not found"; return 1; }
+    real="$dir/${p##*/}"
+    if [[ "$real" != "$root"/* ]]; then
+        echo "resolves outside the project"
+        return 1
+    fi
+    if [[ -L "$real" || ! -f "$real" ]]; then
+        echo "not a regular file"
+        return 1
+    fi
+    return 0
+}
+
 gates_cover_field() { # <jq filter on .spec.cover>
     local file
     file="$(gates_policy_file)"
