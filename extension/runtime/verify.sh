@@ -503,18 +503,44 @@ run_gate() { # name severity cmd...
     # linters' dispatch marks their first finding so), else, for a file
     # linter, the first non-empty line, and for a task or custom step,
     # which ends on its verdict, the last one. The marker is machinery
-    # too and never shows in the detail. A file linter's marker line
-    # repeats a finding its output already holds, so the detail drops the
-    # whole line there (#279); a step's marker keeps its text, which may
-    # be the step's only statement of what failed.
+    # too and never shows in the detail. A marked line whose text another
+    # line of the output already holds (ANSI colors aside) is dropped from
+    # the detail, so the failure is not named twice (#279): the file
+    # linters' marks and a nested `verify.sh --walk`'s repeat a line they
+    # printed. A marked text found nowhere else stays, without the marker:
+    # it may be a step's only statement of what failed. A file linter's
+    # marks are always dropped, since shellcheck's joins two of its lines.
+    # Three passes over the file: collect the marked texts (the first 20
+    # distinct ones, so the search stays linear), find which appear in
+    # another line, print.
     local detail summary
-    if [[ -n "$meta" ]]; then
-        detail="$(grep -v -e '##gates-meta##' -e '##gates-fail##' /tmp/gates-out.$$ \
-            | tail -c 2000 || true)"
-    else
-        detail="$(grep -v '##gates-meta##' /tmp/gates-out.$$ \
-            | sed 's/##gates-fail##[[:space:]]*//' | tail -c 2000 || true)"
-    fi
+    detail="$(awk -v esc="$(printf '\033')" -v all="${meta:+1}" '
+        function plain(s) { gsub(esc "\\[[0-9;]*[A-Za-z]", "", s); return s }
+        function text(s) {
+            sub(/.*##gates-fail##[ \t]*/, "", s); s = plain(s)
+            sub(/[ \t\r]+$/, "", s); return s
+        }
+        FNR == 1 { pass++ }
+        /##gates-meta##/ { next }
+        pass == 1 {
+            if (/##gates-fail##/ && n < 20) {
+                t = text($0)
+                if (t != "" && !(t in mark)) { mark[t] = 0; n++ }
+            }
+            next
+        }
+        pass == 2 {
+            if (/##gates-fail##/) next
+            p = plain($0)
+            for (t in mark) if (!mark[t] && index(p, t)) mark[t] = 1
+            next
+        }
+        /##gates-fail##/ {
+            if (all || mark[text($0)]) next
+            sub(/##gates-fail##[ \t]*/, "")
+        }
+        { print }' /tmp/gates-out.$$ /tmp/gates-out.$$ /tmp/gates-out.$$ \
+        | tail -c 2000 || true)"
     summary="$(grep '##gates-fail##' /tmp/gates-out.$$ 2>/dev/null | tail -n 1 \
         | sed 's/.*##gates-fail##[[:space:]]*//' || true)"
     if [[ -z "$summary" ]]; then

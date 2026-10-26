@@ -317,6 +317,15 @@ if command -v shellcheck >/dev/null 2>&1; then
     linter_summary shellcheck "$NONE_SHELL" sh '#!/bin/bash\nrm -rf $HOME/x\n'
     expect "shellcheck: the summary names the first finding, not the footer" \
         "$(grep -cE '^  \[fail\] shellcheck -- bad[0-9]+\.sh line 2: SC2086 \(info\): ' <<<"$S")" 1
+    # Its mark joins two of its lines, so no line holds it verbatim; the
+    # detail still names the file once (#279).
+    sc1="$WORKDIR/once-shellcheck"
+    project "$sc1" "$NONE_SHELL"
+    # shellcheck disable=SC2016  # the bad file's literal $HOME
+    printf '#!/bin/bash\nrm -rf $HOME/x\n' >"$sc1/once-bad.sh"
+    expect "shellcheck: the --json detail names the failing file once" \
+        "$(CLAUDE_PROJECT_DIR="$sc1" bash "$sc1/.specify/gates/verify.sh" --boundary ci --json 2>/dev/null \
+            | jq -r '.gates[] | select(.name == "shellcheck") | .detail' | grep -c 'once-bad\.sh' || true)" 1
 else
     skip "shellcheck summary" "shellcheck not installed"
 fi
@@ -993,6 +1002,13 @@ if have_node_linters; then
     rc=0
     (GATES_LOCK_WAIT_S=3 CLAUDE_PROJECT_DIR="$DW" bash "$DW/.specify/gates/verify.sh" --boundary git >/dev/null 2>&1) || rc=$?
     expect "nested walk: passes once the file is fixed" "$rc|$(att_lines)" "0|2"
+    # The walk's mark repeats its own report line, so the custom gate's
+    # detail names the file once (#279).
+    printf '#  Bad   md\n\n\n- x\n' >"$DW/bad.md"
+    nw_det="$(GATES_LOCK_WAIT_S=3 CLAUDE_PROJECT_DIR="$DW" bash "$DW/.specify/gates/verify.sh" --boundary git --json 2>/dev/null \
+        | jq -r '.gates[] | select(.name == "custom") | .detail' || true)"
+    expect "nested walk: the custom gate's --json detail names the file once" \
+        "$(grep -c 'bad\.md' <<<"$nw_det" || true)" 1
 else
     skip "verify.sh --walk" "run npm ci to install pinned prettier"
 fi

@@ -74,11 +74,12 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   subdirectory. It now runs from the project root, as project gates do.
   A custom command that relied on the caller's directory must change
   directory itself.
-- **A failing file linter names its file once in the detail** (#279).
-  The `--json` detail of a failing prettier or markdownlint gate held the
-  first finding twice: once from the tool, once from the marked line the
-  text report's summary is read from. The detail now leaves the marked
-  line out; a task or custom step's marked text stays.
+- **A failing gate names its failure once in the detail** (#279). The
+  `--json` detail of a failing file linter, or of a custom command that
+  runs `verify.sh --walk`, held the first failure twice: once as printed,
+  once from the marked line the text report's summary is read from. The
+  detail now leaves out a marked line whose text another line already
+  holds; a marked text found nowhere else stays.
 - **The attested shellcheck version is the binary's** (#274). With the
   npm `shellcheck` downloader wrapper in `node_modules`, the gate ran it
   and attested its `package.json` version, so parity reported drift
