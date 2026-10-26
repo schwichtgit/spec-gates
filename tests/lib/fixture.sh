@@ -6,6 +6,13 @@
 #                         installed (vendored copy of extension/ + a
 #                         .registry entry) and a minimal policy; prints its
 #                         directory. Nothing is projected yet.
+#   fx_gates_project <policy-json>
+#                         fx_project plus the runtime projected into
+#                         .specify/gates/ as CI's projection step does
+#                         (*.sh, policy.schema.json, shellcheck.sha256,
+#                         lib/*.sh, lib/known-releases.sha256) and
+#                         <policy-json> as its policy.json; nothing is
+#                         committed. Prints its directory.
 #   fx_registry <dir> <v> rewrite the registry entry's version
 #   fx_cleanup <dir>      remove a fixture
 
@@ -29,6 +36,16 @@ fx_project() {
     ) || return 1
     v="$(sed -n 's/^  version: *"\{0,1\}\([0-9][0-9.]*\)"\{0,1\} *$/\1/p' "$d/.specify/extensions/gates/extension.yml" | head -n 1)"
     fx_registry "$d" "$v"
+    printf '%s\n' "$d"
+}
+
+fx_gates_project() { # <policy-json>
+    local d rt="$FX_REPO_ROOT/extension/runtime"
+    d="$(fx_project)" || return 1
+    mkdir -p "$d/.specify/gates/lib" || return 1
+    cp "$rt"/*.sh "$rt/policy.schema.json" "$rt/shellcheck.sha256" "$d/.specify/gates/" || return 1
+    cp "$rt"/lib/*.sh "$rt/lib/known-releases.sha256" "$d/.specify/gates/lib/" || return 1
+    printf '%s\n' "$1" >"$d/.specify/gates/policy.json" || return 1
     printf '%s\n' "$d"
 }
 

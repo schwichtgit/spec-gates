@@ -92,6 +92,12 @@ done
 if [[ "$BOUNDARY" == "unspecified" ]]; then
     echo "gates: warning: verify.sh without --boundary is deprecated; it runs every gate as before, and a later release may refuse it. Pass --boundary agent|git|ci" >&2
 fi
+# Every gate command (project gates, the task and custom steps, the walk)
+# can read the boundary it runs at (feature 006, FR-010); "none" is a run
+# without --boundary, at which no skip declaration applies.
+GATES_BOUNDARY="$BOUNDARY"
+[[ "$BOUNDARY" == "unspecified" ]] && GATES_BOUNDARY="none"
+export GATES_BOUNDARY
 
 # GATES_POLICY_FILE replaces the whole policy (#196): set for one command
 # it would drop every gate the repository declares. The git and CI
@@ -142,6 +148,8 @@ fi
 source "$GATES_DIR/lib/policy.sh"
 # shellcheck source=lib/attest.sh disable=SC1091
 source "$GATES_DIR/lib/attest.sh"
+# shellcheck source=lib/watch.sh disable=SC1091
+source "$GATES_DIR/lib/watch.sh"
 # shellcheck source=lib/spec-gate.sh disable=SC1091
 source "$GATES_DIR/lib/spec-gate.sh"
 # shellcheck source=lib/contract.sh disable=SC1091
@@ -208,7 +216,7 @@ gates_lock_alive() { # true if the process in LOCK_PID still runs (same start)
 
 # shellcheck disable=SC2329  # called from the traps below
 gates_lock_release() {
-    rm -f "/tmp/gates-out.$$"
+    rm -f "/tmp/gates-out.$$" "/tmp/gates-out.$$.timedout"
     [[ "$LOCK_HELD" == "1" ]] || return 0
     LOCK_HELD=0
     gates_lock_read
@@ -336,22 +344,46 @@ att_gate() { # name bin version pinned candidates checked result reason duration
           duration_s: ($duration | tonumber) }')")
 }
 
+# Watched mode (project gates, feature 006): run_project_gate sets
+# WATCH_S to the gate's time limit and WATCH_CMD to its command for one
+# run_gate call. The command then runs from the project root under
+# gates_run_watched (lib/watch.sh), in this shell, so GATES_WATCH_DETAIL
+# survives; everything else (output capture, the summary rules, the
+# severity mapping, FAILED/WARNINGS, att_gate) is the same code path.
+WATCH_S=""
+WATCH_CMD=""
+
 run_gate() { # name severity cmd...
     local name="$1" severity="$2"; shift 2
     if [[ "$DRY_RUN" == "1" ]]; then
-        record "$name" "planned" "$*"
+        if [[ -n "$WATCH_S" ]]; then
+            record "$name" "planned" "$WATCH_CMD (time limit ${WATCH_S}s)"
+        else
+            record "$name" "planned" "$*"
+        fi
         return 0
     fi
     local start end rc=0
     start="$(date +%s)"
-    "$@" >/tmp/gates-out.$$ 2>&1 || rc=$?
+    if [[ -n "$WATCH_S" ]]; then
+        local here="$PWD"
+        cd "$PROJECT_ROOT" || return 1
+        gates_run_watched "$WATCH_S" "/tmp/gates-out.$$" "$@" || rc=$?
+        cd "$here" || true
+    else
+        "$@" >/tmp/gates-out.$$ 2>&1 || rc=$?
+    fi
     end="$(date +%s)"
 
     # Check-mode metadata (##gates-meta##, emitted by formatter-dispatch) is
     # machinery, not gate output: parse it for the attestation entry, strip
-    # it from the visible detail. Non-file gates (task/custom) have none.
-    local meta binname="" bin="" candidates="" checked="" skipped=""
-    meta="$(grep '##gates-meta##' /tmp/gates-out.$$ 2>/dev/null | tail -n 1 || true)"
+    # it from the visible detail. Non-file gates (task/custom) have none,
+    # and a project gate's is never read: its command could print one and
+    # claim a tool, counts or a skip.
+    local meta="" binname="" bin="" candidates="" checked="" skipped=""
+    if [[ -z "$WATCH_S" ]]; then
+        meta="$(grep '##gates-meta##' /tmp/gates-out.$$ 2>/dev/null | tail -n 1 || true)"
+    fi
     if [[ -n "$meta" ]]; then
         binname="$(printf '%s' "$meta" | sed -n 's/.* binname=\([^ ]*\).*/\1/p')"
         candidates="$(printf '%s' "$meta" | sed -n 's/.* candidates=\([0-9]*\).*/\1/p')"
@@ -390,8 +422,15 @@ run_gate() { # name severity cmd...
     # A missing tool is skipped with a reason, never pass (spec edge case).
     # The attestation reason carries no tool output: output can quote file
     # contents, which FR-011 keeps out of records.
+    # A project gate that timed out or could not start fails whatever its
+    # severity (fail closed, research R3/R4); the reasons are fixed strings.
     local result reason=""
-    if [[ "$rc" -eq 0 && -n "$skipped" ]]; then
+    if [[ -n "$WATCH_S" && "$rc" -eq 124 && -n "${GATES_WATCH_DETAIL:-}" ]]; then
+        result="fail"; reason="$GATES_WATCH_DETAIL"; summary="$GATES_WATCH_DETAIL"
+    elif [[ -n "$WATCH_S" && ( "$rc" -eq 126 || "$rc" -eq 127 ) ]]; then
+        result="fail"; reason="command not found or not executable"
+        [[ -n "$summary" ]] || summary="$reason"
+    elif [[ "$rc" -eq 0 && -n "$skipped" ]]; then
         result="skipped"; reason="$binname not installed"
     elif [[ "$rc" -eq 0 ]]; then
         result="pass"
@@ -482,6 +521,41 @@ case "$ORCH" in
         done
         ;;
 esac
+
+# ---------------------------------------------------------------------------
+# Project gates (feature 006): hooks.verify-quality.gates, run after the
+# orchestrator's gates whatever it is, one at a time in key order, each as
+# `sh -c "<command>"` from the project root under its time limit (timeout_s,
+# else gate_timeout_s, else 600). Each is its own gate in the report,
+# --json and the attestation; the tool fields stay null (a command, not a
+# resolved tool). A timeout or a command that cannot start (126, 127)
+# fails; any other non-zero exit maps through the gate's severity.
+# ---------------------------------------------------------------------------
+run_project_gate() { # name severity timeout-s command
+    WATCH_S="$3"
+    WATCH_CMD="$4"
+    local rc=0
+    run_gate "$1" "$2" sh -c "$4" || rc=$?
+    WATCH_S=""
+    WATCH_CMD=""
+    return "$rc"
+}
+
+declare -a PROJECT_GATES=()
+while IFS= read -r pg_name; do
+    [[ -n "$pg_name" ]] && PROJECT_GATES+=("$pg_name")
+done < <(gates_project_gate_names)
+if [[ ${#PROJECT_GATES[@]} -gt 0 ]]; then
+    PG_DEFAULT_S="$(gates_policy_get "verify-quality" "gate_timeout_s")"
+    [[ -z "$PG_DEFAULT_S" ]] && PG_DEFAULT_S=600
+    for pg_name in "${PROJECT_GATES[@]}"; do
+        pg_sev="$(gates_project_gate_get "$pg_name" severity)"
+        [[ -z "$pg_sev" ]] && pg_sev="error"
+        pg_s="$(gates_project_gate_get "$pg_name" timeout_s)"
+        [[ -z "$pg_s" ]] && pg_s="$PG_DEFAULT_S"
+        run_project_gate "$pg_name" "$pg_sev" "$pg_s" "$(gates_project_gate_get "$pg_name" command)"
+    done
+fi
 
 # ---------------------------------------------------------------------------
 # Spec-conformance gate (feature 002): fenced accept blocks in specs/*/tasks.md
