@@ -210,7 +210,7 @@ listing: $CMD_COUNT commands and $HOOK_COUNT hooks.
 $CHANGES_SINCE
 
 Release assets are sha256-checksummed and sigstore keyless-signed;
-verification instructions are in the release notes. Release notes are
-generated from Conventional Commits per release (no hand-maintained
-changelog to drift).
+verification instructions are in the release notes. Each release's
+user-visible changes and upgrade steps are in CHANGELOG.md, which ships
+in the zip.
 EOF
