@@ -25,7 +25,7 @@ Add to `hooks.verify-quality`:
 
 Run `bash .specify/gates/verify.sh --boundary git`.
 
-Expected: exit 1; the report lists `prettier`, `markdownlint`, `ok` (pass),
+Expected: exit 2; the report lists `prettier`, `markdownlint`, `ok` (pass),
 `bad` (fail, `-- bad gate failed`), `soft` (warn); `failed=1 warnings=1`;
 the last line of `.specify/gates/attestations.jsonl` has entries for `ok`,
 `bad` and `soft`.
@@ -45,7 +45,7 @@ executable`.
 
 ## 3. Refused policies (Stories 1 and 2)
 
-Each of these makes `verify.sh` exit 2 naming the key: a gate named
+Each of these makes `verify.sh` exit 1 naming the key (no gate runs): a gate named
 `spec`; `"skip_at": ["ci"]`; `"skip_at": []`; a gate without `command`;
 `"gates"` under `hooks.prettier`.
 
@@ -61,7 +61,7 @@ Each of these makes `verify.sh` exit 2 naming the key: a gate named
   `[skipped] build -- skipped by declaration at agent`; `--json` shows the
   same; the attestation entry has `"declared_skip": "agent"`; `parity`
   passes.
-- `verify.sh --boundary git` and `--boundary ci`: exit 1; `build` fails and
+- `verify.sh --boundary git` and `--boundary ci`: exit 2; `build` fails and
   its output shows `boundary=git` / `boundary=ci`.
 - `doctor.sh`: lists
   `gate build (error, 600s): skipped by declaration at agent`.
@@ -87,7 +87,7 @@ instead, `doctor.sh` prints the `[rec]` for `--walk`.
 
 In a project with a Taskfile whose `test` task fails: with
 `"orchestrator": "task"` the run warns (exit 0); with
-`"test_severity": "error"` added, it fails (exit 1).
+`"test_severity": "error"` added, it fails (exit 2).
 
 ## 8. Backward compatibility and the canary
 

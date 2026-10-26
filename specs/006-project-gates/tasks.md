@@ -39,10 +39,10 @@ story uses.
 - [ ] T002 Create `extension/runtime/lib/watch.sh` (bash 3.2): move `gates_spec_group_stop` from `lib/spec-gate.sh` into it as `gates_group_stop` (TERM, two-second grace, KILL), keep `gates_spec_group_stop` in `lib/spec-gate.sh` as a one-line wrapper so existing callers and tests are unchanged, and add `gates_run_watched <timeout-s> <outfile> <cmd...>` per research R3: run the command in its own job (`set -m` in a subshell) with stdin `/dev/null` and stdout and stderr to `<outfile>`, a timer subshell that writes a marker and calls `gates_group_stop`, `wait`; return the command's status, or 124 on timeout with `GATES_WATCH_DETAIL="timeout after <n>s"` plus the machine load from `gates_spec_load_avg` (as in `timeout after 2s at load 3.10`) when readable
 - [ ] T003 Source `lib/watch.sh` from `extension/runtime/lib/spec-gate.sh` and `extension/runtime/verify.sh`; confirm `tests/test-spec-gate.sh` still passes unchanged, and run `tests/test-manifest.sh` and `tests/test-project.sh` so the new projected file classifies as new on upgrade with no other change
 - [ ] T004 [P] Extend `extension/runtime/policy.schema.json` per contracts/policy-gates.md: under the hook definition add `gates` (object; property names `^[a-z0-9][a-z0-9_-]{0,39}$`; each value an object with required `command` (string, minLength 1), optional `severity` (enum `error`, `warning`, `info`), `timeout_s` (integer, minimum 1, maximum 86400), `skip_at` (array, minItems 1, uniqueItems, items enum `agent`, `git`), `additionalProperties: false`), `gate_timeout_s` (integer, minimum 1, maximum 86400, default 600) and `test_severity` (enum `error`, `warning`, `info`, default `warning`); an `if/then` that allows the three keys only when the hook is `verify-quality`; descriptions that say CI cannot be skipped (constitution Principle III)
-- [ ] T005 Extend `gates_validate_policy` in `extension/runtime/lib/policy.sh` with the same rules (the jq validator is what the runtime enforces): name pattern; reserved names `prettier`, `markdownlint`, `shellcheck`, `task-lint`, `task-test`, `custom`, `spec`, `contract`, `parity`, `policy`, `lock`, `constitution`; `command` present and non-empty; unknown gate keys; severity enum; `timeout_s`/`gate_timeout_s` integers 1 to 86400; `skip_at` non-empty, unique, only `agent`/`git`, with `ci` refused as "CI runs the full policy (constitution, Principle III)"; the three keys refused under any hook other than `verify-quality`; each refusal names the key path and exits 2 like existing refusals
+- [ ] T005 Extend `gates_validate_policy` in `extension/runtime/lib/policy.sh` with the same rules (the jq validator is what the runtime enforces): name pattern; reserved names `prettier`, `markdownlint`, `shellcheck`, `task-lint`, `task-test`, `custom`, `spec`, `contract`, `parity`, `policy`, `lock`, `constitution`; `command` present and non-empty; unknown gate keys; severity enum; `timeout_s`/`gate_timeout_s` integers 1 to 86400; `skip_at` non-empty, unique, only `agent`/`git`, with `ci` refused as "CI runs the full policy (constitution, Principle III)"; the three keys refused under any hook other than `verify-quality`; each refusal names the key path; the run is refused with exit 1 before any gate runs, like every invalid policy (#124)
 - [ ] T006 Add accessors to `extension/runtime/lib/policy.sh`: `gates_project_gate_names` (names in key order, one per line), `gates_project_gate_get <name> <field>`, `gates_project_gate_skip_at <name>` (compact JSON array or empty), and `gates_declared_skip <boundary> <skip_at-json>` per research R6 (prints `skipped by declaration at <boundary>` and returns 0 when `<boundary>` is in the list and is `agent` or `git`; returns 1 for `ci`, `none` and any other boundary); header comments say feature 007 reuses `gates_declared_skip`
 - [ ] T007 In `extension/runtime/verify.sh`, export `GATES_BOUNDARY` (`agent`, `git`, `ci`, or `none` when `--boundary` is absent) after argument parsing and before the first gate (research R5)
-- [ ] T008 [P] Tests in `tests/test-policy.sh`: every validation rule of T005 accepts the valid form and refuses the invalid one with exit 2 naming the key (one case per rule, including `skip_at: ["ci"]` naming Principle III and `gates` under `hooks.prettier`); a policy without the new keys validates as before
+- [ ] T008 [P] Tests in `tests/test-policy.sh`: every validation rule of T005 accepts the valid form and refuses the invalid one (verify.sh exit 1, no gate run) naming the key (one case per rule, including `skip_at: ["ci"]` naming Principle III and `gates` under `hooks.prettier`); a policy without the new keys validates as before
 - [ ] T009 [P] Tests in `tests/test-spec-gate.sh` and a new block in `tests/test-gate.sh`: `gates_run_watched` returns the command's status, returns 124 with `timeout after 2s` for `sleep 30` under a 2 s limit within 6 s, leaves no process of the stopped group running, and writes the command's output to the file; mutation-check (timer disabled, group stop disabled)
 
 **Checkpoint**: keys validate, the watchdog works, every gate command sees
@@ -71,7 +71,7 @@ its own gate in the text report, `--json` and the attestation
   d="$(fx_gates_project '{"hooks":{"verify-quality":{"orchestrator":"none","severity":"error","gates":{"ok":{"command":"true"},"bad":{"command":"echo \"##gates-fail## bad gate failed\"; exit 1"},"soft":{"command":"exit 1","severity":"warning"},"slow":{"command":"sleep 30","timeout_s":2},"gone":{"command":"no-such-command-xyz"}}}}}')"
   trap 'fx_cleanup "$d"' EXIT
   rc=0; out="$(CLAUDE_PROJECT_DIR="$d" bash "$d/.specify/gates/verify.sh" --boundary git 2>&1)" || rc=$?
-  test "$rc" -eq 1
+  test "$rc" -eq 2
   grep -q '^  \[pass\] ok$' <<<"$out"
   grep -q '^  \[fail\] bad -- bad gate failed$' <<<"$out"
   grep -q '^  \[warn\] soft' <<<"$out"
@@ -87,7 +87,7 @@ its own gate in the text report, `--json` and the attestation
   d="$(fx_gates_project '{"hooks":{"verify-quality":{"orchestrator":"none","gates":{"spec":{"command":"true"}}}}}')"
   trap 'fx_cleanup "$d"' EXIT
   rc=0; CLAUDE_PROJECT_DIR="$d" bash "$d/.specify/gates/verify.sh" --boundary git >/dev/null 2>&1 || rc=$?
-  test "$rc" -eq 2
+  test "$rc" -eq 1
   printf '%s\n' '{"hooks":{"verify-quality":{"orchestrator":"none"}}}' >"$d/.specify/gates/policy.json"
   CLAUDE_PROJECT_DIR="$d" bash "$d/.specify/gates/verify.sh" --boundary git >/dev/null 2>&1
   ```
@@ -109,7 +109,7 @@ every declared gate (constitution 1.1.0, Principle III).
 - [ ] T017 [US2] Extend the synthetic parity gate in `extension/runtime/verify.sh` per research R7: from the effective policy's gate names and this run's gate entries, fail parity (under `attestation.parity` severity) with `declared gates not run at <boundary>: <names>` when a declared gate neither ran (pass, fail, warn) nor was skipped by a declaration naming this boundary; at `ci` this means every declared gate ran; keep the tool-version check unchanged and report both problems when both occur
 - [ ] T018 [US2] In `extension/runtime/doctor.sh`, list each project gate: `[ok]  gate <name> (<severity>, <n>s): runs at every boundary` or `... : skipped by declaration at <b>[, <b>]` (research R9)
 - [ ] T019 [US2] In `gates_contract_deviations` (`extension/runtime/lib/contract.sh`), classify per research R10 and the table in contracts/policy-gates.md: `skip_at` under `hooks.verify-quality.gates.<name>` like `exclude` (gaining entries weakened, losing strengthened); a gate in the baseline and absent from the effective policy is one weakened deviation marked `removed` (as a removed hook); `test_severity` uses the severity rank; `command`, `timeout_s`, `gate_timeout_s` are `changed`; a gate the baseline lacks is not a deviation (delta mode: one strengthened line marked `added`)
-- [ ] T020 [US2] Add canary `project` to `extension/runtime/canary.sh` (research R12): a sandbox policy with gate `canary-fail` (`command: "exit 1"`, severity error, `skip_at: ["agent"]`); blocked when `verify.sh --boundary ci` exits 1 naming `canary-fail` and `verify.sh --boundary agent --json` reports it `skipped` with detail `skipped by declaration at agent`; add it to `CANARY_SET`, the header comment and the count (16 to 17); update `tests/test-canary.sh` counts and add a case where the canary is accepted, by appending a stub `gates_run_watched() { return 0; }` to the fixture's projected `lib/watch.sh` (as the contract canary test stubs `gates_contract_check`), and reported as an enforcement gap
+- [ ] T020 [US2] Add canary `project` to `extension/runtime/canary.sh` (research R12): a sandbox policy with gate `canary-fail` (`command: "exit 1"`, severity error, `skip_at: ["agent"]`); blocked when `verify.sh --boundary ci` exits 2 naming `canary-fail` and `verify.sh --boundary agent --json` reports it `skipped` with detail `skipped by declaration at agent`; add it to `CANARY_SET`, the header comment and the count (16 to 17); update `tests/test-canary.sh` counts and add a case where the canary is accepted, by appending a stub `gates_run_watched() { return 0; }` to the fixture's projected `lib/watch.sh` (as the contract canary test stubs `gates_contract_check`), and reported as an enforcement gap
 - [ ] T021 [US2] Tests in `tests/test-gate.sh`: `skip_at: ["agent"]` skips at agent (text, `--json`, attestation `declared_skip`, no process started: the command touches a file that must not exist) and runs at git and ci; `skip_at: ["git"]` runs at agent; `--boundary` absent runs every gate; a skipped gate never counts as passed; mutation-check
 - [ ] T022 [P] [US2] Tests in `tests/test-parity.sh`: the set check fails with `declared gates not run at ci: <name>` when a declared gate is missing from the CI run's entries (fed through the parity function or a test seam), passes when all ran, and at agent passes when the missing gate is skipped by a declaration naming agent but fails when the declaration names only git; `verify.sh` still yields identical results at every boundary for a policy without `skip_at`; mutation-check
 - [ ] T023 [P] [US2] Tests in `tests/test-contract.sh`: one case per row of the contracts/policy-gates.md deviation table, including a baseline gate removed by the overlay (weakened, removed) and an overlay-only gate (no deviation); mutation-check
@@ -127,7 +127,7 @@ every declared gate (constitution 1.1.0, Principle III).
   grep -q '^  \[skipped\] build -- skipped by declaration at agent$' <<<"$out"
   tail -n 1 "$d/.specify/gates/attestations.jsonl" | jq -e '.gates[] | select(.name == "build") | .declared_skip == "agent" and .result == "skipped"' >/dev/null
   rc=0; out="$(CLAUDE_PROJECT_DIR="$d" bash "$v" --boundary ci 2>&1)" || rc=$?
-  test "$rc" -eq 1
+  test "$rc" -eq 2
   grep -q 'boundary=ci' <<<"$out"
   ```
 
@@ -138,7 +138,7 @@ every declared gate (constitution 1.1.0, Principle III).
   d="$(fx_gates_project '{"hooks":{"verify-quality":{"orchestrator":"none","gates":{"build":{"command":"true","skip_at":["ci"]}}}}}')"
   trap 'fx_cleanup "$d"' EXIT
   rc=0; out="$(CLAUDE_PROJECT_DIR="$d" bash "$d/.specify/gates/verify.sh" --boundary ci 2>&1)" || rc=$?
-  test "$rc" -eq 2
+  test "$rc" -eq 1
   grep -q 'Principle III' <<<"$out"
   ```
 
@@ -174,7 +174,7 @@ built-in walk; doctor points custom commands at it.
   before="$(wc -l <"$d/.specify/gates/attestations.jsonl" 2>/dev/null || echo 0)"
   # The fixture has no node_modules: prettier comes from the repository's.
   rc=0; out="$(PATH="$PWD/node_modules/.bin:$PATH" CLAUDE_PROJECT_DIR="$d" bash "$d/.specify/gates/verify.sh" --boundary git 2>&1)" || rc=$?
-  test "$rc" -eq 1
+  test "$rc" -eq 2
   grep -q '^  \[fail\] custom' <<<"$out"
   after="$(wc -l <"$d/.specify/gates/attestations.jsonl")"
   test "$after" -eq "$((before + 1))"
@@ -192,7 +192,7 @@ warning.
 **Independent Test**: quickstart section 7.
 
 - [ ] T029 [US4] In `extension/runtime/verify.sh`, read `hooks.verify-quality.test_severity` (default `warning`) for `run_gate "task-test"`; `task-lint` stays error
-- [ ] T030 [US4] Tests in `tests/test-gate.sh` with a fake `task` on PATH whose `test` target fails: default warns (exit 0); `test_severity: "error"` fails (exit 1); mutation-check
+- [ ] T030 [US4] Tests in `tests/test-gate.sh` with a fake `task` on PATH whose `test` target fails: default warns (exit 0); `test_severity: "error"` fails (exit 2); mutation-check
 
   ```accept
   # verifies: FR-014
@@ -204,7 +204,7 @@ warning.
   printf '#!/bin/sh\n[ "$1" = test ] && exit 1\nexit 0\n' >"$d/bin/task"
   chmod +x "$d/bin/task"
   rc=0; PATH="$d/bin:$PATH" CLAUDE_PROJECT_DIR="$d" bash "$d/.specify/gates/verify.sh" --boundary git >/dev/null 2>&1 || rc=$?
-  test "$rc" -eq 1
+  test "$rc" -eq 2
   ```
 
 **Checkpoint**: PR 4 of 006, or folded into PR 3.

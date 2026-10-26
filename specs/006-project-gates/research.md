@@ -170,7 +170,7 @@ Decisions for [plan.md](plan.md), each grounded in the runtime as of
 
 - **Decision**: one new canary, `project`: a sandbox policy with a project
   gate `canary-fail` (`command: "exit 1"`, severity error,
-  `skip_at: ["agent"]`). Blocked means: `verify.sh --boundary ci` exits 1
+  `skip_at: ["agent"]`). Blocked means: `verify.sh --boundary ci` exits 2
   and names the gate, and `--boundary agent --json` reports it `skipped`
   with `declared_skip: "agent"`. The suite grows from 16 to 17 canaries.
 - **Rationale**: FR-017 and Principle II: proves the new gate class blocks,

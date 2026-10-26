@@ -46,7 +46,7 @@ For the `task` orchestrator, `"test_severity": "error"` makes a failing
 `gates`, `gate_timeout_s` and `test_severity` are accepted only under the
 `verify-quality` hook.
 
-## Validation (refused, exit 2, naming the key)
+## Validation (refused, exit 1, naming the key; no gate runs)
 
 - a gate name outside `^[a-z0-9][a-z0-9_-]{0,39}$`;
 - a reserved gate name: `prettier`, `markdownlint`, `shellcheck`,

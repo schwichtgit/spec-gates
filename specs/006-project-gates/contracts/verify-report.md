@@ -100,8 +100,10 @@ the run does not run is named (constitution, Principle III).
 
 ## Exit codes
 
-Unchanged: 0 pass (warnings allowed), 1 a gate failed, 2 a setup or policy
-error (including a refused policy key).
+Unchanged (feature 001 CLI contract): 0 every gate green (warnings
+allowed), 1 internal error (a bad argument, a missing or invalid policy,
+including a refused project gate key: no gate ran), 2 at least one gate
+failed.
 
 ## `verify.sh --walk`
 
