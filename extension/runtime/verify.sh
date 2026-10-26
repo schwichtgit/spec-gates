@@ -92,6 +92,12 @@ done
 if [[ "$BOUNDARY" == "unspecified" ]]; then
     echo "gates: warning: verify.sh without --boundary is deprecated; it runs every gate as before, and a later release may refuse it. Pass --boundary agent|git|ci" >&2
 fi
+# Every gate command (project gates, the task and custom steps, the walk)
+# can read the boundary it runs at (feature 006, FR-010); "none" is a run
+# without --boundary, at which no skip declaration applies.
+GATES_BOUNDARY="$BOUNDARY"
+[[ "$BOUNDARY" == "unspecified" ]] && GATES_BOUNDARY="none"
+export GATES_BOUNDARY
 
 # GATES_POLICY_FILE replaces the whole policy (#196): set for one command
 # it would drop every gate the repository declares. The git and CI

@@ -611,6 +611,66 @@ expect "invalid policy: the refusal carries the boundary" \
 expect "a quote in the reason stays valid JSON" \
     "$(CLAUDE_PROJECT_DIR="$DE" bash "$V" --json --boundary 'a"b' 2>/dev/null | jq -r '.reason' | grep -c 'a"b')" 1
 
+# --- lib/watch.sh: gates_run_watched (feature 006) ---
+echo ""
+echo "=== gates_run_watched ==="
+# watched <timeout> <outfile> <cmd...>: "<rc>|<GATES_WATCH_DETAIL>|<seconds>"
+watched() {
+    (
+        # shellcheck source=../extension/runtime/lib/watch.sh disable=SC1091
+        source "$REPO_ROOT/extension/runtime/lib/watch.sh"
+        local t0 rc=0
+        t0="$(date +%s)"
+        gates_run_watched "$@" || rc=$?
+        printf '%s|%s|%s\n' "$rc" "$GATES_WATCH_DETAIL" "$(($(date +%s) - t0))"
+    )
+}
+WO="$WORKDIR/watched.out"
+expect "a passing command returns 0" "$(watched 10 "$WO" true | cut -d'|' -f1,2)" "0|"
+expect "a failing command returns its status" "$(watched 10 "$WO" sh -c 'exit 3' | cut -d'|' -f1,2)" "3|"
+watched 10 "$WO" sh -c 'echo to-stdout; echo to-stderr >&2' >/dev/null
+expect "stdout and stderr go to the file" "$(tr '\n' ' ' <"$WO")" "to-stdout to-stderr "
+expect "stdin is /dev/null" "$(echo piped | watched 10 "$WO" cat >/dev/null; wc -c <"$WO" | tr -d ' ')" 0
+expect "a command exiting 124 by itself is not a timeout" "$(watched 10 "$WO" sh -c 'exit 124' | cut -d'|' -f1,2)" "124|"
+W="$(watched 2 "$WO" sleep 30)"
+expect "sleep 30 under a 2 s limit returns 124" "${W%%|*}" 124
+expect_detail="$(cut -d'|' -f2 <<<"$W")"
+TOTAL=$((TOTAL + 1))
+if [[ "$expect_detail" == "timeout after 2s" || "$expect_detail" == "timeout after 2s at load "* ]]; then
+    echo "PASS: the timeout detail names the limit (and the load)"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL: timeout detail: $expect_detail"
+    FAIL=$((FAIL + 1))
+fi
+TOTAL=$((TOTAL + 1))
+if [[ "${W##*|}" -le 6 ]]; then
+    echo "PASS: the timeout fires within 6 s"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL: the timeout took ${W##*|}s"
+    FAIL=$((FAIL + 1))
+fi
+# The command and a child it started: both are in the stopped group.
+PIDF="$WORKDIR/watched.pids"
+watched 2 "$WO" sh -c "echo \$\$ >'$PIDF'; sleep 31 & echo \$! >>'$PIDF'; wait" >/dev/null
+alive=0
+while IFS= read -r p; do
+    [[ -n "$p" ]] && kill -0 "$p" 2>/dev/null && alive=$((alive + 1))
+done <"$PIDF"
+expect "no process of the stopped group keeps running" "$(wc -l <"$PIDF" | tr -d ' '):$alive" "2:0"
+# A quick command under a long limit: the timer is stopped with it, so a
+# caller capturing the run's output does not wait for the limit.
+W="$(watched 20 "$WO" true)"
+TOTAL=$((TOTAL + 1))
+if [[ "${W##*|}" -le 3 ]]; then
+    echo "PASS: a quick command does not wait for its limit"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL: a quick command under a 20 s limit took ${W##*|}s"
+    FAIL=$((FAIL + 1))
+fi
+
 echo ""
 echo "$PASS passed, $FAIL failed, $SKIP skipped ($TOTAL total)"
 [[ "$FAIL" -gt 0 ]] && exit 1

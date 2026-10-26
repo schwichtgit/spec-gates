@@ -6,6 +6,11 @@
 #   gates_policy_get <hook> <field>    # scalar (empty string on missing)
 #   gates_policy_list <hook> <field>   # one line per array element
 #   gates_validate_policy [file]       # returns 0 on pass, nonzero on fail
+#   gates_project_gate_names           # project gate names, key order
+#   gates_project_gate_get <name> <field>
+#   gates_project_gate_skip_at <name>  # compact JSON array or empty
+#   gates_declared_skip <boundary> <skip_at-json>  # the boundary-skip
+#                                      # decision; feature 007 reuses it
 #
 # Missing hook, missing field, or missing policy file all yield empty output
 # with exit 0 -- the loader is fail-open. Strict checks happen in
@@ -145,6 +150,64 @@ gates_policy_path_list() {
     [[ "${out%%$'\n'*}" == "+" ]] || return 1
     [[ "$out" == *$'\n'* ]] && printf '%s\n' "${out#*$'\n'}"
     return 0
+}
+
+# Project gates (feature 006): hooks.verify-quality.gates, an object keyed
+# by gate name whose key order is the run order. A null gate is a removed
+# one (a contract overlay drops a baseline gate so) and is not listed.
+# Fail-open like the other accessors; gates_validate_policy is the strict
+# check, and verify.sh refuses an invalid policy before reading these.
+gates_project_gate_names() { # one name per line, in key order
+    local file
+    file="$(gates_policy_file)"
+    [[ -f "$file" ]] || return 0
+    jq -r '
+        (.hooks["verify-quality"].gates // {})
+        | if type == "object" then to_entries[] | select(.value != null) | .key
+          else empty end
+    ' "$file" 2>/dev/null || true
+}
+
+gates_project_gate_get() { # <name> <field>: scalar, empty when missing
+    local file
+    [[ -n "${1:-}" && -n "${2:-}" ]] || return 0
+    file="$(gates_policy_file)"
+    [[ -f "$file" ]] || return 0
+    jq -r --arg n "$1" --arg f "$2" '
+        ((.hooks["verify-quality"].gates // {})[$n] // {})[$f]
+        | if . == null or type == "array" or type == "object" then "" else tostring end
+    ' "$file" 2>/dev/null || true
+}
+
+gates_project_gate_skip_at() { # <name>: compact JSON array, empty when absent
+    local file
+    [[ -n "${1:-}" ]] || return 0
+    file="$(gates_policy_file)"
+    [[ -f "$file" ]] || return 0
+    jq -c --arg n "$1" '
+        ((.hooks["verify-quality"].gates // {})[$n] // {}).skip_at
+        | if type == "array" then . else empty end
+    ' "$file" 2>/dev/null || true
+}
+
+# The one boundary-skip decision (research R6): an item whose declaration
+# <skip_at-json> (a JSON array, or empty for none) names <boundary> does
+# not run there. Prints "skipped by declaration at <boundary>" and returns
+# 0 when skipped; returns 1 otherwise. Only agent and git can be skipped:
+# ci (CI runs the full policy, constitution Principle III), none (a run
+# without --boundary runs everything) and any other value return 1 even if
+# listed. Project gates use it now; feature 007 reuses it for accept
+# blocks, so both report a skip in the same words.
+gates_declared_skip() { # <boundary> <skip_at-json>
+    local boundary="${1:-}" list="${2:-}"
+    case "$boundary" in
+        agent | git) ;;
+        *) return 1 ;;
+    esac
+    [[ -n "$list" ]] || return 1
+    jq -e --arg b "$boundary" 'type == "array" and any(.[]; . == $b)' \
+        >/dev/null 2>&1 <<<"$list" || return 1
+    printf 'skipped by declaration at %s\n' "$boundary"
 }
 
 # Protected-change trailer switch (git.protected_change_trailer, default on).
@@ -329,8 +392,16 @@ gates_validate_policy() {
         def top_keys: ["_comment", "$schema", "extends", "hooks", "protected_files", "git", "attestation", "spec"];
         def allowed_keys: [
             "include","exclude","orchestrator","severity",
-            "on_missing_runner","on_missing_tests","custom_command"
+            "on_missing_runner","on_missing_tests","custom_command",
+            "gates","gate_timeout_s","test_severity"
         ];
+        # Project gates (feature 006): keys of verify-quality only.
+        def vq_keys: ["gates", "gate_timeout_s", "test_severity"];
+        def gate_keys: ["command", "severity", "timeout_s", "skip_at"];
+        # Reserved: the names of the built-in gates and report lines.
+        def reserved_gates: ["prettier", "markdownlint", "shellcheck", "task-lint", "task-test",
+            "custom", "spec", "contract", "parity", "policy", "lock", "constitution"];
+        def limit_s: type == "number" and floor == . and . >= 1 and . <= 86400;
         # on_missing_runner/on_missing_tests: deprecated, read by no gate;
         # still validated so existing policies pass (doctor flags them, #112).
         def orch_values:   ["none","task","custom"];
@@ -341,6 +412,61 @@ gates_validate_policy() {
             if ($v | type) != "array" then ["\($what) must be an array of strings"]
             elif any($v[]; type != "string") then ["\($what) entries must be strings"]
             else [] end;
+        # Each error names its key path (verify-quality.gates.<name>.<key>).
+        # A null gate is a removed one, as for hooks (a contract overlay
+        # drops a baseline gate with null).
+        def vq_errors($h; $v):
+            ( if ($v | has("gate_timeout_s")) and ($v.gate_timeout_s | limit_s | not)
+                then "\($h).gate_timeout_s: must be an integer from 1 to 86400"
+              else empty end ),
+            ( if ($v | has("test_severity")) and (sev_values | index($v.test_severity)) == null
+                then "\($h).test_severity: invalid value \($v.test_severity | tojson) (allowed: \(sev_values | join(", ")))"
+              else empty end ),
+            ( if ($v | has("gates")) | not then empty
+              elif ($v.gates | type) != "object"
+                then "\($h).gates: must be an object keyed by gate name"
+              else
+                $v.gates | to_entries[] | select(.value != null) | . as $g
+                | "\($h).gates.\($g.key)" as $p
+                | ( if ($g.key | test("^[a-z0-9][a-z0-9_-]{0,39}$") | not)
+                      then "\($p): invalid gate name (allowed: lowercase letters, digits, - and _, starting with a letter or digit, at most 40 characters)"
+                    elif (reserved_gates | index($g.key)) != null
+                      then "\($p): \"\($g.key)\" is a reserved gate name (a built-in gate)"
+                    else empty end ),
+                  ( if ($g.value | type) != "object" then "\($p): must be an object"
+                    else
+                      ( $g.value | keys[] | select(IN(gate_keys[]) | not)
+                        | "\($p): unknown field \"\(.)\"" ),
+                      ( if ($g.value | has("command")) | not
+                          then "\($p): missing required field \"command\""
+                        elif ($g.value.command | type) != "string" or ($g.value.command | length) == 0
+                          then "\($p).command: must be a non-empty string"
+                        else empty end ),
+                      ( if ($g.value | has("severity")) and (sev_values | index($g.value.severity)) == null
+                          then "\($p).severity: invalid value \($g.value.severity | tojson) (allowed: \(sev_values | join(", ")))"
+                        else empty end ),
+                      ( if ($g.value | has("timeout_s")) and ($g.value.timeout_s | limit_s | not)
+                          then "\($p).timeout_s: must be an integer from 1 to 86400"
+                        else empty end ),
+                      ( if ($g.value | has("skip_at")) | not then empty
+                        else
+                          $g.value.skip_at as $s
+                          | if ($s | type) != "array"
+                              then "\($p).skip_at: must be an array of boundaries (allowed: agent, git)"
+                            elif ($s | length) == 0
+                              then "\($p).skip_at: must not be empty"
+                            else
+                              ( $s[] | select(. == "ci")
+                                | "\($p).skip_at: \"ci\" is refused: CI runs the full policy (constitution, Principle III)" ),
+                              ( $s[] | select(. != "ci" and . != "agent" and . != "git")
+                                | "\($p).skip_at: invalid boundary \(tojson) (allowed: agent, git)" ),
+                              ( if ($s | length) != ($s | unique | length)
+                                  then "\($p).skip_at: duplicate entries"
+                                else empty end )
+                            end
+                        end )
+                    end )
+              end );
         # A null hook is a removed one (a contract overlay drops a baseline
         # hook with null) and reads as absent; any other non-object is named.
         def hook_errors:
@@ -384,7 +510,12 @@ gates_validate_policy() {
                     elif ($e.value.custom_command | length) == 0
                       then "\($e.key): orchestrator \"custom\" requires non-empty \"custom_command\""
                     else empty end
-                  else empty end ) )
+                  else empty end ),
+                ( if $e.key == "verify-quality" then vq_errors($e.key; $e.value)
+                  else vq_keys[] as $k
+                    | select($e.value | has($k))
+                    | "\($e.key): \"\($k)\" is allowed only under verify-quality"
+                  end ) )
               end;
         def git_keys: ["block_main_commits", "conventional_commits", "forbid_ai_isms", "protected_change_trailer", "block_bulk_staging", "ai_branding"];
         def git_bool_keys: ["block_main_commits", "conventional_commits", "forbid_ai_isms", "protected_change_trailer", "block_bulk_staging"];

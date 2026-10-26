@@ -877,6 +877,172 @@ else
     fail "top-level keys differ: schema [$SCHEMA_TOP] validator [$VALIDATOR_TOP]"
 fi
 
+# --- project gates (feature 006): hooks.verify-quality.gates ---
+echo ""
+echo "=== project gate keys ==="
+accepts() { # <name> <policy-json>
+    local f out rc=0
+    f="$(write_policy "$1" "$2")"
+    out="$(gates_validate_policy "$f" 2>&1)" || rc=$?
+    if [[ "$rc" == 0 ]]; then
+        pass "$1 accepted"
+    else
+        fail "$1: rc $rc, output: $out"
+    fi
+}
+# vq <verify-quality members>: a policy around them.
+vq() { printf '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error", %s } } }' "$1"; }
+
+accepts pg-full "$(vq '"gate_timeout_s": 900, "test_severity": "error", "gates": {
+    "lint": { "command": "npm run -s lint" },
+    "unit_test-2": { "command": "npm test", "severity": "warning", "timeout_s": 86400 },
+    "build": { "command": "make", "severity": "info", "timeout_s": 1, "skip_at": ["agent", "git"] },
+    "dropped": null } ')"
+accepts pg-empty-gates "$(vq '"gates": {}')"
+rejects pg-name-upper "$(vq '"gates": { "Lint": { "command": "x" } }')" 5 \
+    'verify-quality.gates.Lint: invalid gate name'
+rejects pg-name-leading-dash "$(vq '"gates": { "-lint": { "command": "x" } }')" 5 \
+    'verify-quality.gates.-lint: invalid gate name'
+rejects pg-name-41 "$(vq '"gates": { "a1234567890123456789012345678901234567890": { "command": "x" } }')" 5 \
+    'invalid gate name'
+accepts pg-name-40 "$(vq '"gates": { "a123456789012345678901234567890123456789": { "command": "x" } }')"
+for reserved in prettier markdownlint shellcheck task-lint task-test custom spec contract parity policy lock constitution; do
+    rejects "pg-reserved-$reserved" "$(vq "\"gates\": { \"$reserved\": { \"command\": \"x\" } }")" 5 \
+        "verify-quality.gates.$reserved: \"$reserved\" is a reserved gate name"
+done
+rejects pg-no-command "$(vq '"gates": { "lint": { "severity": "error" } }')" 5 \
+    'verify-quality.gates.lint: missing required field "command"'
+rejects pg-empty-command "$(vq '"gates": { "lint": { "command": "" } }')" 5 \
+    'verify-quality.gates.lint.command: must be a non-empty string'
+rejects pg-command-array "$(vq '"gates": { "lint": { "command": ["npm"] } }')" 5 \
+    'verify-quality.gates.lint.command: must be a non-empty string'
+rejects pg-unknown-key "$(vq '"gates": { "lint": { "command": "x", "boundaries": ["ci"] } }')" 5 \
+    'verify-quality.gates.lint: unknown field "boundaries"'
+rejects pg-gate-string "$(vq '"gates": { "lint": "npm run lint" }')" 5 \
+    'verify-quality.gates.lint: must be an object'
+rejects pg-gates-array "$(vq '"gates": [ { "command": "x" } ]')" 5 \
+    'verify-quality.gates: must be an object keyed by gate name'
+rejects pg-severity "$(vq '"gates": { "lint": { "command": "x", "severity": "fatal" } }')" 5 \
+    'verify-quality.gates.lint.severity: invalid value "fatal"'
+rejects pg-timeout-zero "$(vq '"gates": { "lint": { "command": "x", "timeout_s": 0 } }')" 5 \
+    'verify-quality.gates.lint.timeout_s: must be an integer from 1 to 86400'
+rejects pg-timeout-big "$(vq '"gates": { "lint": { "command": "x", "timeout_s": 86401 } }')" 5 \
+    'verify-quality.gates.lint.timeout_s: must be an integer from 1 to 86400'
+rejects pg-timeout-frac "$(vq '"gates": { "lint": { "command": "x", "timeout_s": 1.5 } }')" 5 \
+    'verify-quality.gates.lint.timeout_s: must be an integer'
+rejects pg-timeout-string "$(vq '"gates": { "lint": { "command": "x", "timeout_s": "60" } }')" 5 \
+    'verify-quality.gates.lint.timeout_s: must be an integer'
+rejects pg-gate-timeout-zero "$(vq '"gate_timeout_s": 0')" 5 \
+    'verify-quality.gate_timeout_s: must be an integer from 1 to 86400'
+rejects pg-gate-timeout-big "$(vq '"gate_timeout_s": 86401')" 5 \
+    'verify-quality.gate_timeout_s: must be an integer from 1 to 86400'
+accepts pg-gate-timeout-edges "$(vq '"gate_timeout_s": 86400')"
+rejects pg-test-severity "$(vq '"test_severity": "fatal"')" 5 \
+    'verify-quality.test_severity: invalid value "fatal"'
+rejects pg-skip-ci "$(vq '"gates": { "build": { "command": "x", "skip_at": ["ci"] } }')" 5 \
+    'verify-quality.gates.build.skip_at: "ci" is refused: CI runs the full policy (constitution, Principle III)'
+rejects pg-skip-ci-mixed "$(vq '"gates": { "build": { "command": "x", "skip_at": ["agent", "ci"] } }')" 5 \
+    'Principle III'
+rejects pg-skip-empty "$(vq '"gates": { "build": { "command": "x", "skip_at": [] } }')" 5 \
+    'verify-quality.gates.build.skip_at: must not be empty'
+rejects pg-skip-dup "$(vq '"gates": { "build": { "command": "x", "skip_at": ["git", "git"] } }')" 5 \
+    'verify-quality.gates.build.skip_at: duplicate entries'
+rejects pg-skip-unknown "$(vq '"gates": { "build": { "command": "x", "skip_at": ["precommit"] } }')" 5 \
+    'verify-quality.gates.build.skip_at: invalid boundary "precommit" (allowed: agent, git)'
+rejects pg-skip-string "$(vq '"gates": { "build": { "command": "x", "skip_at": "agent" } }')" 5 \
+    'verify-quality.gates.build.skip_at: must be an array'
+for key in gates gate_timeout_s test_severity; do
+    case "$key" in
+        gates) val='{ "lint": { "command": "x" } }' ;;
+        gate_timeout_s) val=600 ;;
+        test_severity) val='"error"' ;;
+    esac
+    rejects "pg-$key-under-prettier" \
+        "{ \"hooks\": { \"prettier\": { \"severity\": \"error\", \"$key\": $val } } }" 5 \
+        "prettier: \"$key\" is allowed only under verify-quality"
+done
+# A policy without the new keys validates exactly as before.
+accepts pg-none "$(vq '"custom_command": "true"')"
+
+# The schema documents what the validator enforces.
+SCHEMA="$REPO_ROOT/extension/runtime/policy.schema.json"
+if [[ "$(jq -r '."$defs".projectGate.properties | keys | join(",")' "$SCHEMA")" \
+    == "$(sed -n 's/^ *def gate_keys: \[\(.*\)\];$/\1/p' "$LIB" | jq -rR 'split(", ") | map(fromjson) | sort | join(",")')" ]]; then
+    pass "schema project gate keys match the validator"
+else
+    fail "schema and validator project gate keys differ"
+fi
+if [[ "$(jq -r '."$defs".hook.properties.gates.propertyNames.not.enum | sort | join(",")' "$SCHEMA")" \
+    == "$(sed -n '/def reserved_gates:/,/];/p' "$LIB" | tr -d '\n' \
+        | sed 's/.*def reserved_gates: \(\[.*\]\);.*/\1/' | jq -r 'sort | join(",")')" ]]; then
+    pass "schema reserves the built-in gate names"
+else
+    fail "schema reserved gate names differ"
+fi
+if jq -e '(."$defs".projectGate.properties.skip_at | .minItems == 1 and .uniqueItems == true and .items.enum == ["agent", "git"] and (.description | test("Principle III")))
+    and (.properties.hooks.additionalProperties.properties | .gates == false and .gate_timeout_s == false and .test_severity == false)
+    and (."$defs".hook.properties.gate_timeout_s | .minimum == 1 and .maximum == 86400 and .default == 600)
+    and (."$defs".hook.properties.test_severity | .enum == ["error", "warning", "info"] and .default == "warning")' \
+    "$SCHEMA" >/dev/null; then
+    pass "schema: skip_at, gate_timeout_s, test_severity and the verify-quality-only rule"
+else
+    fail "schema entries for the project gate keys missing or wrong"
+fi
+
+# verify.sh refuses an invalid gate key before any gate runs (exit 1).
+# shellcheck source=lib/fixture.sh disable=SC1091
+source "$REPO_ROOT/tests/lib/fixture.sh"
+PGD="$(fx_gates_project "$(vq '"gates": { "build": { "command": "touch ran", "skip_at": ["ci"] } }')")"
+PG_RC=0
+PG_OUT="$(CLAUDE_PROJECT_DIR="$PGD" bash "$PGD/.specify/gates/verify.sh" --boundary git 2>&1)" || PG_RC=$?
+if [[ "$PG_RC" == 1 && ! -e "$PGD/ran" ]] && grep -q 'Principle III' <<<"$PG_OUT" \
+    && ! grep -q '^gates: boundary=' <<<"$PG_OUT"; then
+    pass "verify.sh refuses skip_at ci with exit 1 and runs no gate"
+else
+    fail "verify.sh on skip_at ci: rc $PG_RC, output: $PG_OUT"
+fi
+fx_cleanup "$PGD"
+
+# --- accessors and the boundary-skip decision (feature 006) ---
+echo ""
+echo "=== project gate accessors ==="
+PGA="$(write_policy pg-acc "$(vq '"gates": { "zeta": { "command": "echo z", "timeout_s": 5, "skip_at": ["agent"] }, "alpha": { "command": "echo a" }, "gone": null }')")"
+if [[ "$(GATES_POLICY_FILE="$PGA" gates_project_gate_names | paste -sd , -)" == "zeta,alpha" ]]; then
+    pass "gates_project_gate_names: key order, null gates left out"
+else
+    fail "gates_project_gate_names: $(GATES_POLICY_FILE="$PGA" gates_project_gate_names | paste -sd , -)"
+fi
+if [[ "$(GATES_POLICY_FILE="$PGA" gates_project_gate_get zeta command)|$(GATES_POLICY_FILE="$PGA" gates_project_gate_get zeta timeout_s)|$(GATES_POLICY_FILE="$PGA" gates_project_gate_get alpha severity)|$(GATES_POLICY_FILE="$PGA" gates_project_gate_get nope command)" == "echo z|5||" ]]; then
+    pass "gates_project_gate_get: scalars, empty when missing"
+else
+    fail "gates_project_gate_get wrong"
+fi
+if [[ "$(GATES_POLICY_FILE="$PGA" gates_project_gate_skip_at zeta)|$(GATES_POLICY_FILE="$PGA" gates_project_gate_skip_at alpha)" == '["agent"]|' ]]; then
+    pass "gates_project_gate_skip_at: compact array, empty when absent"
+else
+    fail "gates_project_gate_skip_at wrong"
+fi
+while IFS='|' read -r want boundary list; do
+    [[ -n "$want" ]] || continue
+    got="$(gates_declared_skip "$boundary" "$list")" && rc=0 || rc=$?
+    if [[ "$rc:$got" == "$want" ]]; then
+        pass "gates_declared_skip $boundary $list -> $want"
+    else
+        fail "gates_declared_skip $boundary $list: got $rc:$got, want $want"
+    fi
+done <<'EOF'
+0:skipped by declaration at agent|agent|["agent"]
+0:skipped by declaration at git|git|["agent","git"]
+1:|git|["agent"]
+1:|agent|["git"]
+1:|ci|["ci"]
+1:|ci|["agent","git","ci"]
+1:|none|["agent","git"]
+1:|unspecified|["agent"]
+1:|agent|
+1:|agent|"agent"
+EOF
+
 # --- glob matcher: a pattern after a leading **/ (#220) ---
 echo ""
 echo "=== gates_glob_match: **/ prefix ==="

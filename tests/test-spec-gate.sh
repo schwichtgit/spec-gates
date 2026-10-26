@@ -564,6 +564,26 @@ expect "no sysctl: uptime, Linux style" \
 expect "no sysctl: uptime, macOS style with a decimal comma" \
     "$(load_avg FAKE_UPTIME='10:00  up 3 days, 2 users, load averages: 2,50 1,00 0,90')" "2.50"
 expect "unparsable sources: none" "$(load_avg FAKE_SYSCTL='unknown oid' FAKE_UPTIME='up 3 days')" "none"
+# The group stop moved to lib/watch.sh (feature 006): spec-gate.sh loads it
+# from its own directory, the old name still stops a group, and a watched
+# command's timeout reports the load as an accept block's does.
+# shellcheck disable=SC2016  # expanded by the inner bash
+expect "spec-gate.sh alone: gates_spec_group_stop stops a process group" "$(bash -c '
+    source "$1/extension/runtime/lib/spec-gate.sh"
+    set -m
+    sleep 30 &
+    p=$!
+    set +m
+    t0=$SECONDS
+    gates_spec_group_stop "$p"
+    wait "$p" 2>/dev/null
+    [[ $((SECONDS - t0)) -lt 5 ]] && echo stopped || echo alive' _ "$REPO_ROOT")" stopped
+# shellcheck disable=SC2016  # expanded by the inner bash
+expect "a watched command's timeout names the load" "$(GATES_SPEC_LOADAVG_FILE="$WORKDIR/loadavg" bash -c '
+    source "$1/extension/runtime/lib/spec-gate.sh"
+    rc=0
+    gates_run_watched 1 "$2" sleep 20 || rc=$?
+    printf "%s|%s" "$rc" "$GATES_WATCH_DETAIL"' _ "$REPO_ROOT" "$WORKDIR/watched.out")" "124|timeout after 1s at load 48.20"
 
 D="$WORKDIR/mutation"
 project "$D" "$MINIMAL"
