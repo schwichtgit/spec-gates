@@ -415,6 +415,20 @@ wait "$HOLDER" || rc=$?
 expect "an interrupted run exits 143" "$rc" 143
 expect "the lock is gone after an interrupted run" "$([[ -e "$LOCK" ]] && echo held || echo free)" free
 
+# A run whose lock another run took over (it judged this one stale) must
+# leave the new holder's lock in place when it exits.
+sleep 120 &
+OTHER=$!
+start_holder git
+printf '%s\nci\n\n' "$OTHER" >"$LOCK/owner"
+: >"$DL/release"
+wait "$HOLDER" || true
+expect "a run leaves a lock it no longer owns in place" \
+    "$(head -n 1 "$LOCK/owner" 2>/dev/null || echo none)" "$OTHER"
+kill "$OTHER" 2>/dev/null || true
+wait "$OTHER" 2>/dev/null || true
+rm -rf "$LOCK"
+
 sh -c 'exit 0' &
 DEAD=$!
 wait "$DEAD" || true
