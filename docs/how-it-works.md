@@ -584,6 +584,13 @@ Dispatch follows the policy's `verify-quality.orchestrator`:
 Exit codes: `0` green, `1` internal error, `2` gate failure. `--json`
 emits a single machine-readable object for workflow steps and CI.
 
+**A failing step names its own failure.** A failing or warning tool,
+task or custom step keeps the last 2000 bytes of its output as the
+gate's `detail`; the one-line text report shows the step's last
+non-empty line. A step can name the line instead: the last line that
+carries `##gates-fail## <text>` wins, and the marker itself is stripped
+from the report and the `detail`, which keep the text.
+
 **An invalid policy runs no gate.** Before any gate, `verify.sh` validates
 the policy it enforces (`policy.json`, or `policy.effective.json` in a
 contract repo) with the same check as `policy.sh validate`: malformed

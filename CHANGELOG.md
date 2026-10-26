@@ -46,6 +46,11 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   `sysctl -n vm.loadavg`, or `uptime`): `timeout after 90s at load 48.2`.
   Without a load source it reads as before; `spec.timeout_s` remains the
   knob.
+- **A failing gate's summary line names the failure** (#262). The text
+  report printed the first line of the step's last 2000 bytes of
+  output, a line wherever the cut fell. It now prints the last
+  non-empty line, or the step's last `##gates-fail## <text>` line; the
+  marker never shows in the report or the `--json` detail.
 
 ## 0.4.1 — 2026-10-07
 

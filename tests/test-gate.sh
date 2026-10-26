@@ -236,6 +236,51 @@ DF="$WORKDIR/custom-fail"
 project "$DF" '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error", "custom_command": "false" } } }'
 expect "custom false -> fail (exit 2)" "$(gate "$DF")" 2
 
+# --- the failing-gate summary names the failure (#262) ---
+# The detail is the output's last 2000 bytes; the summary used to be the
+# first line of that window, a line near the cut.
+echo ""
+echo "=== failing-gate summary line ==="
+DS="$WORKDIR/summary"
+project "$DS" '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error", "custom_command": "sh ./step.sh" } } }'
+i=0
+while [[ $i -lt 100 ]]; do
+    echo "noise line $i padding padding padding"
+    i=$((i + 1))
+done >"$DS/noise.txt"
+{
+    echo '#!/bin/sh'
+    echo 'cat noise.txt'
+    echo 'echo "LAST-LINE-262 the real error"'
+    echo 'echo ""'
+    echo 'exit 1'
+} >"$DS/step.sh"
+summary_line() { # <dir>: the report line of the custom gate
+    (cd "$1" && CLAUDE_PROJECT_DIR="$1" bash "$1/.specify/gates/verify.sh" --boundary ci 2>&1) \
+        | grep '^  \[fail\] custom' || true
+}
+expect "output over 2000 bytes: the summary is its last non-empty line" \
+    "$(summary_line "$DS")" "  [fail] custom -- LAST-LINE-262 the real error"
+{
+    echo '#!/bin/sh'
+    echo 'echo "##gates-fail## FIRST-MARK-262"'
+    echo 'echo "##gates-fail## PICKED-MARK-262 lint found 3 errors"'
+    echo 'cat noise.txt'
+    echo 'echo "  ##gates-fail## TAIL-MARK-262 visible"'
+    echo 'echo "trailing line"'
+    echo 'exit 1'
+} >"$DS/step.sh"
+expect "a ##gates-fail## line wins over the last line (the last one wins)" \
+    "$(summary_line "$DS")" "  [fail] custom -- TAIL-MARK-262 visible"
+SJ="$(cd "$DS" && CLAUDE_PROJECT_DIR="$DS" bash "$DS/.specify/gates/verify.sh" --boundary ci --json 2>/dev/null || true)"
+SJD="$(jq -r '.gates[] | select(.name == "custom") | .detail' <<<"$SJ")"
+expect "--json detail keeps the marked text" \
+    "$(grep -c 'TAIL-MARK-262 visible' <<<"$SJD")" 1
+expect "--json detail carries no ##gates-fail## marker" \
+    "$(grep -c 'gates-fail##' <<<"$SJD" || true)" 0
+expect "text report carries no ##gates-fail## marker" \
+    "$(cd "$DS" && CLAUDE_PROJECT_DIR="$DS" bash "$DS/.specify/gates/verify.sh" --boundary ci 2>&1 | grep -c 'gates-fail##' || true)" 0
+
 # --- empty gate set does not crash under bash 3.2, and --json is well-formed ---
 echo ""
 echo "=== empty gate set (bash 3.2 regression) ==="

@@ -168,10 +168,14 @@ fi
 FAILED=0
 WARNINGS=0
 declare -a RESULTS=()
+declare -a SUMMARIES=()
 declare -a ATT_GATES=()
 
-record() { # name status detail
+# <summary> is the one line the text report prints for the gate; without
+# it the report prints the first line of <detail>.
+record() { # name status detail [summary]
     RESULTS+=("{\"name\":\"$1\",\"status\":\"$2\",\"detail\":$(jq -Rn --arg d "$3" '$d')}")
+    SUMMARIES+=("${4:-}")
 }
 
 # Append a GateEntry (attestation shape, data-model.md) for an evaluated
@@ -217,8 +221,19 @@ run_gate() { # name severity cmd...
         skipped="$(printf '%s' "$meta" | sed -n 's/.* skipped=\([^ ]*\).*/\1/p')"
         bin="$(printf '%s' "$meta" | sed -n 's/.* bin=//p')"
     fi
-    local detail
-    detail="$(grep -v '##gates-meta##' /tmp/gates-out.$$ | tail -c 2000 || true)"
+    # The detail keeps the output's last 2000 bytes, whose first line is
+    # wherever the cut fell (#262). The summary is the step's own verdict:
+    # its last "##gates-fail## <text>" line, else its last non-empty line.
+    # The marker is machinery too and never shows in the detail.
+    local detail summary
+    detail="$(grep -v '##gates-meta##' /tmp/gates-out.$$ \
+        | sed 's/##gates-fail##[[:space:]]*//' | tail -c 2000 || true)"
+    summary="$(grep '##gates-fail##' /tmp/gates-out.$$ 2>/dev/null | tail -n 1 \
+        | sed 's/.*##gates-fail##[[:space:]]*//' || true)"
+    if [[ -z "$summary" ]]; then
+        summary="$(grep -v '##gates-meta##' /tmp/gates-out.$$ \
+            | grep -v '^[[:space:]]*$' | tail -n 1 || true)"
+    fi
     rm -f /tmp/gates-out.$$
 
     local version="" pinned=""
@@ -245,8 +260,8 @@ run_gate() { # name severity cmd...
     case "$result" in
         pass) record "$name" "pass" "" ;;
         skipped) record "$name" "skipped" "$reason" ;;
-        fail) record "$name" "fail" "$detail"; FAILED=$((FAILED + 1)) ;;
-        warn) record "$name" "warn" "$detail"; WARNINGS=$((WARNINGS + 1)) ;;
+        fail) record "$name" "fail" "$detail" "$summary"; FAILED=$((FAILED + 1)) ;;
+        warn) record "$name" "warn" "$detail" "$summary"; WARNINGS=$((WARNINGS + 1)) ;;
     esac
     att_gate "$name" "$bin" "$version" "$pinned" "$candidates" "$checked" \
         "$result" "$reason" "$((end - start))"
@@ -499,11 +514,16 @@ else
         echo "  [override] policy -- GATES_POLICY_FILE=$POLICY_OVERRIDE was ignored $POLICY_OVERRIDE_WHERE"
     fi
     if [[ ${#RESULTS[@]} -gt 0 ]]; then
+        i=0
         for r in "${RESULTS[@]}"; do
             name="$(printf '%s' "$r" | jq -r '.name')"
             status="$(printf '%s' "$r" | jq -r '.status')"
-            detail="$(jq -r '.detail' <<<"$r")"
-            detail="${detail%%$'\n'*}"
+            detail="${SUMMARIES[i]}"
+            i=$((i + 1))
+            if [[ -z "$detail" ]]; then
+                detail="$(jq -r '.detail' <<<"$r")"
+                detail="${detail%%$'\n'*}"
+            fi
             if [[ -n "$detail" ]]; then
                 echo "  [$status] $name -- $detail"
             else
