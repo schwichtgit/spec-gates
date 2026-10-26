@@ -40,8 +40,7 @@ Jenkins pipelines (templates unchanged: they already run
 **Project Type**: Spec Kit extension (CLI runtime + command prose).
 
 **Performance Goals**: no measurable change for a policy without project
-gates; a skipped gate costs no process start; watchdog overhead under 100 ms
-per gate.
+gates; a skipped gate costs no process start.
 
 **Constraints**: fail closed (missing command, timeout, refused keys); CI
 can never be skipped; backward compatible (FR-015); the attestation reason
@@ -53,15 +52,15 @@ carries no command output (evidence hygiene).
 
 _GATE: Must pass before Phase 0 research. Re-check after Phase 1 design._
 
-| Principle                         | Status | Notes                                                                                                                                                                                                                               |
-| --------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| I. Fail Closed                    | Pass   | A command that cannot start, a timeout, and every invalid key fail (exit 1 or 2) naming the cause; a skipped gate never counts as passed; an older runtime refuses the new keys instead of dropping gates.                          |
-| II. Provable Enforcement          | Pass   | Project gates carry attestation entries; new canary `project` proves a failing gate blocks and a declared skip never reaches CI; tests per FR.                                                                                      |
-| III. One Policy, Three Boundaries | Pass   | 1.1.0 text: skips only by declaration (`skip_at`), never CI (refused at validation), reported by name in summary, `--json`, attestation and doctor; the parity gate verifies CI ran every declared gate (the 1.1.0 follow-up TODO). |
-| IV. Projection, Not Dependency    | Pass   | Copy-only runtime; the new `lib/watch.sh` is enumerated by the projection like every `lib/*.sh`; CI templates unchanged.                                                                                                            |
-| V. The Spec Is a Boundary         | Pass   | Accept blocks per story in tasks.md; Status flips to Complete last.                                                                                                                                                                 |
-| Portability floor                 | Pass   | No associative arrays or `mapfile`; watchdog uses `set -m` and `kill` as the accept-block runner does.                                                                                                                              |
-| Evidence hygiene                  | Pass   | Attestation reasons are fixed strings (`check failed`, `timeout after <n>s`, `skipped by declaration at <b>`), never command output.                                                                                                |
+| Principle                         | Status | Notes                                                                                                                                                                                                                                                                                                           |
+| --------------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| I. Fail Closed                    | Pass   | A command that cannot start, a timeout, and every invalid key fail (exit 1 or 2) naming the cause; a skipped gate never counts as passed; an older runtime refuses the new keys instead of dropping gates.                                                                                                      |
+| II. Provable Enforcement          | Pass   | Project gates carry attestation entries; new canary `project` proves a failing gate blocks and a declared skip never reaches CI; tests per FR.                                                                                                                                                                  |
+| III. One Policy, Three Boundaries | Pass   | 1.1.0 text: skips only by declaration (`skip_at`), never CI (refused at validation), reported by name in summary, `--json`, attestation and doctor; the parity gate verifies CI ran every declared gate (the 1.1.0 follow-up TODO); the gate lock's agent-boundary deferral names the gates it defers (FR-019). |
+| IV. Projection, Not Dependency    | Pass   | Copy-only runtime; the new `lib/watch.sh` is enumerated by the projection like every `lib/*.sh`; CI templates unchanged.                                                                                                                                                                                        |
+| V. The Spec Is a Boundary         | Pass   | Accept blocks per story in tasks.md; Status flips to Complete last.                                                                                                                                                                                                                                             |
+| Portability floor                 | Pass   | No associative arrays or `mapfile`; watchdog uses `set -m` and `kill` as the accept-block runner does.                                                                                                                                                                                                          |
+| Evidence hygiene                  | Pass   | Attestation reasons are fixed strings (`check failed`, `timeout after <n>s`, `skipped by declaration at <b>`), never command output.                                                                                                                                                                            |
 
 Post-design re-check (after Phase 1): unchanged, all pass. No complexity
 justification needed.

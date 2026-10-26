@@ -143,7 +143,7 @@ Decisions for [plan.md](plan.md), each grounded in the runtime as of
 
 - **Decision**: doctor lists each project gate with its severity, time limit
   and declared skips (`[ok]  gate lint (error, 600s): runs at every boundary`;
-  `[ok]  gate build (error, 600s): skipped at agent by declaration`). A
+  `[ok]  gate build (error, 600s): skipped by declaration at agent`). A
   `custom_command` or gate command that names `formatter-dispatch.sh` gets a
   `[rec]` pointing to `verify.sh --walk`.
 - **Rationale**: FR-012; visibility of every skip outside a run.
@@ -188,3 +188,22 @@ Decisions for [plan.md](plan.md), each grounded in the runtime as of
 false`), so a policy written for 0.5.0 never silently loses its gates.
 - **Rationale**: Fail Closed; the schema documents, the validator enforces,
   as for every existing key.
+
+## R14. The gate lock's deferral names what it defers
+
+- **Decision**: when an agent-boundary run skips because another run holds
+  the lock (0.4.2, #263), its message and `--json` name the gates it would
+  have run: `gates: skipped: the gate run of pid N (git) is in progress;
+deferred: prettier, markdownlint, lint, spec, parity`, and
+  `"deferred": [...]`. The list is computed from the policy (enabled
+  built-in walk tools, orchestrator steps, project gates not skipped at
+  agent by declaration, `spec`, `contract` when the policy extends a
+  baseline, `parity`); a policy that cannot be read at that point gives
+  `deferred: all gates (policy not read)`. Gates skipped at agent by
+  declaration are named in the same line (`skipped by declaration at agent:
+<names>`, `"declared_skip": [...]` under `--json`).
+- **Rationale**: constitution 1.1.0, Principle III: "every gate or accept
+  block a boundary does not run is reported by name". The 0.4.2 message
+  named only the holder. `/speckit-analyze` found the gap (C1).
+- **Alternatives**: a constitution PATCH saying a deferred run is reported as
+  a whole: weakens the text just ratified. Rejected.

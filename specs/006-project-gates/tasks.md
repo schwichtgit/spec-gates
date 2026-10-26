@@ -37,7 +37,7 @@ once this feature is Complete.
 story uses.
 
 - [ ] T002 Create `extension/runtime/lib/watch.sh` (bash 3.2): move `gates_spec_group_stop` from `lib/spec-gate.sh` into it as `gates_group_stop` (TERM, two-second grace, KILL), keep `gates_spec_group_stop` in `lib/spec-gate.sh` as a one-line wrapper so existing callers and tests are unchanged, and add `gates_run_watched <timeout-s> <outfile> <cmd...>` per research R3: run the command in its own job (`set -m` in a subshell) with stdin `/dev/null` and stdout and stderr to `<outfile>`, a timer subshell that writes a marker and calls `gates_group_stop`, `wait`; return the command's status, or 124 on timeout with `GATES_WATCH_DETAIL="timeout after <n>s"` plus the machine load from `gates_spec_load_avg` (as in `timeout after 2s at load 3.10`) when readable
-- [ ] T003 Source `lib/watch.sh` from `extension/runtime/lib/spec-gate.sh` and `extension/runtime/verify.sh`; confirm `tests/test-spec-gate.sh` still passes unchanged
+- [ ] T003 Source `lib/watch.sh` from `extension/runtime/lib/spec-gate.sh` and `extension/runtime/verify.sh`; confirm `tests/test-spec-gate.sh` still passes unchanged, and run `tests/test-manifest.sh` and `tests/test-project.sh` so the new projected file classifies as new on upgrade with no other change
 - [ ] T004 [P] Extend `extension/runtime/policy.schema.json` per contracts/policy-gates.md: under the hook definition add `gates` (object; property names `^[a-z0-9][a-z0-9_-]{0,39}$`; each value an object with required `command` (string, minLength 1), optional `severity` (enum `error`, `warning`, `info`), `timeout_s` (integer, minimum 1, maximum 86400), `skip_at` (array, minItems 1, uniqueItems, items enum `agent`, `git`), `additionalProperties: false`), `gate_timeout_s` (integer, minimum 1, maximum 86400, default 600) and `test_severity` (enum `error`, `warning`, `info`, default `warning`); an `if/then` that allows the three keys only when the hook is `verify-quality`; descriptions that say CI cannot be skipped (constitution Principle III)
 - [ ] T005 Extend `gates_validate_policy` in `extension/runtime/lib/policy.sh` with the same rules (the jq validator is what the runtime enforces): name pattern; reserved names `prettier`, `markdownlint`, `shellcheck`, `task-lint`, `task-test`, `custom`, `spec`, `contract`, `parity`, `policy`, `lock`, `constitution`; `command` present and non-empty; unknown gate keys; severity enum; `timeout_s`/`gate_timeout_s` integers 1 to 86400; `skip_at` non-empty, unique, only `agent`/`git`, with `ci` refused as "CI runs the full policy (constitution, Principle III)"; the three keys refused under any hook other than `verify-quality`; each refusal names the key path and exits 2 like existing refusals
 - [ ] T006 Add accessors to `extension/runtime/lib/policy.sh`: `gates_project_gate_names` (names in key order, one per line), `gates_project_gate_get <name> <field>`, `gates_project_gate_skip_at <name>` (compact JSON array or empty), and `gates_declared_skip <boundary> <skip_at-json>` per research R6 (prints `skipped by declaration at <boundary>` and returns 0 when `<boundary>` is in the list and is `agent` or `git`; returns 1 for `ci`, `none` and any other boundary); header comments say feature 007 reuses `gates_declared_skip`
@@ -107,13 +107,14 @@ every declared gate (constitution 1.1.0, Principle III).
 - [ ] T015 [US2] In `extension/runtime/verify.sh`, before running a project gate, call `gates_declared_skip "$BOUNDARY" "$(gates_project_gate_skip_at <name>)"`; when it skips, record the gate as `skipped` with detail `skipped by declaration at <boundary>`, start no process, do not count it as failed, warned or passed, and pass the boundary to `att_gate` as `declared_skip`
 - [ ] T016 [US2] Extend `att_gate` (in `extension/runtime/verify.sh`, and `extension/runtime/lib/attest.sh` if the entry shape lives there) with an optional `declared_skip` argument written as `"declared_skip": "<boundary>"` only when set; add the optional `declared_skip` property (`enum: ["agent", "git"]`) to `specs/001-provable-enforcement-gate/contracts/attestation-record.schema.json`
 - [ ] T017 [US2] Extend the synthetic parity gate in `extension/runtime/verify.sh` per research R7: from the effective policy's gate names and this run's gate entries, fail parity (under `attestation.parity` severity) with `declared gates not run at <boundary>: <names>` when a declared gate neither ran (pass, fail, warn) nor was skipped by a declaration naming this boundary; at `ci` this means every declared gate ran; keep the tool-version check unchanged and report both problems when both occur
-- [ ] T018 [US2] In `extension/runtime/doctor.sh`, list each project gate: `[ok]  gate <name> (<severity>, <n>s): runs at every boundary` or `... : skipped at <b>[, <b>] by declaration` (research R9)
+- [ ] T018 [US2] In `extension/runtime/doctor.sh`, list each project gate: `[ok]  gate <name> (<severity>, <n>s): runs at every boundary` or `... : skipped by declaration at <b>[, <b>]` (research R9)
 - [ ] T019 [US2] In `gates_contract_deviations` (`extension/runtime/lib/contract.sh`), classify per research R10 and the table in contracts/policy-gates.md: `skip_at` under `hooks.verify-quality.gates.<name>` like `exclude` (gaining entries weakened, losing strengthened); a gate in the baseline and absent from the effective policy is one weakened deviation marked `removed` (as a removed hook); `test_severity` uses the severity rank; `command`, `timeout_s`, `gate_timeout_s` are `changed`; a gate the baseline lacks is not a deviation (delta mode: one strengthened line marked `added`)
-- [ ] T020 [US2] Add canary `project` to `extension/runtime/canary.sh` (research R12): a sandbox policy with gate `canary-fail` (`command: "exit 1"`, severity error, `skip_at: ["agent"]`); blocked when `verify.sh --boundary ci` exits 1 naming `canary-fail` and `verify.sh --boundary agent --json` reports it `skipped` with detail `skipped by declaration at agent`; add it to `CANARY_SET`, the header comment and the count (16 to 17); update `tests/test-canary.sh` counts and add a case where the canary is accepted (gate dispatch disabled through a test seam) and reported as an enforcement gap
+- [ ] T020 [US2] Add canary `project` to `extension/runtime/canary.sh` (research R12): a sandbox policy with gate `canary-fail` (`command: "exit 1"`, severity error, `skip_at: ["agent"]`); blocked when `verify.sh --boundary ci` exits 1 naming `canary-fail` and `verify.sh --boundary agent --json` reports it `skipped` with detail `skipped by declaration at agent`; add it to `CANARY_SET`, the header comment and the count (16 to 17); update `tests/test-canary.sh` counts and add a case where the canary is accepted, by appending a stub `gates_run_watched() { return 0; }` to the fixture's projected `lib/watch.sh` (as the contract canary test stubs `gates_contract_check`), and reported as an enforcement gap
 - [ ] T021 [US2] Tests in `tests/test-gate.sh`: `skip_at: ["agent"]` skips at agent (text, `--json`, attestation `declared_skip`, no process started: the command touches a file that must not exist) and runs at git and ci; `skip_at: ["git"]` runs at agent; `--boundary` absent runs every gate; a skipped gate never counts as passed; mutation-check
 - [ ] T022 [P] [US2] Tests in `tests/test-parity.sh`: the set check fails with `declared gates not run at ci: <name>` when a declared gate is missing from the CI run's entries (fed through the parity function or a test seam), passes when all ran, and at agent passes when the missing gate is skipped by a declaration naming agent but fails when the declaration names only git; `verify.sh` still yields identical results at every boundary for a policy without `skip_at`; mutation-check
 - [ ] T023 [P] [US2] Tests in `tests/test-contract.sh`: one case per row of the contracts/policy-gates.md deviation table, including a baseline gate removed by the overlay (weakened, removed) and an overlay-only gate (no deviation); mutation-check
 - [ ] T024 [P] [US2] Tests in `tests/test-doctor.sh`: the gate listing for a gate with and without `skip_at`
+- [ ] T025 [US2] Name what the gate lock's agent-boundary skip defers (FR-019, constitution Principle III): in `gates_lock_acquire` in `extension/runtime/verify.sh`, when the agent-boundary run skips because another run holds the lock, compute the gates this run would have run from the policy (the enabled built-in walk tools, the orchestrator steps, the project gates not skipped at agent by declaration, and `spec`, `contract` when the policy extends a baseline, `parity`) and append `; deferred: <names>` to the message; under `--json` add `"deferred": [<names>]`; when the policy cannot be read at that point, say `deferred: all gates (policy not read)`; tests in `tests/test-gate.sh` (hold the lock with a fake holder as the existing lock tests do): the message and `--json` list a project gate, a gate with `skip_at: ["agent"]` is not in `deferred` but is named in the same line as `skipped by declaration at agent: <names>` and under `--json` as `"declared_skip": [...]`; mutation-check
 
   ```accept
   # verifies: FR-007, FR-008, FR-010
@@ -159,9 +160,9 @@ built-in walk; doctor points custom commands at it.
 
 **Independent Test**: quickstart section 6.
 
-- [ ] T025 [US3] Add `--walk` to `extension/runtime/verify.sh` (research R8): run only the built-in per-tool walk (prettier, markdownlint, shellcheck when the policy enables each), whatever the orchestrator; skip the spec, contract, parity and project gates; write no attestation; take the gate lock unless nested (`GATES_LOCK_PID` set by the holder); honor `--boundary` and `--json`; exit codes as verify.sh; update the usage text
-- [ ] T026 [US3] In `extension/runtime/doctor.sh`, a `[rec]` when `custom_command` or any project gate command contains `formatter-dispatch.sh`: `use \`bash .specify/gates/verify.sh --walk\` (stable)`
-- [ ] T027 [US3] Tests in `tests/test-gate.sh`: `--walk` fails naming a badly formatted file and passes once fixed; it prints only built-in gates; it appends no attestation line; a custom orchestrator calling `verify.sh --walk` inside a gate run neither deadlocks nor writes a second attestation; mutation-check; and in `tests/test-doctor.sh` the `[rec]`
+- [ ] T026 [US3] Add `--walk` to `extension/runtime/verify.sh` (research R8): run only the built-in per-tool walk (prettier, markdownlint, shellcheck when the policy enables each), whatever the orchestrator; skip the spec, contract, parity and project gates; write no attestation; take the gate lock unless nested (`GATES_LOCK_PID` set by the holder); honor `--boundary` and `--json`; exit codes as verify.sh; update the usage text
+- [ ] T027 [US3] In `extension/runtime/doctor.sh`, a `[rec]` when `custom_command` or any project gate command contains `formatter-dispatch.sh`: `use \`bash .specify/gates/verify.sh --walk\` (stable)`
+- [ ] T028 [US3] Tests in `tests/test-gate.sh`: `--walk` fails naming a badly formatted file and passes once fixed; it prints only built-in gates; it appends no attestation line; a custom orchestrator calling `verify.sh --walk` inside a gate run neither deadlocks nor writes a second attestation; mutation-check; and in `tests/test-doctor.sh` the `[rec]`
 
   ```accept
   # verifies: FR-013
@@ -190,8 +191,8 @@ warning.
 
 **Independent Test**: quickstart section 7.
 
-- [ ] T028 [US4] In `extension/runtime/verify.sh`, read `hooks.verify-quality.test_severity` (default `warning`) for `run_gate "task-test"`; `task-lint` stays error
-- [ ] T029 [US4] Tests in `tests/test-gate.sh` with a fake `task` on PATH whose `test` target fails: default warns (exit 0); `test_severity: "error"` fails (exit 1); mutation-check
+- [ ] T029 [US4] In `extension/runtime/verify.sh`, read `hooks.verify-quality.test_severity` (default `warning`) for `run_gate "task-test"`; `task-lint` stays error
+- [ ] T030 [US4] Tests in `tests/test-gate.sh` with a fake `task` on PATH whose `test` target fails: default warns (exit 0); `test_severity: "error"` fails (exit 1); mutation-check
 
   ```accept
   # verifies: FR-014
@@ -212,12 +213,12 @@ warning.
 
 ## Phase 7: Polish & cross-cutting concerns
 
-- [ ] T030 [P] Document project gates, `skip_at`, `GATES_BOUNDARY`, `gate_timeout_s`, `test_severity` and `--walk` in `docs/how-it-works.md` (policy reference and the boundary section, citing constitution Principle III) and `README.md` (one example policy; the parity paragraph mentions declared skips)
-- [ ] T031 [P] Update `extension/commands/speckit.gates.verify.md` (report shape with skipped gates, `--walk`, `GATES_BOUNDARY`) and `extension/commands/speckit.gates.init.md` (mention project gates as a follow-up edit; init infers none)
-- [ ] T032 [P] `CHANGELOG.md` `[Unreleased]`: `### Added` entries for project gates, `skip_at` and the parity set check, `--walk`, `test_severity` (#243); note the 17th canary and that an older runtime refuses the new keys
-- [ ] T033 Run the full suite (`bash tests/run.sh`), `bash .specify/gates/verify.sh --boundary ci` and `bash .specify/gates/canary.sh` (17/17 blocked) on the final branch; run test-gate, test-spec-gate and test-parity under `/bin/bash` 3.2 and in a `node:26-slim` container with `CI=true` (mawk)
-- [ ] T034 Walk quickstart.md sections 1 to 8 in a scratch project and record any deviation as a fix or a spec update
-- [ ] T035 Set `**Status**: Complete` in `specs/006-project-gates/spec.md` last, so the spec gate enforces the accept blocks above from then on
+- [ ] T031 [P] Document project gates, `skip_at`, `GATES_BOUNDARY`, `gate_timeout_s`, `test_severity` and `--walk` in `docs/how-it-works.md` (policy reference and the boundary section, citing constitution Principle III) and `README.md` (one example policy; the parity paragraph mentions declared skips); say that project gates are not read-only by contract (unlike accept blocks) and that a timeout stops the gate's process group only
+- [ ] T032 [P] Update `extension/commands/speckit.gates.verify.md` (report shape with skipped gates, `--walk`, `GATES_BOUNDARY`) and `extension/commands/speckit.gates.init.md` (mention project gates as a follow-up edit; init infers none)
+- [ ] T033 [P] `CHANGELOG.md` `[Unreleased]`: `### Added` entries for project gates, `skip_at` and the parity set check, `--walk`, `test_severity` (#243); note the 17th canary and that an older runtime refuses the new keys
+- [ ] T034 Run the full suite (`bash tests/run.sh`), `bash .specify/gates/verify.sh --boundary ci` and `bash .specify/gates/canary.sh` (17/17 blocked) on the final branch; run test-gate, test-spec-gate and test-parity under `/bin/bash` 3.2 and in a `node:26-slim` container with `CI=true` (mawk)
+- [ ] T035 Walk quickstart.md sections 1 to 8 in a scratch project and record any deviation as a fix or a spec update
+- [ ] T036 Set `**Status**: Complete` in `specs/006-project-gates/spec.md` last, so the spec gate enforces the accept blocks above from then on
 
 ---
 
@@ -228,13 +229,13 @@ warning.
   T005 can run together (different files); T008 and T009 in parallel after
   them.
 - **US1 (T010 to T014)**: after Foundational.
-- **US2 (T015 to T024)**: after US1 (it skips the gates US1 runs). T022,
-  T023 and T024 in parallel.
-- **US3 (T025 to T027)**: after Foundational; independent of US1 and US2
+- **US2 (T015 to T025)**: after US1 (it skips the gates US1 runs). T022,
+  T023 and T024 in parallel; T025 after T015.
+- **US3 (T026 to T028)**: after Foundational; independent of US1 and US2
   apart from shared files (verify.sh, doctor.sh), so it follows US2 to
   avoid conflicts.
-- **US4 (T028 to T029)**: after Foundational; small, may land with US3.
-- **Polish (T030 to T035)**: after the stories; T035 last.
+- **US4 (T029 to T030)**: after Foundational; small, may land with US3.
+- **Polish (T031 to T036)**: after the stories; T036 last.
 
 ## Parallel Examples
 
@@ -242,7 +243,7 @@ warning.
 Foundational: T004 (schema)  ||  T005-T006 (lib/policy.sh)  ||  T002 (lib/watch.sh)
 US1:          T013 (test-gate.sh)  ||  T014 (test-attest.sh)   after T010-T012
 US2:          T022 (test-parity.sh)  ||  T023 (test-contract.sh)  ||  T024 (test-doctor.sh)
-Polish:       T030  ||  T031  ||  T032
+Polish:       T031  ||  T032  ||  T033
 ```
 
 ## Implementation Strategy

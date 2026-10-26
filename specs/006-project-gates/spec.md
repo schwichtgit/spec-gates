@@ -53,7 +53,7 @@ three.
    other gate.
 5. **Given** a project gate whose command does not finish within its time
    limit, **When** the gate runs, **Then** the gate fails with a timeout
-   naming the limit, and its leftover processes are stopped.
+   naming the limit, and its process group is stopped.
 6. **Given** a policy that names a project gate after a built-in gate
    (`prettier`, `spec`, `parity`, ...) or names two gates the same, **When**
    the policy is validated, **Then** it is rejected naming the duplicate.
@@ -155,9 +155,10 @@ confirm it warns as before.
 - A project gate's command is missing or not executable: the gate fails
   (fail closed) naming the command; it is never reported as passed or skipped.
 - A gate declared to skip the agent boundary while the agent boundary run is
-  also skipped by the gate lock (another run holds the working tree): the run
-  reports the lock skip, as in 0.4.2; per-gate skips are reported only by runs
-  that actually evaluate gates.
+  also deferred by the gate lock (another run holds the working tree): the
+  deferral names every gate it does not run, so this gate is named too
+  (constitution, Principle III: every gate a boundary does not run is
+  reported by name).
 - A policy declares skips for the git boundary only: the agent boundary runs
   the gate; only git skips it.
 - A policy declares a boundary name that does not exist: rejected at
@@ -188,8 +189,7 @@ confirm it warns as before.
   capture, failure summary (including `##gates-fail##`) and severity mapping.
 - **FR-004**: Each project gate MUST run under a time limit (a per-gate value,
   else a policy-wide default, else a documented built-in default); a gate
-  that exceeds it fails naming the limit, and everything it started is
-  stopped.
+  that exceeds it fails naming the limit, and its process group is stopped.
 - **FR-005**: A project gate whose command cannot be started MUST fail, naming
   the command.
 - **FR-006**: Gate names MUST NOT collide with built-in gate names or with
@@ -232,6 +232,9 @@ confirm it warns as before.
   CI.
 - **FR-018**: Project gates MUST be part of the attestation record with the
   same fields as other gates, plus the skipped boundaries where applicable.
+- **FR-019**: A run that defers to a gate run already in progress in the
+  same working tree (the gate lock's agent-boundary skip) MUST name the
+  gates it does not run, in its message and its machine-readable output.
 
 ### Key Entities
 
@@ -262,7 +265,7 @@ confirm it warns as before.
 - **SC-004**: Every existing policy (without the new keys) produces the same
   gate list and results before and after the upgrade.
 - **SC-005**: A hung project gate never holds a run past its time limit plus
-  a few seconds of cleanup.
+  5 seconds of cleanup.
 - **SC-006**: The canary suite proves the new gate class blocks, at the CI
   boundary in particular, on every run.
 
@@ -278,7 +281,11 @@ confirm it warns as before.
   own commands; spec-gates runs and reports them, it does not implement them.
 - Skips are declared per gate; a skip for a whole class of gates or for the
   built-in walk is out of scope for this feature.
-- The 0.4.2 gate lock's agent-boundary skip stays as is and is reported as
-  today; it is a whole-run deferral, not a per-gate declaration.
+- The 0.4.2 gate lock's agent-boundary skip stays a whole-run deferral, not a
+  per-gate declaration; FR-019 makes it name the gates it defers.
+- On a timeout the gate's process group is stopped; a process that leaves
+  the group (a new session, a double fork) is not tracked. Project gates are
+  not read-only by contract, so the accept blocks' lease tracking does not
+  apply to them.
 - Accept blocks (the spec gate) keep their own time limit (`spec.timeout_s`);
   covered accept blocks are feature 007, which reuses FR-009's mechanism.

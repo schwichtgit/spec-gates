@@ -64,7 +64,7 @@ Each of these makes `verify.sh` exit 2 naming the key: a gate named
 - `verify.sh --boundary git` and `--boundary ci`: exit 1; `build` fails and
   its output shows `boundary=git` / `boundary=ci`.
 - `doctor.sh`: lists
-  `gate build (error, 600s): skipped at agent by declaration`.
+  `gate build (error, 600s): skipped by declaration at agent`.
 
 ## 5. Parity catches a gate CI did not run (Story 2)
 

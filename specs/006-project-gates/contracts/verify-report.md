@@ -65,6 +65,39 @@ boundary. At `ci` that means: every declared gate ran.
   [fail] parity -- declared gates not run at ci: build
 ```
 
+## Gate lock deferral (agent boundary)
+
+When another gate run holds the working tree, the agent-boundary run exits 0
+and names the gates it does not run (FR-019):
+
+```text
+gates: skipped: the gate run of pid 4242 (git) is in progress; deferred: prettier, markdownlint, lint, typecheck, test, spec, parity
+```
+
+With `--json`:
+
+```json
+{
+  "result": "skipped",
+  "boundary": "agent",
+  "reason": "skipped: the gate run of pid 4242 (git) is in progress",
+  "deferred": [
+    "prettier",
+    "markdownlint",
+    "lint",
+    "typecheck",
+    "test",
+    "spec",
+    "parity"
+  ]
+}
+```
+
+A gate with `skip_at: ["agent"]` would not have run, so it is not in
+`deferred`; it is named in the same line as `skipped by declaration at agent:
+<names>` and under `--json` as `"declared_skip": ["<names>"]`, so every gate
+the run does not run is named (constitution, Principle III).
+
 ## Exit codes
 
 Unchanged: 0 pass (warnings allowed), 1 a gate failed, 2 a setup or policy
@@ -87,6 +120,6 @@ releases: custom commands call this, not `lib/formatter-dispatch.sh`.
 
 ```text
   [ok]  gate lint (error, 900s): runs at every boundary
-  [ok]  gate build (error, 900s): skipped at agent by declaration
+  [ok]  gate build (error, 900s): skipped by declaration at agent
   [rec] custom_command calls lib/formatter-dispatch.sh: use `bash .specify/gates/verify.sh --walk` (stable)
 ```
