@@ -235,6 +235,15 @@ expect "custom true -> pass (exit 0)" "$(gate "$DP")" 0
 DF="$WORKDIR/custom-fail"
 project "$DF" '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error", "custom_command": "false" } } }'
 expect "custom false -> fail (exit 2)" "$(gate "$DF")" 2
+# The custom command runs from the project root, wherever verify.sh was
+# started (#276).
+DCW="$WORKDIR/custom-root"
+project "$DCW" '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error", "custom_command": "test -f marker" } } }'
+: >"$DCW/marker"
+mkdir -p "$DCW/sub/dir"
+rc=0
+(cd "$DCW/sub/dir" && CLAUDE_PROJECT_DIR="$DCW" bash "$DCW/.specify/gates/verify.sh" --boundary ci >/dev/null 2>&1) || rc=$?
+expect "custom command started from a subdirectory runs from the root (#276)" "$rc" 0
 
 # --- the failing-gate summary names the failure (#262) ---
 # The detail is the output's last 2000 bytes; the summary used to be the
@@ -936,7 +945,7 @@ if have_node_linters; then
     # GATES_LOCK_WAIT_S and fail the gate with the lock message), writes no
     # record of its own, and its first failure is the custom gate's summary
     # though shellcheck, after it, passed. The command runs from the
-    # caller's cwd (#276), so the outer run starts in the fixture.
+    # project root (#276), so its relative path finds the fixture's runtime.
     project "$DW" '{ "hooks": { "prettier": { "include": ["**/*.md"], "severity": "error" },
         "shellcheck": { "include": ["**/*.sh"], "severity": "error" },
         "verify-quality": { "orchestrator": "custom", "severity": "error",
@@ -944,7 +953,7 @@ if have_node_linters; then
     printf '#  Bad   md\n\n\n- x\n' >"$DW/bad.md"
     rc=0
     t0="$(date +%s)"
-    out="$(cd "$DW" && GATES_LOCK_WAIT_S=3 CLAUDE_PROJECT_DIR="$DW" bash "$DW/.specify/gates/verify.sh" --boundary git 2>&1)" || rc=$?
+    out="$(GATES_LOCK_WAIT_S=3 CLAUDE_PROJECT_DIR="$DW" bash "$DW/.specify/gates/verify.sh" --boundary git 2>&1)" || rc=$?
     TOTAL=$((TOTAL + 1))
     if [[ $(($(date +%s) - t0)) -le 60 ]]; then
         echo "PASS: nested walk: the run ends within 60 s"
@@ -964,7 +973,7 @@ if have_node_linters; then
         "$([[ -e "$DW/.specify/gates/.lock" ]] && echo held || echo free)" free
     printf '# Title\n\nBody text.\n' >"$DW/bad.md"
     rc=0
-    (cd "$DW" && GATES_LOCK_WAIT_S=3 CLAUDE_PROJECT_DIR="$DW" bash "$DW/.specify/gates/verify.sh" --boundary git >/dev/null 2>&1) || rc=$?
+    (GATES_LOCK_WAIT_S=3 CLAUDE_PROJECT_DIR="$DW" bash "$DW/.specify/gates/verify.sh" --boundary git >/dev/null 2>&1) || rc=$?
     expect "nested walk: passes once the file is fixed" "$rc|$(att_lines)" "0|2"
 else
     skip "verify.sh --walk" "run npm ci to install pinned prettier"

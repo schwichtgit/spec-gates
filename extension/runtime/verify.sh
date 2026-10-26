@@ -472,6 +472,10 @@ run_gate() { # name severity cmd...
         cd "$PROJECT_ROOT" || return 1
         GATES_GATE_ROOT="$PROJECT_ROOT" gates_run_watched "$WATCH_S" "/tmp/gates-out.$$" "$@" || rc=$?
         cd "$here" || true
+    elif [[ "$name" == "custom" ]]; then
+        # The custom command runs from the project root, as project gates
+        # do, wherever verify.sh was started (#276).
+        (cd "$PROJECT_ROOT" && GATES_GATE_ROOT="$PROJECT_ROOT" "$@") >/tmp/gates-out.$$ 2>&1 || rc=$?
     else
         GATES_GATE_ROOT="$PROJECT_ROOT" "$@" >/tmp/gates-out.$$ 2>&1 || rc=$?
     fi

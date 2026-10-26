@@ -25,6 +25,15 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   `install-shellcheck.sh --pin` for the pin, so they need the runtime of
   the same release.
 
+### Fixed
+
+- **The custom command runs from the project root** (#276). It ran from
+  the directory verify.sh was started in, so a relative path such as
+  `scripts/check.sh` worked from the hooks and CI and failed from a
+  subdirectory. It now runs from the project root, as project gates do.
+  A custom command that relied on the caller's directory must change
+  directory itself.
+
 ## 0.4.2 — 2026-10-25
 
 ### Upgrading
