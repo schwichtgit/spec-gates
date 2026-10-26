@@ -196,6 +196,9 @@ done
 IW="$WORKDIR/installer"
 mkdir -p "$IW/proj/.specify/gates" "$IW/stub" "$IW/asset/shellcheck-v9.9.9" "$IW/evil/shellcheck-v9.9.9"
 cp "$REPO_ROOT/extension/runtime/install-shellcheck.sh" "$IW/proj/.specify/gates/"
+# The installer reads the pin with the parity gate's own lookup (#260).
+mkdir -p "$IW/proj/.specify/gates/lib"
+cp "$REPO_ROOT/extension/runtime/lib/attest.sh" "$IW/proj/.specify/gates/lib/"
 printf '#!/bin/sh\necho "version: 9.9.9"\n' >"$IW/asset/shellcheck-v9.9.9/shellcheck"
 printf '#!/bin/sh\necho "version: 6.6.6"\n' >"$IW/evil/shellcheck-v9.9.9/shellcheck"
 chmod +x "$IW/asset/shellcheck-v9.9.9/shellcheck" "$IW/evil/shellcheck-v9.9.9/shellcheck"
@@ -315,6 +318,8 @@ if (cd "$IW/asset" && tar -cJf "$IW/good.tar.xz" shellcheck-v9.9.9) 2>/dev/null 
     SRC="$IW/proj/extension/runtime"
     mkdir -p "$SRC"
     cp "$REPO_ROOT/extension/runtime/install-shellcheck.sh" "$IW/proj/.specify/gates/shellcheck.sha256" "$SRC/"
+    mkdir -p "$SRC/lib"
+    cp "$REPO_ROOT/extension/runtime/lib/attest.sh" "$SRC/lib/"
     git -C "$IW/proj" init -q
     rm -f "$IW/proj/.specify/gates/shellcheck.local.sha256"
     inst_src() { # <os> <arch> [args...] -> exit code; output in $IW/out
@@ -338,6 +343,44 @@ if (cd "$IW/asset" && tar -cJf "$IW/good.tar.xz" shellcheck-v9.9.9) 2>/dev/null 
     printf 'nodejs 22\n' >"$IW/proj/.tool-versions"
     expect "no shellcheck pin in .tool-versions: refused" "$(inst Linux x86_64 "$IW/good.tar.xz")" "1"
     expect "no shellcheck pin: says so" "$(grep -c 'declares no shellcheck version' "$IW/out")" "1"
+    # --pin is what the CI templates ask first: 2 means no pin anywhere
+    # (distro fallback), 1 a pin they must not guess at (#260).
+    expect "--pin without a pin: exit 2" "$(inst Linux x86_64 "$IW/good.tar.xz" --pin)" "2"
+    expect "--pin without a pin: nothing downloaded" "$(wc -l <"$IW/log" | tr -d ' ')" "0"
+    # The npm "shellcheck" downloader wrapper's version is no release.
+    printf '{"lockfileVersion":3,"packages":{"node_modules/shellcheck":{"version":"0.5.0"}}}\n' \
+        >"$IW/proj/package-lock.json"
+    expect "--pin with only the npm shellcheck wrapper: exit 2" \
+        "$(inst Linux x86_64 "$IW/good.tar.xz" --pin)" "2"
+    rm -f "$IW/proj/package-lock.json"
+
+    # The pin from mise (#260): mise.toml's [tools], mise.lock's locked
+    # version over it; a conflict with .tool-versions or an unreadable
+    # mise file is refused, never resolved to one of them.
+    rm -f "$IW/proj/.tool-versions"
+    printf '[tools]\n"aqua:koalaman/shellcheck" = "1.0.0"\n' >"$IW/proj/mise.toml"
+    printf '[[tools.shellcheck]]\nversion = "9.9.9"\nbackend = "aqua:koalaman/shellcheck"\n' >"$IW/proj/mise.lock"
+    expect "--pin reads mise.lock over mise.toml" "$(inst Linux x86_64 "$IW/good.tar.xz" --pin)" "0"
+    expect "--pin prints the locked version" "$(cat "$IW/out")" "9.9.9"
+    expect "mise.lock pin installs" "$(inst Linux x86_64 "$IW/good.tar.xz")" "0"
+    expect "mise.lock pin: downloads the locked release" \
+        "$(grep -c '/download/v9.9.9/shellcheck-v9.9.9.linux.x86_64.tar.xz$' "$IW/log")" "1"
+    rm -f "$IW/proj/mise.lock"
+    printf '[tools]\nshellcheck = { version = "9.9.9" }\n' >"$IW/proj/mise.toml"
+    expect "mise.toml inline-table pin installs" "$(inst Linux x86_64 "$IW/good.tar.xz")" "0"
+    printf 'shellcheck 0.10.0\n' >"$IW/proj/.tool-versions"
+    expect "mise and .tool-versions disagree: refused" "$(inst Linux x86_64 "$IW/good.tar.xz")" "1"
+    expect "the conflict names both sources and versions" \
+        "$(grep -cF 'conflicting pins: mise.toml pins 9.9.9, .tool-versions pins 0.10.0' "$IW/out")" "1"
+    expect "the conflict: nothing downloaded" "$(wc -l <"$IW/log" | tr -d ' ')" "0"
+    expect "--pin on a conflict: exit 1, not the distro fallback" \
+        "$(inst Linux x86_64 "$IW/good.tar.xz" --pin)" "1"
+    rm -f "$IW/proj/.tool-versions"
+    printf '[tools]\nshellcheck = "9.9.9"\n[tools\n' >"$IW/proj/mise.toml"
+    expect "unreadable mise.toml: refused" "$(inst Linux x86_64 "$IW/good.tar.xz" --pin)" "1"
+    expect "unreadable mise.toml: names file and line" \
+        "$(grep -cF 'install-shellcheck: mise.toml:3: malformed table header' "$IW/out")" "1"
+    rm -f "$IW/proj/mise.toml"
 else
     echo "SKIP: tar cannot write .tar.xz here (install xz to run the installer checks)"
 fi

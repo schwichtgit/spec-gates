@@ -14,17 +14,23 @@ gates:
     # and the shellcheck installer downloads with it. xz-utils: the
     # shellcheck release is a .tar.xz.
     - apt-get update -q && apt-get install -y -q jq git python3 curl xz-utils
-    # Install shellcheck at the version pinned in .tool-versions, from the
-    # upstream release for this runner's architecture, refused unless it
-    # matches the checksums in .specify/gates/shellcheck.sha256 (Debian
-    # ships an older release whose findings differ; the parity gate fails
-    # on the drift). Without a pin, the distro package is installed
-    # instead: unpinned, so CI and local runs may disagree.
+    # Install shellcheck at the version the project pins (mise.lock,
+    # mise.toml or .tool-versions), from the upstream release for this
+    # runner's architecture, refused unless it matches the checksums in
+    # .specify/gates/shellcheck.sha256 (Debian ships an older release whose
+    # findings differ; the parity gate fails on the drift). Without a pin
+    # (--pin exits 2), the distro package is installed instead: unpinned,
+    # so CI and local runs may disagree. Pins that conflict, or a mise file
+    # it cannot read, fail the job.
     - |
-      if grep -qs '^shellcheck[[:space:]]' .tool-versions; then
+      pin=0
+      bash .specify/gates/install-shellcheck.sh --pin || pin=$?
+      if [ "$pin" -eq 0 ]; then
         bash .specify/gates/install-shellcheck.sh
-      else
+      elif [ "$pin" -eq 2 ]; then
         apt-get install -y -q shellcheck
+      else
+        exit "$pin"
       fi
     # Lockfile-pinned linters keep CI on the versions local runs use (the
     # parity gate compares them); latest only when the repo pins nothing.

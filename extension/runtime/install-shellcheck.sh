@@ -2,8 +2,11 @@
 # shellcheck shell=bash
 set -euo pipefail
 
-# Install the shellcheck version pinned in the project's .tool-versions,
-# verified against pinned SHA-256 checksums (#138). The CI templates run this
+# Install the shellcheck version the project pins, verified against pinned
+# SHA-256 checksums (#138). The pin is the one the parity gate compares
+# against (lib/attest.sh): package-lock.json, then mise (mise.lock, else
+# the [tools] table of mise.toml and the other project configs mise
+# documents), then .tool-versions (#260). The CI templates run this
 # so CI resolves the same shellcheck as local runs; the parity gate fails a
 # run whose shellcheck differs from the pin.
 #
@@ -21,13 +24,15 @@ set -euo pipefail
 #
 # Usage:
 #   install-shellcheck.sh [install-dir]   default /usr/local/bin (sudo if needed)
-#   install-shellcheck.sh --update        pin the version in .tool-versions
-#                                         (writes its checksums to
+#   install-shellcheck.sh --update        pin the checksums of the pinned
+#                                         version (writes them to
 #                                         .specify/gates/shellcheck.local.sha256)
+#   install-shellcheck.sh --pin           print the pinned version; exit 2
+#                                         when nothing pins shellcheck
 #
 # --update reads each asset's digest from the GitHub release API and checks
 # it against a fresh download before writing, so pinning another version is
-# one reviewable change: .tool-versions plus shellcheck.local.sha256.
+# one reviewable change: the pin file plus shellcheck.local.sha256.
 # GitHub publishes those digests only from shellcheck v0.11.0 on, so an
 # older version cannot be pinned this way: --update fails, and its pins go
 # into shellcheck.local.sha256 by hand, from assets verified some other way.
@@ -35,9 +40,11 @@ set -euo pipefail
 # The project root is $CLAUDE_PROJECT_DIR when set, else the git work tree
 # this script sits in, else the working directory.
 #
-# Exit codes: 0 installed (or pinned), 1 failure. A .tool-versions that pins
-# no shellcheck is a failure: the CI templates check for the pin first and
-# fall back to the distro package themselves.
+# Exit codes: 0 installed (or pinned), 1 failure, 2 (--pin only) no pin.
+# A project that pins no shellcheck is a failure to install: the CI
+# templates ask --pin first and fall back to the distro package on 2 only.
+# Pin sources that disagree, or a mise file that cannot be read, fail
+# every mode, so CI never falls back to a shellcheck nobody pinned.
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="${CLAUDE_PROJECT_DIR:-$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null || pwd)}"
@@ -54,19 +61,32 @@ die() {
 # is a usage error, never a directory to install into (#172).
 usage() {
     echo "install-shellcheck: $*" >&2
-    echo "usage: install-shellcheck.sh [install-dir] | --update" >&2
+    echo "usage: install-shellcheck.sh [install-dir] | --update | --pin" >&2
     exit 1
 }
 [[ $# -le 1 ]] || usage "too many arguments"
 case "${1:-}" in
-    --update) ;;
+    --update | --pin) ;;
     -*) usage "unknown option: $1" ;;
 esac
 
-VERSION=""
-[[ -f "$ROOT/.tool-versions" ]] \
-    && VERSION="$(awk '$1 == "shellcheck" { print $2; exit }' "$ROOT/.tool-versions")"
-[[ -n "$VERSION" ]] || die "$ROOT/.tool-versions declares no shellcheck version"
+# The pin lookup the parity gate uses, so the two cannot disagree.
+[[ -f "$HERE/lib/attest.sh" ]] || die "$HERE/lib/attest.sh is missing (re-project the runtime)"
+# shellcheck source=lib/attest.sh disable=SC1091
+source "$HERE/lib/attest.sh"
+PROBLEMS="$(gates_pin_problems shellcheck "$ROOT" | awk 'NF && !seen[$0]++')"
+if [[ -n "$PROBLEMS" ]]; then
+    while IFS= read -r p; do echo "install-shellcheck: $p" >&2; done <<<"$PROBLEMS"
+    exit 1
+fi
+VERSION="$(gates_pin_version shellcheck "$ROOT")"
+if [[ "${1:-}" == "--pin" ]]; then
+    [[ -n "$VERSION" ]] || exit 2
+    printf '%s\n' "$VERSION"
+    exit 0
+fi
+[[ -n "$VERSION" ]] \
+    || die "$ROOT declares no shellcheck version (in mise.toml, mise.lock or .tool-versions)"
 BASE="https://github.com/koalaman/shellcheck/releases/download/v$VERSION"
 
 for t in curl tar; do

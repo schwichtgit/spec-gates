@@ -69,14 +69,16 @@ create`; GitLab: `glab repo create` or the web UI; Jenkins: the SCM
    - node linters with `npm ci` from the lockfile (latest only when the
      repository pins nothing);
    - shellcheck with `bash .specify/gates/install-shellcheck.sh`, which
-     installs the version pinned in `.tool-versions` for the runner's OS
-     and architecture (linux and macOS, x86_64 and aarch64) and refuses a
-     download that does not match `.specify/gates/shellcheck.sha256`.
-     Without a `shellcheck` line in `.tool-versions` the templates install
-     the distro package instead (GitHub, GitLab) or use the agent's own
-     (Jenkins): unpinned, so offer to add the pin. spec-gates ships
-     checksums for the version it pins; for another version, set it in
-     `.tool-versions` and run
+     installs the pinned version (from `mise.lock`, `mise.toml` or
+     `.tool-versions`, the sources the parity gate reads) for the runner's
+     OS and architecture (linux and macOS, x86_64 and aarch64) and refuses
+     a download that does not match `.specify/gates/shellcheck.sha256`.
+     The templates ask `install-shellcheck.sh --pin` first: without a pin
+     (exit 2) they install the distro package instead (GitHub, GitLab) or
+     use the agent's own (Jenkins): unpinned, so offer to add the pin.
+     Conflicting pins or an unreadable mise file fail the job. spec-gates
+     ships checksums for the version it pins; for another version, set
+     the pin and run
      `bash .specify/gates/install-shellcheck.sh --update`, which reads the
      release's published digests, checks them against a download, and
      writes `.specify/gates/shellcheck.local.sha256` (commit it; upgrades

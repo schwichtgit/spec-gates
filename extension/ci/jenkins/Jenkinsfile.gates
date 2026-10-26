@@ -16,14 +16,20 @@ stage('Quality Gates') {
                 npm install --no-save prettier markdownlint-cli2
             fi
         '''
-        // shellcheck at the version pinned in .tool-versions, from the
-        // upstream release for this agent's architecture, refused unless it
-        // matches the checksums in .specify/gates/shellcheck.sha256. Without
-        // a pin, the agent's own shellcheck (if any) is used: unpinned, so CI
-        // and local runs may disagree.
+        // shellcheck at the version the project pins (mise.lock, mise.toml
+        // or .tool-versions), from the upstream release for this agent's
+        // architecture, refused unless it matches the checksums in
+        // .specify/gates/shellcheck.sha256. Without a pin (--pin exits 2),
+        // the agent's own shellcheck (if any) is used: unpinned, so CI and
+        // local runs may disagree. Pins that conflict, or a mise file it
+        // cannot read, fail the build.
         sh '''
-            if grep -qs '^shellcheck[[:space:]]' .tool-versions; then
+            pin=0
+            bash .specify/gates/install-shellcheck.sh --pin || pin=$?
+            if [ "$pin" -eq 0 ]; then
                 bash .specify/gates/install-shellcheck.sh "$WORKSPACE@tmp/gates-bin"
+            elif [ "$pin" -ne 2 ]; then
+                exit "$pin"
             fi
         '''
         withEnv(["PATH+GATES=${env.WORKSPACE}@tmp/gates-bin"]) {

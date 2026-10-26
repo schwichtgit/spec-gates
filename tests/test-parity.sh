@@ -123,6 +123,15 @@ for tpl in "$GH_T" "$GL_T" "$JK_T"; do
     else
         pass "$name installs the distro shellcheck only without a pin"
     fi
+    # The installer finds the pin (mise.lock, mise.toml or .tool-versions)
+    # and says when there is none; a template grepping .tool-versions
+    # itself misses a mise pin (#260).
+    if grep -qF 'install-shellcheck.sh --pin || pin=$?' <<<"$(code_lines "$tpl")" \
+        && ! grep -qF '.tool-versions' <<<"$(code_lines "$tpl")"; then
+        pass "$name asks the installer for the pin"
+    else
+        fail "$name looks for the shellcheck pin itself"
+    fi
     if grep -qE 'npm ci' <<<"$(code_lines "$tpl")"; then
         pass "$name installs the lockfile linters (npm ci)"
     else
