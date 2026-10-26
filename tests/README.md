@@ -6,8 +6,9 @@ the hooks execute under macOS `/bin/bash`.
 
 - `test-parity.sh` — THE invariant, asserted three ways: every boundary
   (3 CI projections + agent hook + git hook) routes through `verify.sh`; no
-  boundary re-implements the gate; and `verify.sh` yields identical results
-  at the agent, git, and ci boundaries. This is the product's headline
+  boundary re-implements the gate; and, with no boundary-limited gate
+  declared, `verify.sh` yields identical results at the agent, git, and ci
+  boundaries (constitution, Principle III: CI runs the full policy). This is the product's headline
   claim; it must stay green.
 - `test-gate.sh` — `verify.sh` orchestrator behaviour: the default `none`
   orchestrator really runs prettier/markdownlint/shellcheck in check mode

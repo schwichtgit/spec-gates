@@ -1,21 +1,33 @@
 <!--
 Sync Impact Report
-- Version change: (template, unversioned) → 1.0.0
-- Modified principles: none (initial ratification — template placeholders replaced)
-- Added sections:
-  - Core Principles (I. Fail Closed; II. Provable Enforcement; III. One Policy,
-    Three Boundaries; IV. Projection, Not Dependency; V. The Spec Is a Boundary)
-  - Additional Constraints (portability floor, evidence hygiene, pinned toolchain)
-  - Development Workflow & Quality Gates
-  - Governance
-- Removed sections: none (all template slots filled)
+- Version change: 1.0.0 → 1.1.0 (MINOR: materially expanded guidance)
+- Modified principles:
+  - III. One Policy, Three Boundaries: CI runs the full policy; an earlier
+    boundary may run less only where the policy declares it or where it
+    defers to a gate run already in progress; every skipped gate or accept
+    block is reported by name; no declaration removes anything from CI; the
+    parity gate also checks that CI's gate set contains every earlier
+    boundary's declared set.
+- Added sections: none
+- Removed sections: none
+- Covered retroactively: the 0.4.2 gate lock (#263), whose agent-boundary
+  run skips while another run holds the working tree.
+- Features relying on this amendment: #243 (project gates limited to named
+  boundaries), #265 (accept blocks a declared command reports as covered,
+  never at CI).
 - Templates requiring updates:
-  - ✅ .specify/templates/plan-template.md — "Constitution Check" gate is a
-    per-feature placeholder resolved at plan time; no structural change needed
-  - ✅ .specify/templates/spec-template.md — no constitution references; aligned
-  - ✅ .specify/templates/tasks-template.md — no constitution references; aligned
-  - ✅ README.md — Development section suite count corrected (7 → 8) in this pass
-- Follow-up TODOs: none
+  - ✅ .specify/templates/plan-template.md — "Constitution Check" resolves per
+    feature at plan time; no structural change needed
+  - ✅ .specify/templates/spec-template.md — no constitution references
+  - ✅ .specify/templates/tasks-template.md — no constitution references
+  - ✅ README.md, extension/extension.yml, tests/README.md, CONTRIBUTING.md —
+    "identical results at every boundary" restated as CI-runs-everything
+  - ✅ extension/constitution/fragments/architecture/one-policy-many-boundaries.md
+    — rationale and body follow the amended III
+- Follow-up TODOs:
+  - Parity gate: check that CI's gate set contains every earlier boundary's
+    declared set (built with feature 006, #243). Until then no gate can be
+    limited to boundaries, so the check has nothing to compare.
 -->
 
 # spec-gates Constitution
@@ -57,14 +69,21 @@ records of it; a broken gate is caught by a red canary step, not by an incident.
 
 `policy.json` is the single source of enforcement truth, and the same `verify.sh`
 entrypoint runs at all three boundaries — agent (Claude Code hooks), git
-(pre-commit), and CI. Boundary-specific behavior beyond `--boundary` labeling is
-forbidden. Parity MUST be verified, not asserted: the synthetic `parity` gate
-compares resolved tool versions against lockfile pins on every run, and drift fails
-the run by default.
+(pre-commit), and CI. CI runs the full policy. An earlier boundary MAY run less
+only where the policy declares it (a gate limited to named boundaries, an accept
+block a declared command reports as covered), or where it defers to a gate run
+already in progress in the same working tree. No other behavior may differ between
+boundaries. Every gate or accept block a boundary does not run is reported by name,
+in the summary, `--json` and the attestation, never dropped silently, and no
+declaration removes anything from CI. Parity MUST be verified, not asserted: the
+synthetic `parity` gate compares resolved tool versions against lockfile pins and
+checks that CI's gate set contains every earlier boundary's declared set. Drift
+fails the run by default.
 
 Rationale: the boundaries an agent could theoretically rewrite (its own hooks) are
-backstopped by the ones it cannot (CI, branch protection) — but only if all three
-provably run the same checks under the same policy.
+backstopped by the ones it cannot (CI, branch protection), but only if CI provably
+runs everything the policy demands. Earlier boundaries may trade completeness for
+speed only in the open: what they skip is named, and CI still runs it.
 
 ### IV. Projection, Not Dependency
 
@@ -142,4 +161,4 @@ against the workflow rules above. The enforcement principles (I–III) are not
 suspendable by policy configuration in this repository: disabling a gate class here
 requires an amendment, not a `policy.json` edit.
 
-**Version**: 1.0.0 | **Ratified**: 2026-07-08 | **Last Amended**: 2026-07-08
+**Version**: 1.1.0 | **Ratified**: 2026-07-08 | **Last Amended**: 2026-10-25

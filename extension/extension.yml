@@ -9,8 +9,9 @@ extension:
     boundaries: the agent boundary (Claude Code PreToolUse/PostToolUse/Stop
     hooks), the git boundary (pre-commit / pre-merge-commit / commit-msg),
     and the CI boundary (projected GitHub Actions / GitLab CI / Jenkins
-    pipelines). One policy file, one verify entrypoint, identical results
-    at every boundary.
+    pipelines). One policy file, one verify entrypoint; CI runs the whole
+    policy, and an earlier boundary skips only what the policy declares,
+    by name.
   author: schwichtgit
   repository: https://github.com/schwichtgit/spec-gates
   license: MIT
