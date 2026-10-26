@@ -224,6 +224,51 @@ gates_lock_release() {
     return 0
 }
 
+# What an agent-boundary run that skips under a held lock does not run
+# (FR-019, constitution Principle III: every gate a boundary does not run is
+# named). From the policy, in run order: contract when the policy extends a
+# baseline, the orchestrator's gates (the enabled walk tools, task-lint and
+# task-test, or custom), the project gates not skipped at agent by
+# declaration, spec unless disabled, parity unless off. Sets LOCK_DEFERRED
+# and LOCK_DECLARED (the gates skip_at keeps out of the agent boundary
+# anyway) as JSON arrays; returns 1 when the policy cannot be read.
+gates_lock_deferred() {
+    LOCK_DEFERRED="[]"
+    LOCK_DECLARED="[]"
+    local file orch tool name deferred="" declared=""
+    file="$(gates_policy_file)"
+    [[ -f "$file" ]] && jq -e 'type == "object"' "$file" >/dev/null 2>&1 || return 1
+    gates_contract_declared "$GATES_DIR/policy.json" && deferred="contract"$'\n'
+    orch="$(gates_policy_get "verify-quality" "orchestrator")"
+    case "$orch" in
+        task) deferred="${deferred}task-lint"$'\n'"task-test"$'\n' ;;
+        custom)
+            [[ -n "$(gates_policy_get "verify-quality" "custom_command")" ]] \
+                && deferred="${deferred}custom"$'\n'
+            ;;
+        *)
+            for tool in prettier markdownlint shellcheck; do
+                [[ -n "$(gates_policy_list "$tool" "include")" ]] && deferred="$deferred$tool"$'\n'
+            done
+            ;;
+    esac
+    while IFS= read -r name; do
+        [[ -n "$name" ]] || continue
+        if gates_declared_skip agent "$(gates_project_gate_skip_at "$name")" >/dev/null; then
+            declared="$declared$name"$'\n'
+        else
+            deferred="$deferred$name"$'\n'
+        fi
+    done < <(gates_project_gate_names)
+    [[ "$(gates_policy_section_get spec enabled)" != "false" ]] && deferred="${deferred}spec"$'\n'
+    if [[ "$(gates_policy_section_get attestation enabled)" != "false" \
+        && "$(gates_policy_section_get attestation parity)" != "off" ]]; then
+        deferred="${deferred}parity"$'\n'
+    fi
+    LOCK_DEFERRED="$(printf '%s' "$deferred" | jq -Rsc 'split("\n") | map(select(. != ""))')" || return 1
+    LOCK_DECLARED="$(printf '%s' "$declared" | jq -Rsc 'split("\n") | map(select(. != ""))')" || return 1
+}
+
 gates_lock_acquire() {
     local limit="${GATES_LOCK_WAIT_S:-600}" waited=0 announced=0 unowned=0 own_start
     [[ "$limit" =~ ^[0-9]+$ ]] || limit=600
@@ -261,10 +306,23 @@ gates_lock_acquire() {
             unowned=0
             if [[ "$BOUNDARY" == "agent" ]]; then
                 local why="skipped: the gate run of pid $LOCK_PID ($LOCK_BOUNDARY) is in progress"
-                echo "gates: $why" >&2
+                local named deferred_json="null" declared_field=""
+                if gates_lock_deferred; then
+                    deferred_json="$LOCK_DEFERRED"
+                    named="; deferred: $(jq -r 'if length == 0 then "none" else join(", ") end' <<<"$LOCK_DEFERRED")"
+                    if [[ "$LOCK_DECLARED" != "[]" ]]; then
+                        named="$named; skipped by declaration at agent: $(jq -r 'join(", ")' <<<"$LOCK_DECLARED")"
+                        declared_field=",\"declared_skip\":$LOCK_DECLARED"
+                    fi
+                else
+                    # The policy could not be read here: name everything,
+                    # and say deferred is unknown (null) under --json.
+                    named="; deferred: all gates (policy not read)"
+                fi
+                echo "gates: $why$named" >&2
                 if [[ "$JSON" == "1" ]]; then
-                    printf '{"result":"skipped","boundary":%s,"reason":%s}\n' \
-                        "$(json_str "$BOUNDARY")" "$(json_str "$why")"
+                    printf '{"result":"skipped","boundary":%s,"reason":%s,"deferred":%s%s}\n' \
+                        "$(json_str "$BOUNDARY")" "$(json_str "$why")" "$deferred_json" "$declared_field"
                 fi
                 exit 0
             fi
