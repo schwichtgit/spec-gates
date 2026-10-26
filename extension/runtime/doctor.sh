@@ -372,6 +372,22 @@ else
             done <<<"$PG_LIST"
         fi
     fi
+    # lib/formatter-dispatch.sh is internal and may change between
+    # releases; verify.sh --walk is the stable way for a command to run the
+    # built-in walk (feature 006, research R9).
+    # shellcheck disable=SC2016  # literal backticks in the message
+    WALK_REC='use `bash .specify/gates/verify.sh --walk` (stable)'
+    case "$(gates_policy_get "verify-quality" "custom_command")" in
+        *formatter-dispatch.sh*) echo "${REC}custom_command calls lib/formatter-dispatch.sh: $WALK_REC" ;;
+    esac
+    if declare -f gates_project_gate_names >/dev/null 2>&1; then
+        while IFS= read -r pg; do
+            [[ -n "$pg" ]] || continue
+            case "$(gates_project_gate_get "$pg" command)" in
+                *formatter-dispatch.sh*) echo "${REC}gate $pg calls lib/formatter-dispatch.sh: $WALK_REC" ;;
+            esac
+        done < <(gates_project_gate_names)
+    fi
 fi
 
 # Runtime projection vs installed extension (issue #33): after an extension
