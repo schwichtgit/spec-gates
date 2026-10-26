@@ -392,7 +392,7 @@ When work leaves the machine. The projected pipeline job runs
 `verify.sh --boundary ci` and the canary suite. Because it is the same
 script and the same policy, CI is a backstop, never a surprise. The same
 tool versions too: the job installs the lockfile's linters with `npm ci`
-and the shellcheck pinned in `.tool-versions` with
+and the pinned shellcheck (mise or `.tool-versions`) with
 `.specify/gates/install-shellcheck.sh`, which picks the release asset for
 the runner's architecture and refuses one whose SHA-256 does not match
 `.specify/gates/shellcheck.sha256`.
@@ -1098,13 +1098,38 @@ installed copy, checks an install with nothing projected yet.
 Parity has an analogous requirement on the toolchain itself: a linter's
 findings depend on its version, so "the same policy at every boundary" is
 only true if the same tool versions run at every boundary. Node linters
-are pinned by `package-lock.json`. Tools npm cannot pin are declared in
-`.tool-versions` (asdf format), currently shellcheck, where the gap is not
-theoretical: Ubuntu's apt ships 0.9.0, which reports SC2015 findings that
-0.11.0 does not, so an unpinned CI turns a green local run red for reasons
-no diff explains. The parity gate reads both sources, so drift at any
-boundary fails the run naming the tool, the resolved version and the pin,
-instead of surfacing as mysteriously different lint output.
+are pinned by `package-lock.json`. Tools npm cannot pin, currently
+shellcheck, are declared with mise or in `.tool-versions` (asdf format),
+where the gap is not theoretical: Ubuntu's apt ships 0.9.0, which reports
+SC2015 findings that 0.11.0 does not, so an unpinned CI turns a green
+local run red for reasons no diff explains. The parity gate reads every
+source, so drift at any boundary fails the run naming the tool, the
+resolved version and the pin, instead of surfacing as mysteriously
+different lint output.
+
+The pin sources, in precedence order:
+
+1. `package-lock.json`, for the node-resolved linters (prettier,
+   markdownlint-cli2) only. The npm `shellcheck` package is a downloader
+   wrapper whose version is no shellcheck release, so it pins nothing.
+2. mise: the `[tools]` table of the first project config mise documents
+   that names the tool (`.mise.toml`, `mise.toml`, `mise/config.toml`,
+   `.mise/config.toml`, `.config/mise.toml`, `.config/mise/mise.toml`,
+   `.config/mise/config.toml`), at the version the `mise.lock` beside it
+   locks; without a lock entry, the config's version counts only when it
+   is exact (`x.y.z`), since a request such as `"latest"` or `"22"` pins
+   nothing. Keys may carry a backend (`"aqua:koalaman/shellcheck"`,
+   `"npm:prettier"`), and the value may be a string, an inline table's
+   `version`, or an array's first element. `mise.local.toml`,
+   `mise.<env>.toml` and `conf.d` fragments are not read: they are
+   uncommitted or selected per run, so another boundary cannot share them.
+3. `.tool-versions`.
+
+Two sources that pin a tool at different versions fail the parity gate
+naming each source and version; the run does not pick one. A mise file
+the gate cannot read (an unterminated string, a malformed table header, a
+line that is no `key = value`) fails it naming `file:line`. The reader
+is a small TOML subset in awk, so spec-gates adds no dependency for it.
 
 ### Out of the project's lint scope
 

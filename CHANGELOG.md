@@ -8,6 +8,23 @@ never touches `.specify/gates/policy.json`. New policy keys take the
 defaults stated here until you set them. Releases before 0.3.3 are
 described in their [GitHub release notes](https://github.com/schwichtgit/spec-gates/releases).
 
+## [Unreleased]
+
+### Added
+
+- **Tool pins are read from mise** (#260). The parity gate,
+  `install-shellcheck.sh` and the CI templates take a pin from the
+  `[tools]` table of `mise.toml` (and the other project configs mise
+  documents), at the version `mise.lock` locks, between
+  `package-lock.json` and `.tool-versions`. Two sources that pin a tool
+  at different versions now fail the parity gate naming both, including
+  `package-lock.json` against `.tool-versions`; a mise file that cannot
+  be read fails it naming `file:line`. `package-lock.json` now pins only
+  the node linters: the npm `shellcheck` downloader wrapper used to be
+  read as a shellcheck pin, and no longer is. The CI templates ask
+  `install-shellcheck.sh --pin` for the pin, so they need the runtime of
+  the same release.
+
 ## 0.4.2 — 2026-10-25
 
 ### Upgrading

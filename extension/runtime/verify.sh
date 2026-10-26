@@ -305,6 +305,9 @@ WARNINGS=0
 declare -a RESULTS=()
 declare -a SUMMARIES=()
 declare -a ATT_GATES=()
+# Tools whose pins were looked up; the parity gate checks their pin
+# sources for conflicts and unreadable mise files (#260).
+declare -a PIN_TOOLS=()
 
 # <summary> is the one line the text report prints for the gate; without
 # it the report prints the first line of <detail>.
@@ -380,6 +383,7 @@ run_gate() { # name severity cmd...
     if [[ -n "$binname" ]]; then
         version="$(gates_tool_version "$binname" "$PROJECT_ROOT")"
         pinned="$(gates_pin_version "$binname" "$PROJECT_ROOT")"
+        PIN_TOOLS+=("$binname")
     fi
     [[ -n "$bin" && "$bin" == "$PROJECT_ROOT/"* ]] && bin="${bin#"$PROJECT_ROOT"/}"
 
@@ -562,6 +566,16 @@ elif [[ "$DRY_RUN" != "1" &&"$ATT_ENABLED" != "false" && "$PARITY_SEV" != "off" 
         parity_input="[$(IFS=,; printf '%s' "${ATT_GATES[*]}")]"
     fi
     PARITY_DRIFT="$(gates_pin_mismatches "$parity_input")"
+    # A pin the sources disagree on, or a mise file that cannot be read,
+    # fails like drift: the comparison above would rest on a guess.
+    # Each problem is named once, however many tools or configs repeat it.
+    pin_problems=""
+    if [[ ${#PIN_TOOLS[@]} -gt 0 ]]; then
+        pin_problems="$(for pin_tool in "${PIN_TOOLS[@]}"; do
+            gates_pin_problems "$pin_tool" "$PROJECT_ROOT"
+        done | awk 'NF && !seen[$0]++ { printf "%s%s", sep, $0; sep = "; " }')"
+    fi
+    [[ -n "$pin_problems" ]] && PARITY_DRIFT="$pin_problems${PARITY_DRIFT:+; $PARITY_DRIFT}"
     if [[ -z "$PARITY_DRIFT" ]]; then
         record "parity" "pass" ""
         att_gate "parity" "" "" "" "" "" "pass" "" 0

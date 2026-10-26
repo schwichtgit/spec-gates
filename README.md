@@ -282,8 +282,10 @@ its enforcement frontmatter — one registry, two consumers.
   canary suite, so a CI job without the linter fails.
 - **shellcheck** if you lint shell. Its findings change between releases
   (0.9.0 reports SC2015 where 0.11.0 does not), so declare the version in
-  `.tool-versions` (`shellcheck 0.11.0`) and install that one everywhere —
-  the parity gate reads it and fails any boundary that drifts. The CI
+  `mise.toml` (`[tools]` `shellcheck = "0.11.0"`, or the version
+  `mise.lock` locks) or `.tool-versions` (`shellcheck 0.11.0`) and install
+  that one everywhere — the parity gate reads it and fails any boundary
+  that drifts, or two sources that pin different versions. The CI
   templates install exactly that version, checksum-verified, with
   `bash .specify/gates/install-shellcheck.sh` (Linux and macOS, x86_64
   and aarch64); for a version spec-gates ships no checksums for, run it
