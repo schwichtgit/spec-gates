@@ -9,6 +9,8 @@
 #   gates_spec_run_block <cmd> <t> <root> <out>  # one block: watchdog + mutation (R4/R5)
 #   gates_spec_gate <root> <accept> <json>       # driver; results in SPEC_* globals
 #
+# Sources lib/watch.sh (gates_group_stop) from its own directory.
+#
 # Fenced ```accept blocks in specs/*/tasks.md are executable acceptance
 # criteria (exit 0 = the criterion holds). Features whose spec.md Status is
 # Complete are enforced: any unchecked task or failing block fails the gate
@@ -21,6 +23,11 @@
 # reports the spec gate as skipped).
 
 # shellcheck disable=SC2034   # library file; SPEC_* globals consumed by callers
+
+# The process-group stop lives in lib/watch.sh. Found next to this file:
+# doctor.sh, constitution.sh and the tests source spec-gate.sh alone.
+# shellcheck source=watch.sh disable=SC1091
+source "$(dirname "${BASH_SOURCE[0]}")/watch.sh"
 
 # Feature discovery (R7): direct children of specs/ containing a spec.md,
 # lexicographic order, minus policy spec.exclude globs. Missing specs/ means
@@ -597,17 +604,10 @@ gates_spec_group_alive() { # <pgid>
     kill -0 -- -"$1" 2>/dev/null
 }
 
-# Stop process group <pgid>: TERM, a two-second grace, then KILL.
-gates_spec_group_stop() { # <pgid>
-    local n=0
-    kill -TERM -- -"$1" 2>/dev/null || return 0
-    while [[ $n -lt 20 ]] && kill -0 -- -"$1" 2>/dev/null; do
-        sleep 0.1
-        n=$((n + 1))
-    done
-    kill -KILL -- -"$1" 2>/dev/null
-    return 0
-}
+# Stop process group <pgid>: TERM, a two-second grace, then KILL. The
+# implementation is gates_group_stop in lib/watch.sh (shared with project
+# gates); this name stays for existing callers.
+gates_spec_group_stop() { gates_group_stop "$@"; } # <pgid>
 
 # PIDs of live processes whose environment holds GATES_SPEC_BLOCK=<id>, one
 # per line. Every process a block starts inherits the variable, and leaving

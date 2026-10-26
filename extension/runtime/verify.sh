@@ -142,6 +142,8 @@ fi
 source "$GATES_DIR/lib/policy.sh"
 # shellcheck source=lib/attest.sh disable=SC1091
 source "$GATES_DIR/lib/attest.sh"
+# shellcheck source=lib/watch.sh disable=SC1091
+source "$GATES_DIR/lib/watch.sh"
 # shellcheck source=lib/spec-gate.sh disable=SC1091
 source "$GATES_DIR/lib/spec-gate.sh"
 # shellcheck source=lib/contract.sh disable=SC1091
