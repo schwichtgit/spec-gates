@@ -58,11 +58,11 @@ its own gate in the text report, `--json` and the attestation
 
 **Independent Test**: quickstart sections 1 to 3.
 
-- [ ] T010 [US1] In `extension/runtime/verify.sh`, after the orchestrator `case`, run each project gate in key order: `run_gate <name> <severity> ...` through `gates_run_watched <timeout> <outfile> sh -c "<command>"` from the project root, with `<timeout>` = the gate's `timeout_s`, else `gate_timeout_s`, else 600; extend `run_gate` with an optional watched mode (or a `run_project_gate` wrapper) so output capture, the `##gates-fail##` summary rules, severity mapping, `FAILED`/`WARNINGS` and `att_gate` stay the single implementation
-- [ ] T011 [US1] Map the failure causes in `extension/runtime/verify.sh` per research R3 and R4: status 124 from the watchdog fails with reason and summary `timeout after <n>s [at load <x>]`; status 126 or 127 fails with reason `command not found or not executable` and the shell's message as summary; any other non-zero status maps by severity (`error` fails, `warning`/`info` warn); attestation reasons stay fixed strings (evidence hygiene); project gates attest `bin`, `version`, `pinned`, `candidates`, `checked` as null
-- [ ] T012 [US1] `--dry-run` in `extension/runtime/verify.sh` records each project gate as `planned` with its command and time limit in the detail
-- [ ] T013 [US1] Tests in `tests/test-gate.sh`: two project gates next to an enabled built-in walk appear after it in key order, each with its own result in text and `--json`; error severity fails the run, warning warns; `##gates-fail##` sets the summary; a 2 s limit on `sleep 30` fails within 6 s with `timeout after 2s`; a missing command fails with `command not found or not executable`; `GATES_BOUNDARY` is visible to the command at each boundary and `none` without `--boundary`; the `custom` orchestrator plus project gates runs both; a policy without `gates` produces the same report as before; mutation-check each
-- [ ] T014 [P] [US1] Tests in `tests/test-attest.sh`: the attestation line has one entry per project gate with `result`, `reason`, `duration_s` and null tool fields; a timed-out gate's reason is `timeout after <n>s` with no command output
+- [x] T010 [US1] In `extension/runtime/verify.sh`, after the orchestrator `case`, run each project gate in key order: `run_gate <name> <severity> ...` through `gates_run_watched <timeout> <outfile> sh -c "<command>"` from the project root, with `<timeout>` = the gate's `timeout_s`, else `gate_timeout_s`, else 600; extend `run_gate` with an optional watched mode (or a `run_project_gate` wrapper) so output capture, the `##gates-fail##` summary rules, severity mapping, `FAILED`/`WARNINGS` and `att_gate` stay the single implementation
+- [x] T011 [US1] Map the failure causes in `extension/runtime/verify.sh` per research R3 and R4: status 124 from the watchdog fails with reason and summary `timeout after <n>s [at load <x>]`; status 126 or 127 fails with reason `command not found or not executable` and the shell's message as summary; any other non-zero status maps by severity (`error` fails, `warning`/`info` warn); attestation reasons stay fixed strings (evidence hygiene); project gates attest `bin`, `version`, `pinned`, `candidates`, `checked` as null
+- [x] T012 [US1] `--dry-run` in `extension/runtime/verify.sh` records each project gate as `planned` with its command and time limit in the detail
+- [x] T013 [US1] Tests in `tests/test-gate.sh`: two project gates next to an enabled built-in walk appear after it in key order, each with its own result in text and `--json`; error severity fails the run, warning warns; `##gates-fail##` sets the summary; a 2 s limit on `sleep 30` fails within 6 s with `timeout after 2s`; a missing command fails with `command not found or not executable`; `GATES_BOUNDARY` is visible to the command at each boundary and `none` without `--boundary`; the `custom` orchestrator plus project gates runs both; a policy without `gates` produces the same report as before; mutation-check each
+- [x] T014 [P] [US1] Tests in `tests/test-attest.sh`: the attestation line has one entry per project gate with `result`, `reason`, `duration_s` and null tool fields; a timed-out gate's reason is `timeout after <n>s` with no command output
 
   ```accept
   # verifies: FR-001, FR-002, FR-003, FR-004, FR-005
@@ -84,11 +84,11 @@ its own gate in the text report, `--json` and the attestation
   # verifies: FR-006, FR-015
   set -eu
   . tests/lib/fixture.sh
-  d="$(fx_gates_project '{"hooks":{"verify-quality":{"orchestrator":"none","gates":{"spec":{"command":"true"}}}}}')"
+  d="$(fx_gates_project '{"hooks":{"verify-quality":{"orchestrator":"none","severity":"error","gates":{"spec":{"command":"true"}}}}}')"
   trap 'fx_cleanup "$d"' EXIT
   rc=0; CLAUDE_PROJECT_DIR="$d" bash "$d/.specify/gates/verify.sh" --boundary git >/dev/null 2>&1 || rc=$?
   test "$rc" -eq 1
-  printf '%s\n' '{"hooks":{"verify-quality":{"orchestrator":"none"}}}' >"$d/.specify/gates/policy.json"
+  printf '%s\n' '{"hooks":{"verify-quality":{"orchestrator":"none","severity":"error"}}}' >"$d/.specify/gates/policy.json"
   CLAUDE_PROJECT_DIR="$d" bash "$d/.specify/gates/verify.sh" --boundary git >/dev/null 2>&1
   ```
 

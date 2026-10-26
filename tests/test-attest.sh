@@ -139,6 +139,32 @@ else
     skip "tool gate field check" "run npm ci to install pinned prettier"
 fi
 
+# --- project gates (feature 006): one entry each, tool fields null ---
+echo ""
+echo "=== project gate entries ==="
+DG="$WORKDIR/project-gates"
+project "$DG" '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error",
+    "gates": { "ok": { "command": "true" },
+               "bad": { "command": "echo PG-OUTPUT-SECRET; exit 1" },
+               "soft": { "command": "echo PG-OUTPUT-SECRET; exit 1", "severity": "warning" },
+               "slow": { "command": "echo PG-OUTPUT-SECRET; sleep 30", "timeout_s": 2 } } } } }'
+PGJ="$(gate_json "$DG")"
+expect "one attestation entry per project gate, in key order" \
+    "$(jq -c '[.attestation.gates[].name]' <<<"$PGJ")" '["ok","bad","soft","slow","spec","parity"]'
+expect "each carries result, reason, duration_s and null tool fields" \
+    "$(jq -c '[.attestation.gates[] | select(.name != "spec" and .name != "parity")
+        | [.result, (if .name == "slow" then (.reason | startswith("timeout after ")) else .reason end),
+           ((.duration_s | type) == "number"),
+           .bin, .version, .pinned, .candidates, .checked]]' <<<"$PGJ")" \
+    '[["pass","",true,null,null,null,null,null],["fail","check failed",true,null,null,null,null,null],["warn","check failed (warning)",true,null,null,null,null,null],["fail",true,true,null,null,null,null,null]]'
+expect "a timed-out gate's reason is the time limit" \
+    "$(jq -r '.attestation.gates[] | select(.name == "slow") | .reason
+        | test("^timeout after 2s( at load [0-9.]+)?$")' <<<"$PGJ")" true
+expect "no command output in the record" \
+    "$(jq -c '.attestation' <<<"$PGJ" | grep -c 'PG-OUTPUT-SECRET' || true)" 0
+expect "the log record matches the embedded one" \
+    "$(tail -n 1 "$DG/.specify/gates/attestations.jsonl" | jq -cS . | cmp -s - <(jq -cS .attestation <<<"$PGJ") && echo same)" same
+
 # --- 3: two identical runs differ only in ts/duration ---
 echo ""
 echo "=== determinism modulo ts/duration ==="

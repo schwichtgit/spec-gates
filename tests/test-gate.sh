@@ -611,6 +611,148 @@ expect "invalid policy: the refusal carries the boundary" \
 expect "a quote in the reason stays valid JSON" \
     "$(CLAUDE_PROJECT_DIR="$DE" bash "$V" --json --boundary 'a"b' 2>/dev/null | jq -r '.reason' | grep -c 'a"b')" 1
 
+# --- project gates (feature 006): hooks.verify-quality.gates ---
+echo ""
+echo "=== project gates ==="
+# pg_run <dir> [verify args...]: text report and stderr, exit code last
+pg_run() {
+    local d="$1" rc=0 out
+    shift
+    out="$(CLAUDE_PROJECT_DIR="$d" bash "$d/.specify/gates/verify.sh" "$@" 2>&1)" || rc=$?
+    printf '%s\nEXIT=%s\n' "$out" "$rc"
+}
+# pg_lines <dir> [verify args...]: the report's gate lines, " | "-joined
+pg_lines() {
+    pg_run "$@" | grep '^  \[' | sed 's/^  //' | paste -sd '|' - | sed 's/|/ | /g'
+}
+pg_att() { # <dir> <jq filter on the last attestation record>
+    tail -n 1 "$1/.specify/gates/attestations.jsonl" | jq -c "$2"
+}
+expect_has() { # <name> <haystack> <needle>
+    TOTAL=$((TOTAL + 1))
+    if grep -qF -- "$3" <<<"$2"; then
+        echo "PASS: $1"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL: $1 (no \"$3\" in: $2)"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
+if have_node_linters; then
+    PG="$WORKDIR/pg-walk"
+    project "$PG" '{ "hooks": { "prettier": { "include": ["**/*.md"], "severity": "error" },
+        "verify-quality": { "orchestrator": "none", "severity": "error",
+            "gates": { "zz-first": { "command": "echo first-ran" }, "aa-second": { "command": "true" } } } } }'
+    printf '# Ok\n' >"$PG/ok.md"
+    expect "two project gates follow the built-in walk, in key order" \
+        "$(pg_lines "$PG" --boundary ci)" \
+        "[pass] prettier | [pass] zz-first | [pass] aa-second | [pass] spec | [pass] parity"
+    expect "--json: one entry per project gate, same order" \
+        "$(CLAUDE_PROJECT_DIR="$PG" bash "$PG/.specify/gates/verify.sh" --boundary ci --json 2>/dev/null \
+            | jq -c '[.gates[] | [.name, .status]]')" \
+        '[["prettier","pass"],["zz-first","pass"],["aa-second","pass"],["spec","pass"],["parity","pass"]]'
+    expect "the attestation has an entry per project gate" \
+        "$(pg_att "$PG" '[.gates[].name]')" '["prettier","zz-first","aa-second","spec","parity"]'
+else
+    skip "project gates after the built-in walk" "run npm ci to install pinned linters"
+fi
+
+PG="$WORKDIR/pg-sev"
+project "$PG" '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error",
+    "gates": { "hard": { "command": "echo noise; echo \"##gates-fail## hard gate failed\"; echo tail; exit 3" },
+               "soft": { "command": "echo soft-last-line; exit 1", "severity": "warning" },
+               "note": { "command": "exit 1", "severity": "info" } } } } }'
+OUT="$(pg_run "$PG" --boundary ci)"
+expect_has "an error gate fails the run (exit 2)" "$OUT" "EXIT=2"
+expect_has "##gates-fail## sets the summary" "$OUT" "  [fail] hard -- hard gate failed"
+expect_has "a warning gate warns, with its last line as summary" "$OUT" "  [warn] soft -- soft-last-line"
+expect_has "an info gate warns" "$OUT" "  [warn] note"
+expect_has "the counts include project gates" "$OUT" "failed=1 warnings=2"
+expect "attestation: results and fixed reasons" \
+    "$(pg_att "$PG" '[.gates[] | select(.name == "hard" or .name == "soft") | [.result, .reason]]')" \
+    '[["fail","check failed"],["warn","check failed (warning)"]]'
+project "$PG" '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error",
+    "gates": { "soft": { "command": "exit 1", "severity": "warning" } } } } }'
+expect_has "warnings alone pass (exit 0)" "$(pg_run "$PG" --boundary ci)" "EXIT=0"
+
+PG="$WORKDIR/pg-timeout"
+project "$PG" '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error",
+    "gates": { "slow": { "command": "echo SLOW-OUTPUT; sleep 30", "timeout_s": 2, "severity": "warning" } } } } }'
+T0="$(date +%s)"
+OUT="$(pg_run "$PG" --boundary ci)"
+T1="$(date +%s)"
+expect_has "a timed-out gate fails, whatever its severity (exit 2)" "$OUT" "EXIT=2"
+expect_has "the summary names the limit" "$OUT" "  [fail] slow -- timeout after 2s"
+TOTAL=$((TOTAL + 1))
+if [[ $((T1 - T0)) -le 6 ]]; then
+    echo "PASS: a 2 s limit on sleep 30 ends the run within 6 s"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL: the timed-out run took $((T1 - T0))s"
+    FAIL=$((FAIL + 1))
+fi
+# The policy-wide default applies to a gate without timeout_s.
+project "$PG" '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error", "gate_timeout_s": 1,
+    "gates": { "slow": { "command": "sleep 30" } } } } }'
+expect_has "gate_timeout_s is the default limit" "$(pg_run "$PG" --boundary ci)" "  [fail] slow -- timeout after 1s"
+
+PG="$WORKDIR/pg-missing"
+project "$PG" '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error",
+    "gates": { "gone": { "command": "no-such-command-243", "severity": "warning" },
+               "noexec": { "command": "./not-executable.sh" } } } } }'
+printf '#!/bin/sh\nexit 0\n' >"$PG/not-executable.sh"
+chmod 644 "$PG/not-executable.sh"
+OUT="$(pg_run "$PG" --boundary ci)"
+expect_has "a missing command fails, whatever its severity (exit 2)" "$OUT" "EXIT=2"
+expect_has "the summary is the shell's message" "$OUT" "no-such-command-243"
+expect "attestation: command not found or not executable (127 and 126)" \
+    "$(pg_att "$PG" '[.gates[] | select(.name == "gone" or .name == "noexec") | [.result, .reason]]')" \
+    '[["fail","command not found or not executable"],["fail","command not found or not executable"]]'
+
+PG="$WORKDIR/pg-env"
+# shellcheck disable=SC2016  # expanded by the gate commands
+project "$PG" '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error",
+    "custom_command": "echo \"##gates-fail## custom-boundary=$GATES_BOUNDARY\"; exit 1",
+    "gates": { "env": { "command": "echo \"##gates-fail## boundary=$GATES_BOUNDARY cwd=$(pwd -P)\"; exit 1" } } } } }'
+PGP="$(cd "$PG" && pwd -P)"
+for b in agent git ci; do
+    OUT="$(cd "$WORKDIR" && pg_run "$PG" --boundary "$b")"
+    expect_has "GATES_BOUNDARY=$b reaches the gate command, run from the project root" \
+        "$OUT" "  [fail] env -- boundary=$b cwd=$PGP"
+done
+OUT="$(cd "$WORKDIR" && pg_run "$PG")"
+expect_has "without --boundary GATES_BOUNDARY is none" "$OUT" "  [fail] env -- boundary=none"
+expect_has "the custom step sees GATES_BOUNDARY too" "$OUT" "  [fail] custom -- custom-boundary=none"
+expect "the custom orchestrator and project gates both run" \
+    "$(pg_lines "$PG" --boundary ci | sed 's/ -- [^|]* |/ |/g; s/ -- [^|]*$//')" "[fail] custom | [fail] env | [pass] spec | [pass] parity"
+
+# A gate's own ##gates-meta## line claims nothing: tool fields stay null.
+PG="$WORKDIR/pg-meta"
+project "$PG" '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error",
+    "gates": { "spoof": { "command": "echo \"##gates-meta## binname=prettier candidates=9 checked=0 skipped=prettier bin=/x\"; exit 1" } } } } }'
+OUT="$(pg_run "$PG" --boundary ci)"
+expect_has "a spoofed meta line cannot turn a failure into a skip" "$OUT" "  [fail] spoof"
+expect "project gates attest null tool fields" \
+    "$(pg_att "$PG" '.gates[] | select(.name == "spoof") | [.bin, .version, .pinned, .candidates, .checked, .result]')" \
+    '[null,null,null,null,null,"fail"]'
+
+PG="$WORKDIR/pg-dry"
+project "$PG" '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error", "gate_timeout_s": 900,
+    "gates": { "a": { "command": "touch ran-a" }, "b": { "command": "touch ran-b", "timeout_s": 5 } } } } }'
+expect "--dry-run plans each project gate with its command and limit, runs none" \
+    "$(CLAUDE_PROJECT_DIR="$PG" bash "$PG/.specify/gates/verify.sh" --boundary ci --dry-run --json 2>/dev/null \
+        | jq -c '[.gates[] | select(.name == "a" or .name == "b") | [.status, .detail]]'):$(find "$PG" -maxdepth 1 -name 'ran-*' | wc -l | tr -d ' ')" \
+    '[["planned","touch ran-a (time limit 900s)"],["planned","touch ran-b (time limit 5s)"]]:0'
+
+# A policy without gates: the same gates, results and report as before.
+PG="$WORKDIR/pg-none"
+project "$PG" '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error", "custom_command": "true" } } }'
+expect "no gates key: the report is unchanged" \
+    "$(pg_run "$PG" --boundary ci)" "$(printf 'gates: boundary=ci failed=0 warnings=0\n  [pass] custom\n  [pass] spec\n  [pass] parity\nEXIT=0')"
+expect "no gates key: the attestation lists the same gates" \
+    "$(pg_att "$PG" '[.gates[].name]')" '["custom","spec","parity"]'
+
 # --- lib/watch.sh: gates_run_watched (feature 006) ---
 echo ""
 echo "=== gates_run_watched ==="
