@@ -310,7 +310,10 @@ its enforcement frontmatter — one registry, two consumers.
   A linter the policy enables but the host lacks does not block anything
   by itself: every boundary passes with that gate reported `[skipped]`.
   `doctor` and the canary suite fail on it, and the CI templates run the
-  canary suite, so a CI job without the linter fails.
+  canary suite, so a CI job without the linter fails. A new clone or
+  worktree has no `node_modules`: install there (`npm ci`) before its
+  first commit, or a custom command or accept block that calls a linter
+  fails the commit.
 - **shellcheck** if you lint shell. Its findings change between releases
   (0.9.0 reports SC2015 where 0.11.0 does not), so declare the version in
   `mise.toml` (`[tools]` `shellcheck = "0.11.0"`, or the version
