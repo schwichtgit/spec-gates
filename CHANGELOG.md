@@ -8,7 +8,47 @@ never touches `.specify/gates/policy.json`. New policy keys take the
 defaults stated here until you set them. Releases before 0.3.3 are
 described in their [GitHub release notes](https://github.com/schwichtgit/spec-gates/releases).
 
-## [Unreleased]
+## 0.5.0 — 2026-10-27
+
+### Upgrading
+
+- Upgrade as for 0.4.2 (README "Upgrade"): one `project.sh` run, then
+  commit `.specify/gates/.projected.sha256` with the upgrade. The canary
+  suite now has 18 canaries (new: `project`, `covered`); `project.sh`
+  lists the new optional settings (`hooks.verify-quality.gates`,
+  `gate_timeout_s`, `test_severity`, `spec.cover`). A 0.4.x runtime
+  refuses a policy that sets any of them, so upgrade every branch and
+  pipeline that shares the policy before you use them.
+- The custom command now runs from the project root (#276). One that
+  relied on the directory `verify.sh` was started in must change
+  directory itself.
+- A gate command, or the custom command, that starts a full `verify.sh`
+  run of its own project, directly or through `git commit`, is now
+  refused and fails (#243). Call `verify.sh --walk` for the built-in
+  checks instead.
+- The parity gate fails when two sources pin a tool at different
+  versions, including `package-lock.json` against `.tool-versions` and
+  the mise files (#260). The npm `shellcheck` downloader wrapper is no
+  longer read as a shellcheck pin.
+- The CI templates call `install-shellcheck.sh --pin`, which a 0.4.x
+  runtime lacks: merge the new template steps into your pipeline only
+  together with the re-projected runtime. A pipeline that installs
+  shellcheck another way needs no change.
+- A custom command that bundles several checks may stay as it is. To
+  report each check as its own gate, move them to
+  `hooks.verify-quality.gates`, keep slow ones out of the agent boundary
+  with `skip_at`, and replace direct calls of
+  `lib/formatter-dispatch.sh` with `verify.sh --walk`; doctor names
+  such calls, one level down.
+- Constitution 1.1.0 rewrites Principle III: an earlier boundary may
+  skip what the policy declares, CI never. The shipped
+  `one-policy-many-boundaries` fragment carries the new text; a
+  constitution built from the old fragment keeps its text until you
+  update it.
+- Adopting the CI `pr` step on a repository with open branches: it
+  checks every commit in the PR, so a protected-file commit made before
+  the trailers existed fails until the PR description declares it
+  (`Protected-Change: <path>` and `Approved-By: <name>`).
 
 ### Added
 
