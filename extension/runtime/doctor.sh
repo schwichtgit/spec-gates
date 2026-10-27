@@ -377,15 +377,46 @@ else
     # built-in walk (feature 006, research R9).
     # shellcheck disable=SC2016  # literal backticks in the message
     WALK_REC='use `bash .specify/gates/verify.sh --walk` (stable)'
-    case "$(gates_policy_get "verify-quality" "custom_command")" in
-        *formatter-dispatch.sh*) echo "${REC}custom_command calls lib/formatter-dispatch.sh: $WALK_REC" ;;
-    esac
+    # Looks one level down: the body of an `npm|pnpm|yarn run <script>`,
+    # and any project file the command (or that body) names. Files under
+    # .specify/gates/ are the runtime itself and are not read. Sets WALK_VIA
+    # to the file that calls the dispatch, empty when the command names it.
+    walk_calls_dispatch() { # <command> -> 0 when it reaches the dispatch
+        local text="$1" line word
+        local -a words
+        WALK_VIA=""
+        if [[ "$text" =~ ^[[:space:]]*(npm|pnpm|yarn)[[:space:]]+((-s|--silent)[[:space:]]+)?run(-script)?[[:space:]]+((-s|--silent)[[:space:]]+)?([^[:space:]]+) ]]; then
+            text+=$'\n'"$(jq -r --arg n "${BASH_REMATCH[7]}" '.scripts[$n] // empty' \
+                "$PROJECT_ROOT/package.json" 2>/dev/null)"
+        fi
+        [[ "$text" == *formatter-dispatch.sh* ]] && return 0
+        while IFS= read -r line; do
+            read -ra words <<<"$line"
+            for word in ${words[@]+"${words[@]}"}; do
+                word="${word//[\"\']/}"
+                word="${word#./}"
+                [[ -n "$word" && "$word" != /* && "$word" != *..* ]] || continue
+                [[ "$word" == .specify/gates/* ]] && continue
+                [[ -f "$PROJECT_ROOT/$word" ]] || continue
+                grep -qF formatter-dispatch.sh "$PROJECT_ROOT/$word" 2>/dev/null \
+                    && { WALK_VIA="$word"; return 0; }
+            done
+        done <<<"$text"
+        return 1
+    }
+    walk_rec() { # <subject> <command>
+        walk_calls_dispatch "$2" || return 0
+        if [[ -n "$WALK_VIA" ]]; then
+            echo "${REC}$1 calls lib/formatter-dispatch.sh (via $WALK_VIA): $WALK_REC"
+        else
+            echo "${REC}$1 calls lib/formatter-dispatch.sh: $WALK_REC"
+        fi
+    }
+    walk_rec custom_command "$(gates_policy_get "verify-quality" "custom_command")"
     if declare -f gates_project_gate_names >/dev/null 2>&1; then
         while IFS= read -r pg; do
             [[ -n "$pg" ]] || continue
-            case "$(gates_project_gate_get "$pg" command)" in
-                *formatter-dispatch.sh*) echo "${REC}gate $pg calls lib/formatter-dispatch.sh: $WALK_REC" ;;
-            esac
+            walk_rec "gate $pg" "$(gates_project_gate_get "$pg" command)"
         done < <(gates_project_gate_names)
     fi
 fi

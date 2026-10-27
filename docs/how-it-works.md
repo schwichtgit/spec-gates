@@ -463,6 +463,13 @@ base revision's `.specify/gates` with `git archive` and runs that
 check that judges it. Add it to the pipeline file that runs
 `verify.sh --boundary ci`: doctor looks for the step there.
 
+The step checks every commit in the pull request, including commits
+made before it was added. An open branch with a protected-file commit
+that carries no `Protected-Change` trailer (one made with `--no-verify`
+before the trailers existed, say) fails it. Declare such commits in the
+PR description, with a `Protected-Change: <path>` line per path and an
+`Approved-By: <name>` line; `pr-check.sh` accepts declarations there.
+
 GitHub: a step in the job that runs `verify.sh --boundary ci`, so the
 required `gates` check covers it. That job checks out with
 `fetch-depth: 0` (without full history the base revision cannot be
@@ -649,8 +656,10 @@ built-in per-tool walk (prettier, markdownlint, shellcheck, as the
 policy enables them), whatever the orchestrator: no contract, project,
 spec or parity gate, and no attestation line. It is the stable way for a
 custom command to include the built-in checks; doctor recommends it
-when a `custom_command` or a project gate calls `lib/formatter-dispatch.sh`
-directly. Inside a gate run it joins that run's lock and prints one
+when a `custom_command` or a project gate calls `lib/formatter-dispatch.sh`,
+directly or one level down: in the `npm`, `pnpm` or `yarn` script the
+command runs, or in a project file the command or that script names
+(`bash scripts/quality.sh`). Deeper calls go unreported. Inside a gate run it joins that run's lock and prints one
 `##gates-fail##` line for its first failure, so the calling gate's
 summary names the failing file. A walk started from inside a walk
 refuses (exit `1`): the walk never runs the orchestrator, so a

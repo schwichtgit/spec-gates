@@ -48,7 +48,9 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
 - **`verify.sh --walk`** (#243). Runs only the built-in walk, whatever
   the orchestrator, with no attestation: the stable way for a custom
   command to include the built-in checks. Doctor recommends it where a
-  command calls `lib/formatter-dispatch.sh`.
+  command calls `lib/formatter-dispatch.sh`, directly or one level down:
+  in the `npm`, `pnpm` or `yarn` script it runs, or in a project file it
+  or that script names, which the report shows as `(via <file>)`.
 - **`test_severity`** (#243). With the `task` orchestrator,
   `"test_severity": "error"` makes a failing `task test` fail the run;
   the default stays warning.

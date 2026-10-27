@@ -1473,6 +1473,22 @@ project "$DWK" '{ "hooks": { "verify-quality": { "orchestrator": "custom", "seve
     "custom_command": "bash .specify/gates/verify.sh --walk" } } }' no
 run_doctor "$DWK" >/dev/null
 lacks "a custom_command calling --walk gets no [rec]" "$DWK" "calls lib/formatter-dispatch.sh"
+# One level down: an npm script that runs a project file that calls it.
+mkdir -p "$DWK/scripts"
+printf '#!/bin/bash\nbash .specify/gates/lib/formatter-dispatch.sh --check --tool prettier\n' > "$DWK/scripts/quality.sh"
+printf '{ "scripts": { "quality": "bash scripts/quality.sh", "plain": "true" } }\n' > "$DWK/package.json"
+project "$DWK" '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error",
+    "custom_command": "npm run -s quality",
+    "gates": { "fmt": { "command": "./scripts/quality.sh" },
+               "other": { "command": "npm run plain" } } } } }' no
+run_doctor "$DWK" >/dev/null
+# shellcheck disable=SC2016  # literal backticks
+has "an npm script running a file that calls the dispatch gets the [rec]" "$DWK" \
+    '  [rec] custom_command calls lib/formatter-dispatch.sh (via scripts/quality.sh): use `bash .specify/gates/verify.sh --walk` (stable)'
+# shellcheck disable=SC2016  # literal backticks
+has "a gate running that file gets the [rec]" "$DWK" \
+    '  [rec] gate fmt calls lib/formatter-dispatch.sh (via scripts/quality.sh): use `bash .specify/gates/verify.sh --walk` (stable)'
+lacks "an npm script that does not reach the dispatch gets none" "$DWK" "gate other calls"
 
 echo ""
 echo "=== the covering script declaration (feature 007) ==="
