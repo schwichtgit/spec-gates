@@ -223,7 +223,15 @@ else
     VERIFY="$PROJECT_ROOT/.specify/gates/verify.sh"
     if [[ -x "$VERIFY" ]]; then
         echo "Pre-commit: running quality gate (verify.sh --boundary git)..."
-        if ! "$VERIFY" --boundary git; then
+        # On a terminal, show a line as each gate and block starts and ends
+        # (feature 007): verify.sh appends them to GATES_PROGRESS. A caller
+        # that set the variable (even to empty) keeps its choice; off a
+        # terminal nothing changes.
+        GATE_ENV=()
+        if [ -t 2 ] && [[ -z "${GATES_PROGRESS+set}" ]]; then
+            GATE_ENV=(env GATES_PROGRESS=/dev/stderr)
+        fi
+        if ! ${GATE_ENV[@]+"${GATE_ENV[@]}"} "$VERIFY" --boundary git; then
             echo "" >&2
             echo "Quality gate failed at the git boundary (see above)." >&2
             ERRORS=$((ERRORS + 1))

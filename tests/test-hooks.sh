@@ -2376,6 +2376,54 @@ printf 'chore: drop the script\n' >"$CGM"
 cg_refused "commit-msg: dropping spec.cover and the script needs a declaration (HEAD's policy)" "git rm -q scripts/cover.sh && git add -A"
 ( cd "$CG" && git reset -q --hard >/dev/null 2>&1 )
 
+# --- pre-commit progress on a terminal (feature 007, US5) ---
+# With stderr on a terminal and GATES_PROGRESS unset, pre-commit runs the
+# quality gate with GATES_PROGRESS=/dev/stderr, so a commit shows a line as
+# each gate starts and ends. Anywhere else its output is unchanged. The
+# terminal is a pseudo-terminal from script(1): util-linux takes the
+# command with -c, BSD and macOS take it as arguments.
+echo ""
+echo "=== pre-commit shows progress on a terminal ==="
+pty_run() { # <shell command>: run it on a pseudo-terminal, its output on stdout
+    if script --version >/dev/null 2>&1; then
+        script -qec "$1" /dev/null </dev/null
+    else
+        script -q /dev/null bash -c "$1" </dev/null
+    fi
+}
+if command -v script >/dev/null 2>&1 && [[ "$(pty_run '[ -t 2 ] && echo tty' 2>/dev/null | tr -d '\r\004\b^D')" == *tty* ]]; then
+    TT="$WORKDIR/tty"
+    mkdir -p "$TT"
+    git -C "$TT" init -q -b main
+    git -C "$TT" config user.email t@example.com
+    git -C "$TT" config user.name tester
+    project_runtime "$TT" "true"
+    printf '%s' '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error", "custom_command": "true" } }, "git": { "block_main_commits": false }, "spec": { "enabled": false } }' \
+        >"$TT/.specify/gates/policy.json"
+    cp "$GITHOOKS/pre-commit" "$TT/.git/hooks/pre-commit"
+    chmod +x "$TT/.git/hooks/pre-commit"
+    TTP="$WORKDIR/tty-progress.txt"
+    # Each commit stages a file: with nothing staged the hook ends before
+    # the quality gate.
+    pty_run "cd '$TT' && echo one >one.txt && git add one.txt && env -u GATES_PROGRESS git commit -q -m 'chore: one'" >"$WORKDIR/tty.out" 2>&1 || true
+    check "pre-commit on a terminal: progress lines for each gate" 0 \
+        grep -q -E '^gates: [0-9:]{8} end custom pass [0-9]+s' "$WORKDIR/tty.out"
+    check "pre-commit on a terminal: the start line comes first" 0 \
+        awk '/^gates: [0-9:]+ (start|end) custom/ { if (!n++) ok = / start custom/ } END { exit !ok }' "$WORKDIR/tty.out"
+    ( cd "$TT" && echo two >two.txt && git add two.txt && env -u GATES_PROGRESS git commit -q -m 'chore: two' ) >"$WORKDIR/tty-plain.out" 2>&1 || true
+    check "pre-commit off a terminal: no progress lines" 1 grep -q '^gates: [0-9:]' "$WORKDIR/tty-plain.out"
+    check "pre-commit off a terminal: the commit happened" 0 \
+        bash -c "[[ \"\$(git -C '$TT' log -1 --format=%s)\" == 'chore: two' ]]"
+    rm -f "$TTP"
+    pty_run "cd '$TT' && echo three >three.txt && git add three.txt && GATES_PROGRESS='$TTP' git commit -q -m 'chore: three'" >"$WORKDIR/tty-set.out" 2>&1 || true
+    check "pre-commit on a terminal, GATES_PROGRESS set: the lines go to that file" 0 \
+        grep -q -E '^gates: [0-9:]{8} end custom pass' "$TTP"
+    check "pre-commit on a terminal, GATES_PROGRESS set: none on the terminal" 1 \
+        grep -q '^gates: [0-9:]' "$WORKDIR/tty-set.out"
+else
+    echo "SKIP: pre-commit terminal progress (script(1) is missing or gives no terminal here)"
+fi
+
 # --- Summary ---
 echo ""
 echo "$PASS of $TOTAL tests passed."
