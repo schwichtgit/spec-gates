@@ -11,7 +11,8 @@
 #   gates_spec_covered_at_ci <boundary> <results>      # parity check on covering
 #   gates_spec_gate <root> <accept> <json>       # driver; results in SPEC_* globals
 #
-# Sources lib/watch.sh (gates_group_stop) from its own directory.
+# Sources lib/watch.sh (gates_group_stop) and lib/timeline.sh (timeline
+# and progress lines) from its own directory.
 #
 # Fenced ```accept blocks in specs/*/tasks.md are executable acceptance
 # criteria (exit 0 = the criterion holds). Features whose spec.md Status is
@@ -30,6 +31,10 @@
 # doctor.sh, constitution.sh and the tests source spec-gate.sh alone.
 # shellcheck source=watch.sh disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/watch.sh"
+# Timeline and progress lines per block (feature 007), no-ops unless
+# verify.sh was given the files.
+# shellcheck source=timeline.sh disable=SC1091
+source "$(dirname "${BASH_SOURCE[0]}")/timeline.sh"
 
 # Feature discovery (R7): direct children of specs/ containing a spec.md,
 # lexicographic order, minus policy spec.exclude globs. Missing specs/ means
@@ -998,6 +1003,11 @@ gates_spec_gate() { # <root> <accept-arg> <json 0|1>
         cover_b="${GATES_BOUNDARY:-none}"
     fi
     SPEC_SNAP_PREV=""
+    # A timeline or progress file inside the project is written between
+    # blocks: each block then takes its own before-snapshot instead of the
+    # last block's after-one, which predates that write.
+    local tl_fresh=0
+    gates_timeline_inside "$root" && tl_fresh=1
     GATES_SPEC_SNAPSHOT_EXCLUDE="$GATES_SPEC_SNAPSHOT_BUILTIN_EXCLUDE
 $(gates_policy_section_list spec snapshot_exclude)"
     local tmp
@@ -1072,9 +1082,15 @@ $(gates_policy_section_list spec snapshot_exclude)"
                 tid="-"
                 [[ "${btasks[$i]}" =~ $tid_re ]] && tid="${BASH_REMATCH[1]}"
                 ord="${bords[$i]}"
+                # The start line comes before any of the block's work,
+                # covering included (SC-006).
+                local bname="accept $f $tid#$ord" estart
+                [[ "$tl_fresh" == "1" ]] && SPEC_SNAP_PREV=""
+                gates_progress_start "$bname"
+                estart="$(date +%s)"
                 if [[ -n "$cover_b" ]]; then
                     local cstart cend covered=0
-                    cstart="$(date +%s)"
+                    cstart="$estart"
                     gates_spec_cover_ask "$root" "$cover_script" "$cover_s" "$f" "$tid" \
                         "${bfiles[$i]}" "$tmp/$f/cover-$i" && covered=1
                     cend="$(date +%s)"
@@ -1090,6 +1106,8 @@ $(gates_policy_section_list spec snapshot_exclude)"
                         [[ "$cdur" -lt 0 ]] && cdur=0
                         fblocks="$fblocks$(gates_spec_block_entry "$tid" "$ord" "${bverifies[$i]}" \
                             covered "$SPEC_COVER_REASON" "$cover_b" "$cdur"),"
+                        gates_timeline_line "$bname" "$cstart" "$cend" covered "$SPEC_COVER_REASON"
+                        gates_progress_end "$bname" covered "$cdur"
                         if [[ "$json" == "0" && "$enforced" == "1" ]]; then
                             echo "spec: $f: \"$label\" -- covered: $SPEC_COVER_REASON"
                         elif [[ "$json" == "0" ]]; then
@@ -1116,6 +1134,8 @@ $(gates_policy_section_list spec snapshot_exclude)"
                 esac
                 fblocks="$fblocks$(gates_spec_block_entry "$tid" "$ord" "${bverifies[$i]}" \
                     "$bres" "$breason" "" "$bdur"),"
+                gates_timeline_line "$bname" "$estart" "$bend" "$bres" "$breason"
+                gates_progress_end "$bname" "$bres" "$((bend - estart < 0 ? 0 : bend - estart))"
                 if [[ "$brc" -eq 0 ]]; then
                     fpassed=$((fpassed + 1))
                     if [[ "$enforced" == "0" && "$json" == "0" ]]; then

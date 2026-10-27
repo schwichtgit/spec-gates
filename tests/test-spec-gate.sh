@@ -1311,6 +1311,32 @@ expect "results: no block output or detail in the block entries" \
     "$(cv_last "$D12" '.spec.results[0].blocks' | grep -c -e 'BLOCK-OUTPUT' -e 'exit 3' -e 'written-by-block' || true)" 0
 expect_contains "results: the report still shows the block's detail" "$OUT" 'FAILED (exit 3)'
 
+# --- timeline and progress lines per block (feature 007, US5) --------------
+# Each block is "accept <feature> <task-id>#<n>": a progress line as it
+# starts, before the covering script is asked, and one as it ends; one
+# timeline line as it ends, a covered block's with result covered and its
+# reason.
+echo ""
+echo "=== timeline and progress lines per block (feature 007) ==="
+D13="$(cv_project lines "$GIT_COVER")"
+fx_spec_feature "$D13" 900-demo T001 'true' T002 'true'
+# shellcheck disable=SC2016  # expanded by the covering script
+cv_script "$D13" '[ "$2" = T001 ] || exit 1
+echo "script asked" >>"$GATES_TEST_ASKED"; echo "proven by the unit tests"'
+rm -f "$WORKDIR/b-tl.tsv" "$WORKDIR/b-pg.txt" "$WORKDIR/b-asked"
+OUT="$(GATES_TEST_ASKED="$WORKDIR/b-pg.txt" GATES_TIMELINE="$WORKDIR/b-tl.tsv" GATES_PROGRESS="$WORKDIR/b-pg.txt" cv_run "$D13" git)"
+expect "block lines: the run passes" "${OUT##*EXIT=}" 0
+expect "block lines: the covered block's timeline line" \
+    "$(awk -F'\t' '$1 == "accept 900-demo T001#1" { print $2 "|" $5 "|" $6 }' "$WORKDIR/b-tl.tsv")" \
+    "git|covered|proven by the unit tests"
+expect "block lines: the run block's timeline line" \
+    "$(awk -F'\t' '$1 == "accept 900-demo T002#1" { print $2 "|" $5 "|" $6 }' "$WORKDIR/b-tl.tsv")" "git|pass|"
+expect "block lines: blocks end before the spec gate does" \
+    "$(cut -f1 "$WORKDIR/b-tl.tsv" | paste -sd '|' -)" "accept 900-demo T001#1|accept 900-demo T002#1|spec|parity"
+expect "block lines: progress start (before the script is asked) and end of both blocks" \
+    "$(sed -E 's/^gates: [0-9:]{8} //; s/ [0-9]+s$/ Ns/' "$WORKDIR/b-pg.txt" | grep -e accept -e 'script asked' | paste -sd '|' -)" \
+    "start accept 900-demo T001#1|script asked|end accept 900-demo T001#1 covered Ns|start accept 900-demo T002#1|end accept 900-demo T002#1 pass Ns"
+
 echo ""
 echo "$PASS of $TOTAL tests passed"
 if [[ "$FAIL" -eq 0 ]]; then
