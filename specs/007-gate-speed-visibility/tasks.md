@@ -156,9 +156,9 @@ duration (research R7).
 
 **Independent Test**: quickstart section 6, attestation part.
 
-- [ ] T020 [US4] In `extension/runtime/lib/spec-gate.sh`, time each block (start and end with `date +%s`, a negative difference recorded as 0) and add one entry per evaluated block to the feature result's `blocks`: `{task, ordinal, verifies, result, reason, duration_s}` with `result` from the runner's return (0 pass, 1 fail, 2 timeout, 3 mutation) and fixed reasons (`check failed`, `timeout after <n>s`, `read-only check failed`), extending the covered entries of T014
-- [ ] T021 [US4] Add `blocks_covered` and `blocks[]` (items: `task`, `ordinal` integer ≥ 1, `verifies` string or null, `result` enum, `reason`, `declared_skip` enum `agent`/`git`, `duration_s` integer ≥ 0) as optional properties to `specs/001-provable-enforcement-gate/contracts/attestation-record.schema.json`
-- [ ] T022 [US4] Tests in `tests/test-attest.sh` and `tests/test-spec-gate.sh`: two blocks of about 0 and 2 seconds give entries in order with durations 0 to 1 and 2 to 3; a failing, a timed-out and a mutating block get their results and fixed reasons with no block output; the attestation line validates against the extended schema; mutation-check
+- [x] T020 [US4] In `extension/runtime/lib/spec-gate.sh`, time each block (start and end with `date +%s`, a negative difference recorded as 0) and add one entry per evaluated block to the feature result's `blocks`: `{task, ordinal, verifies, result, reason, duration_s}` with `result` from the runner's return (0 pass, 1 fail, 2 timeout, 3 mutation) and fixed reasons (`check failed`, `timeout after <n>s`, `read-only check failed`), extending the covered entries of T014
+- [x] T021 [US4] Add `blocks_covered` and `blocks[]` (items: `task`, `ordinal` integer ≥ 1, `verifies` string or null, `result` enum, `reason`, `declared_skip` enum `agent`/`git`, `duration_s` integer ≥ 0) as optional properties to `specs/001-provable-enforcement-gate/contracts/attestation-record.schema.json`
+- [x] T022 [US4] Tests in `tests/test-attest.sh` and `tests/test-spec-gate.sh`: two blocks of about 0 and 2 seconds give entries in order with durations 0 to 1 and 2 to 3; a failing, a timed-out and a mutating block get their results and fixed reasons with no block output; the attestation line validates against the extended schema; mutation-check
 
   ```accept
   # verifies: FR-011

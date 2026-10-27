@@ -1079,9 +1079,9 @@ expect "covered: attestation counts (parsed, executed, passed, covered)" \
     "$(cv_last "$D" '.spec.results[0] | [.blocks_parsed, .blocks_executed, .blocks_passed, .blocks_failed, .blocks_covered, .outcome]')" \
     '[2,1,1,0,1,"enforced-pass"]'
 # shellcheck disable=SC2016  # a jq program
-expect "covered: the attestation entry of the covered block" \
+expect "covered: the entries of the covered block and of the block that ran" \
     "$(cv_last "$D" '[.spec.results[0].blocks[] | (.duration_s | type == "number" and . >= 0) as $d | del(.duration_s) + {d: $d}]')" \
-    '[{"task":"T001","ordinal":1,"verifies":null,"result":"covered","reason":"proven by 900-demo T001 at git","declared_skip":"git","d":true}]'
+    '[{"task":"T001","ordinal":1,"verifies":null,"result":"covered","reason":"proven by 900-demo T001 at git","declared_skip":"git","d":true},{"task":"T002","ordinal":1,"verifies":null,"result":"pass","reason":"","d":true}]'
 expect "covered: run-wide spec counts leave covered blocks out" \
     "$(cv_last "$D" '.spec | [.parsed, .executed, .passed, .failed]')" '[2,1,1,0]'
 expect "covered: --json detail names the covered block" \
@@ -1093,7 +1093,7 @@ rm -f "$CVM"/*
 cv_script "$D" "touch $CVM/ci-asked; echo covered"
 OUT="$(cv_run "$D" ci)"
 expect "ci: the covering script is not called" "$([[ -e "$CVM/ci-asked" ]] && echo called || echo not-called)" not-called
-expect "ci: every block runs" "$(cv_last "$D" '.spec.results[0] | [.blocks_executed, has("blocks_covered")]')" '[2,false]'
+expect "ci: every block runs" "$(cv_last "$D" '.spec.results[0] | [.blocks_executed, .blocks_covered, [.blocks[].result]]')" '[2,0,["pass","pass"]]'
 expect_contains "ci: nothing covered, the report is unchanged" "$OUT" '[pass] spec'
 expect "ci: no covered line" "$(grep -c 'covered' <<<"$OUT" || true)" 0
 # Without --boundary nothing is covered either.
@@ -1120,8 +1120,8 @@ cv_script "$D3" "touch $CVM/none-asked; echo covered"
 OUT="$(cv_run "$D3" git)"
 expect "no spec.cover: the block runs, the script is not called" \
     "$([[ -e "$CVM/none-block-ran" ]] && echo ran)-$([[ -e "$CVM/none-asked" ]] && echo asked)" "ran-"
-expect "no spec.cover: no blocks_covered or blocks in the record" \
-    "$(cv_last "$D3" '.spec.results[0] | [has("blocks_covered"), has("blocks")]')" '[false,false]'
+expect "no spec.cover: nothing covered, the block's entry says pass" \
+    "$(cv_last "$D3" '.spec.results[0] | [.blocks_covered, [.blocks[] | .result, has("declared_skip")]]')" '[0,["pass",false]]'
 
 # Any answer but exit 0 with exactly one non-empty line runs the block.
 D4="$(cv_project answers '{ "script": "scripts/cover.sh", "at": ["git"], "timeout_s": 2 }')"
@@ -1255,6 +1255,61 @@ chmod +x "$D9/lib/real-cover.sh"
 ln -s ../lib/real-cover.sh "$D9/scripts/cover.sh"
 OUT="$(cv_run "$D9" git)"
 expect_contains "symlink inside the project: followed" "$OUT" 'task" -- covered: via link'
+
+# Block identity (research R14): <n> counts the blocks under one task line,
+# so two tasks with the same text number their blocks independently.
+D10="$(cv_project sametext "$GIT_COVER")"
+mkfeature "$D10" 900-demo Complete <<'MD'
+- [x] Do the thing
+
+  ```accept
+  true
+  ```
+
+- [x] Do the thing
+
+  ```accept
+  true
+  ```
+
+  ```accept
+  true
+  ```
+MD
+cv_script "$D10" 'echo ok'
+OUT="$(cv_run "$D10" git)"
+expect "same task text: each task numbers its own blocks" \
+    "$(cv_last "$D10" '[.spec.results[0].blocks[] | "\(.task)#\(.ordinal)"]')" '["-#1","-#1","-#2"]'
+expect_contains "same task text: the summary names them so" "$OUT" \
+    'covered at git: 900-demo -#1, 900-demo -#1, 900-demo -#2'
+
+# --- per-block entries (feature 007, US4) ------------------------------------
+# Every evaluated block has an entry, in order, with its result, a fixed
+# reason and its duration; the block's output never reaches the record.
+echo ""
+echo "=== per-block attestation entries (feature 007) ==="
+D11="$(cv_project timings "")"
+fx_spec_feature "$D11" 900-demo T001 'true' T002 '# verifies: FR-9
+sleep 2'
+cv_run "$D11" git >/dev/null
+expect "timings: one entry per block, in order" \
+    "$(cv_last "$D11" '[.spec.results[0].blocks[] | [.task, .ordinal, .verifies, .result, .reason]]')" \
+    '[["T001",1,null,"pass",""],["T002",1,"FR-9","pass",""]]'
+DUR="$(cv_last "$D11" '[.spec.results[0].blocks[].duration_s]')"
+expect "timings: a quick block takes 0 to 1s, a sleep 2 block 2 to 3s (got $DUR)" \
+    "$(jq -r '.[0] >= 0 and .[0] <= 1 and .[1] >= 2 and .[1] <= 3' <<<"$DUR")" true
+D12="$WORKDIR/block-results"
+project "$D12" '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } }, "spec": { "severity": "error", "timeout_s": 2 } }'
+fx_spec_feature "$D12" 900-demo T001 'echo BLOCK-OUTPUT-1; exit 3' T002 'echo BLOCK-OUTPUT-2; sleep 30' \
+    T003 'echo BLOCK-OUTPUT-3 >written-by-block.txt'
+OUT="$(cv_run "$D12" git)"
+expect "results: the run fails" "${OUT##*EXIT=}" 2
+expect "results: failed, timed out and mutating blocks with fixed reasons" \
+    "$(cv_last "$D12" '[.spec.results[0].blocks[] | [.task, .result, .reason]]')" \
+    '[["T001","fail","check failed"],["T002","timeout","timeout after 2s"],["T003","mutation","read-only check failed"]]'
+expect "results: no block output or detail in the block entries" \
+    "$(cv_last "$D12" '.spec.results[0].blocks' | grep -c -e 'BLOCK-OUTPUT' -e 'exit 3' -e 'written-by-block' || true)" 0
+expect_contains "results: the report still shows the block's detail" "$OUT" 'FAILED (exit 3)'
 
 echo ""
 echo "$PASS of $TOTAL tests passed"
