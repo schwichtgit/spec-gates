@@ -104,6 +104,59 @@
             "informational",
             "no-criteria"
           ]
+        },
+        "blocks_covered": {
+          "description": "Feature 007: blocks a covering script vouched for at this boundary; not run, so not in blocks_executed.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "blocks": {
+          "description": "Feature 007: one entry per evaluated accept block, in parse order. Empty when the feature's blocks did not run.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/blockEntry" }
+        }
+      }
+    },
+    "blockEntry": {
+      "type": "object",
+      "required": [
+        "task",
+        "ordinal",
+        "verifies",
+        "result",
+        "reason",
+        "duration_s"
+      ],
+      "properties": {
+        "task": {
+          "description": "The T### id at the start of the task line, or \"-\".",
+          "type": "string",
+          "minLength": 1
+        },
+        "ordinal": {
+          "description": "The block's position among the accept blocks of its task line, from 1; the block is named <feature> <task>#<ordinal>.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "verifies": {
+          "description": "The block's # verifies: label, or null.",
+          "type": ["string", "null"]
+        },
+        "result": {
+          "enum": ["pass", "fail", "timeout", "mutation", "covered"]
+        },
+        "reason": {
+          "description": "A fixed runtime string (empty on pass), or the covering script's sanitized line for covered. Never block output.",
+          "type": "string"
+        },
+        "declared_skip": {
+          "description": "The boundary spec.cover.at named; present only on a covered entry. CI is never covered.",
+          "enum": ["agent", "git"]
+        },
+        "duration_s": {
+          "description": "Seconds the block ran, or for covered the seconds spent asking the script.",
+          "type": "integer",
+          "minimum": 0
         }
       }
     },

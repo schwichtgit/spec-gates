@@ -182,10 +182,17 @@ source "$GATES_DIR/lib/policy.sh"
 source "$GATES_DIR/lib/attest.sh"
 # shellcheck source=lib/watch.sh disable=SC1091
 source "$GATES_DIR/lib/watch.sh"
+# shellcheck source=lib/timeline.sh disable=SC1091
+source "$GATES_DIR/lib/timeline.sh"
 # shellcheck source=lib/spec-gate.sh disable=SC1091
 source "$GATES_DIR/lib/spec-gate.sh"
 # shellcheck source=lib/contract.sh disable=SC1091
 source "$GATES_DIR/lib/contract.sh"
+
+# GATES_TIMELINE and GATES_PROGRESS (feature 007) belong to this run: read
+# once here and unset, so no command it starts (gate commands, accept
+# blocks, the covering script, a nested verify.sh) writes to them (R15).
+gates_timeline_init "$BOUNDARY"
 
 # The loader reads the policy fail-open (a missing or unreadable field is a
 # default), so a malformed or schema-invalid policy would silently drop
@@ -476,6 +483,7 @@ run_gate() { # name severity cmd...
         return 0
     fi
     local start end rc=0
+    gates_progress_start "$name"
     start="$(date +%s)"
     if [[ -n "$WATCH_S" ]]; then
         local here="$PWD"
@@ -598,6 +606,29 @@ run_gate() { # name severity cmd...
     esac
     att_gate "$name" "$bin" "$version" "$pinned" "$candidates" "$checked" \
         "$result" "$reason" "$((end - start))"
+    gates_timeline_line "$name" "$start" "$end" "$result" "$reason"
+    gates_progress_end "$name" "$result" "$((end - start))"
+}
+
+# Timeline and progress for a gate evaluated outside run_gate (contract,
+# spec, parity): the timeline reason is fixed, never the gate's detail.
+gate_timeline_end() { # name start end result
+    local reason=""
+    case "$4" in
+        fail) reason="check failed" ;;
+        warn) reason="check failed (warning)" ;;
+    esac
+    gates_timeline_line "$1" "$2" "$3" "$4" "$reason"
+    gates_progress_end "$1" "$4" "$(($3 - $2))"
+}
+
+# A gate that does not start (a declared skip, the spec gate under
+# GATES_SPEC_EXEC): its end line alone, with <reason>.
+gate_timeline_skipped() { # name reason
+    local now
+    now="$(date +%s)"
+    gates_timeline_line "$1" "$now" "$now" skipped "$2"
+    gates_progress_end "$1" skipped 0
 }
 
 # ---------------------------------------------------------------------------
@@ -610,6 +641,9 @@ run_gate() { # name severity cmd...
 # code (FR-006).
 # ---------------------------------------------------------------------------
 CONTRACT_ATT_JSON=""
+# A declared baseline is what makes the gate live (gates_contract_check).
+[[ "$WALK" != "1" && "$DRY_RUN" != "1" ]] && gates_contract_declared "$GATES_DIR/policy.json" \
+    && gates_progress_start contract
 contract_start="$(date +%s)"
 if [[ "$WALK" == "1" ]]; then
     CONTRACT_STATUS="dormant" # --walk runs the built-in walk only
@@ -623,6 +657,7 @@ if [[ "$CONTRACT_STATUS" != "dormant" ]]; then
     elif [[ "$CONTRACT_STATUS" == "pass" ]]; then
         record "contract" "pass" ""
         att_gate "contract" "" "" "" "" "" "pass" "" "$((contract_end - contract_start))"
+        gate_timeline_end contract "$contract_start" "$contract_end" pass
         if [[ "$JSON" == "0" && -n "$CONTRACT_DEVIATIONS" ]]; then
             gates_contract_print_deviations "contract: deviation " <<<"$CONTRACT_DEVIATIONS"
         fi
@@ -631,6 +666,7 @@ if [[ "$CONTRACT_STATUS" != "dormant" ]]; then
         record "contract" "fail" "$CONTRACT_DETAIL"
         FAILED=$((FAILED + 1))
         att_gate "contract" "" "" "" "" "" "fail" "$CONTRACT_DETAIL" "$((contract_end - contract_start))"
+        gate_timeline_end contract "$contract_start" "$contract_end" fail
     fi
     if [[ "$DRY_RUN" != "1" ]]; then
         CONTRACT_ATT_JSON="$(jq -cn --arg s "$CONTRACT_SOURCE" --arg v "$CONTRACT_VERSION" \
@@ -724,6 +760,7 @@ if [[ ${#PROJECT_GATES[@]} -gt 0 ]]; then
             else
                 record "$pg_name" "skipped" "$pg_skip"
                 att_gate "$pg_name" "" "" "" "" "" "skipped" "$pg_skip" 0 "$BOUNDARY"
+                gate_timeline_skipped "$pg_name" "$pg_skip"
             fi
             continue
         fi
@@ -748,6 +785,7 @@ if [[ "$SPEC_ENABLED" != "false" && -n "${GATES_SPEC_EXEC:-}" ]]; then
     record "spec" "skipped" "$SPEC_SKIP_REASON"
     if [[ "$DRY_RUN" != "1" ]]; then
         att_gate "spec" "" "" "" "" "" "skipped" "$SPEC_SKIP_REASON" 0
+        gate_timeline_skipped spec "$SPEC_SKIP_REASON"
     fi
 elif [[ "$SPEC_ENABLED" != "false" ]]; then
     if [[ "$DRY_RUN" == "1" ]]; then
@@ -755,9 +793,11 @@ elif [[ "$SPEC_ENABLED" != "false" ]]; then
     else
         SPEC_SEV="$(gates_policy_section_get spec severity)"
         [[ -z "$SPEC_SEV" ]] && SPEC_SEV="error"
+        gates_progress_start spec
         spec_start="$(date +%s)"
         gates_spec_gate "$PROJECT_ROOT" "$ACCEPT_ARG" "$JSON"
         spec_end="$(date +%s)"
+        SPEC_TL_RESULT="pass"
         # Attestation candidates/checked count accept blocks of ENFORCED
         # features, not features discovered: a Complete feature with zero
         # blocks is a legitimate "nothing to check", and counting features
@@ -786,14 +826,17 @@ elif [[ "$SPEC_ENABLED" != "false" ]]; then
         elif [[ "$SPEC_SEV" == "error" ]]; then
             record "spec" "fail" "$SPEC_DETAIL"
             FAILED=$((FAILED + 1))
+            SPEC_TL_RESULT="fail"
             att_gate "spec" "" "" "" "$SPEC_ENF_BLOCKS" "$SPEC_ENF_EXECUTED" \
                 "fail" "$SPEC_DETAIL" "$((spec_end - spec_start))"
         else
             record "spec" "warn" "$SPEC_DETAIL"
             WARNINGS=$((WARNINGS + 1))
+            SPEC_TL_RESULT="warn"
             att_gate "spec" "" "" "" "$SPEC_ENF_BLOCKS" "$SPEC_ENF_EXECUTED" \
                 "warn" "$SPEC_DETAIL" "$((spec_end - spec_start))"
         fi
+        gate_timeline_end spec "$spec_start" "$spec_end" "$SPEC_TL_RESULT"
         SPEC_ATT_JSON="$(jq -cn --argjson features "$SPEC_FEATURES" \
             --argjson parsed "$SPEC_PARSED" --argjson executed "$SPEC_EXECUTED" \
             --argjson passed "$SPEC_PASSED" --argjson failed "$SPEC_FAILED" \
@@ -821,6 +864,8 @@ PARITY_SEV="$(gates_policy_section_get attestation parity)"
 if [[ "$DRY_RUN" == "1" && "$ATT_ENABLED" != "false" && "$PARITY_SEV" != "off" ]]; then
     record "parity" "planned" "tool versions against lockfile pins"
 elif [[ "$DRY_RUN" != "1" &&"$ATT_ENABLED" != "false" && "$PARITY_SEV" != "off" ]]; then
+    gates_progress_start parity
+    parity_start="$(date +%s)"
     parity_input="[]"
     if [[ ${#ATT_GATES[@]} -gt 0 ]]; then
         parity_input="[$(IFS=,; printf '%s' "${ATT_GATES[*]}")]"
@@ -858,15 +903,19 @@ elif [[ "$DRY_RUN" != "1" &&"$ATT_ENABLED" != "false" && "$PARITY_SEV" != "off" 
     if [[ -z "$PARITY_DRIFT" ]]; then
         record "parity" "pass" ""
         att_gate "parity" "" "" "" "" "" "pass" "" 0
+        parity_result="pass"
     elif [[ "$PARITY_SEV" == "error" ]]; then
         record "parity" "fail" "$PARITY_DRIFT"
         FAILED=$((FAILED + 1))
         att_gate "parity" "" "" "" "" "" "fail" "$PARITY_DRIFT" 0
+        parity_result="fail"
     else
         record "parity" "warn" "$PARITY_DRIFT"
         WARNINGS=$((WARNINGS + 1))
         att_gate "parity" "" "" "" "" "" "warn" "$PARITY_DRIFT" 0
+        parity_result="warn"
     fi
+    gate_timeline_end parity "$parity_start" "$(date +%s)" "$parity_result"
 fi
 
 # ---------------------------------------------------------------------------

@@ -658,6 +658,63 @@ expect "text report names the applied override" \
 expect "no override, no policy_override field" \
     "$(gate_json "$DPO" | jq -r '"\(has("policy_override")):\(.attestation | has("policy_override"))"')" "false:false"
 
+# --- per-block entries validate against the extended schema (feature 007) ---
+# No JSON Schema validator ships with the repository, so this jq function
+# applies the keywords the record schema uses (type, enum, const, minimum,
+# minLength, pattern, required, properties, items, $ref into $defs) to the
+# whole record, reading them from the schema file itself.
+echo ""
+echo "=== block entries validate against the record schema ==="
+# shellcheck disable=SC2016  # a jq program
+SCHEMA_VALID='
+def valid($s; $root):
+  . as $x
+  | if ($s | has("$ref")) then valid($root["$defs"][$s["$ref"] | ltrimstr("#/$defs/")]; $root)
+    else
+      (if $s | has("type") then
+         ($s.type | if type == "array" then . else [.] end) as $ts
+         | ($x | type) as $t
+         | any($ts[]; . == $t or (. == "integer" and $t == "number" and ($x | floor) == $x))
+       else true end)
+      and (if $s | has("enum") then any($s.enum[]; . == $x) else true end)
+      and (if $s | has("const") then $x == $s.const else true end)
+      and (if ($s | has("minimum")) and ($x | type) == "number" then $x >= $s.minimum else true end)
+      and (if ($s | has("minLength")) and ($x | type) == "string" then ($x | length) >= $s.minLength else true end)
+      and (if ($s | has("pattern")) and ($x | type) == "string" then ($x | test($s.pattern)) else true end)
+      and (if ($s | has("required")) and ($x | type) == "object" then all($s.required[]; . as $k | $x | has($k)) else true end)
+      and (if ($s | has("properties")) and ($x | type) == "object" then
+             all($x | keys[]; . as $k
+               | if $s.properties | has($k) then ($x[$k] | valid($s.properties[$k]; $root)) else true end)
+           else true end)
+      and (if ($s | has("items")) and ($x | type) == "array" then all($x[]; valid($s.items; $root)) else true end)
+    end;
+valid($schema[0]; $schema[0])'
+# shellcheck source=lib/fixture.sh disable=SC1091
+source "$REPO_ROOT/tests/lib/fixture.sh"
+DB="$(fx_gates_project '{"hooks":{"verify-quality":{"orchestrator":"none","severity":"error"}},"spec":{"severity":"error","timeout_s":1,"cover":{"script":"scripts/cover.sh","at":["git"]}}}')"
+fx_spec_feature "$DB" 900-demo T001 'false' T002 '# verifies: FR-2
+true' T003 'false' T004 'sleep 30' T005 'touch made-by-block.txt'
+mkdir -p "$DB/scripts"
+# shellcheck disable=SC2016  # expanded by the covering script
+printf '#!/bin/sh\n[ "$2" = T001 ] && { echo "proven elsewhere"; exit 0; }\nexit 1\n' >"$DB/scripts/cover.sh"
+chmod +x "$DB/scripts/cover.sh"
+CLAUDE_PROJECT_DIR="$DB" env -u GATES_SPEC_EXEC bash "$DB/.specify/gates/verify.sh" --boundary git >/dev/null 2>&1 || true
+REC="$(tail -n 1 "$DB/.specify/gates/attestations.jsonl")"
+expect "the record holds one entry per result kind" \
+    "$(jq -c '[.spec.results[0].blocks[].result]' <<<"$REC")" '["covered","pass","fail","timeout","mutation"]'
+expect "the record validates against the schema" \
+    "$(jq --slurpfile schema "$SCHEMA" "$SCHEMA_VALID" <<<"$REC")" true
+expect "block entries carry only fields the schema names" \
+    "$(jq --slurpfile schema "$SCHEMA" '[.spec.results[0].blocks[] | keys[]] - ($schema[0]["$defs"].blockEntry.properties | keys) | length' <<<"$REC")" 0
+# The validator itself rejects what the schema rules out.
+expect "a block entry with an unknown result does not validate" \
+    "$(jq '.spec.results[0].blocks[0].result = "skipped"' <<<"$REC" | jq --slurpfile schema "$SCHEMA" "$SCHEMA_VALID")" false
+expect "a block entry with ordinal 0 does not validate" \
+    "$(jq '.spec.results[0].blocks[1].ordinal = 0' <<<"$REC" | jq --slurpfile schema "$SCHEMA" "$SCHEMA_VALID")" false
+expect "a block entry without duration_s does not validate" \
+    "$(jq '.spec.results[0].blocks[1] |= del(.duration_s)' <<<"$REC" | jq --slurpfile schema "$SCHEMA" "$SCHEMA_VALID")" false
+fx_cleanup "$DB"
+
 echo ""
 echo "$PASS passed, $FAIL failed, $SKIP skipped ($TOTAL total)"
 [[ "$FAIL" -gt 0 ]] && exit 1

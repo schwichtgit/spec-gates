@@ -11,7 +11,8 @@
 #   gates_spec_covered_at_ci <boundary> <results>      # parity check on covering
 #   gates_spec_gate <root> <accept> <json>       # driver; results in SPEC_* globals
 #
-# Sources lib/watch.sh (gates_group_stop) from its own directory.
+# Sources lib/watch.sh (gates_group_stop) and lib/timeline.sh (timeline
+# and progress lines) from its own directory.
 #
 # Fenced ```accept blocks in specs/*/tasks.md are executable acceptance
 # criteria (exit 0 = the criterion holds). Features whose spec.md Status is
@@ -30,6 +31,10 @@
 # doctor.sh, constitution.sh and the tests source spec-gate.sh alone.
 # shellcheck source=watch.sh disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/watch.sh"
+# Timeline and progress lines per block (feature 007), no-ops unless
+# verify.sh was given the files.
+# shellcheck source=timeline.sh disable=SC1091
+source "$(dirname "${BASH_SOURCE[0]}")/timeline.sh"
 
 # Feature discovery (R7): direct children of specs/ containing a spec.md,
 # lexicographic order, minus policy spec.exclude globs. Missing specs/ means
@@ -84,9 +89,11 @@ gates_spec_included() { # <feature-name>
 # state machine; command bodies land in <outdir>/block-N.cmd, metadata on
 # stdout as TAB-separated protocol lines:
 #   ERROR<TAB><line><TAB><message>
-#   BLOCK<TAB><cmdfile><TAB><verifies-or-dash><TAB><task text>
+#   BLOCK<TAB><cmdfile><TAB><verifies-or-dash><TAB><ordinal><TAB><task text>
 #   TASKS<TAB><total><TAB><unchecked><TAB><first unchecked task text>
-# Malformed shapes (unterminated fence, command-less block, block with no
+# <ordinal> is the block's position (from 1) among the accept blocks under
+# its own task line (research R14), so two tasks with the same text number
+# their blocks independently. Malformed shapes (unterminated fence, command-less block, block with no
 # preceding task, a `!` command before the last command) are ERROR lines,
 # never skips. Fences are CommonMark-style runs of 3+ backticks, closed
 # only by a run at least as long — prettier rewrites a block whose body
@@ -135,7 +142,7 @@ gates_spec_parse() { # <tasks-md> <outdir>
     }
     BEGIN {
         in_fence = 0; in_accept = 0
-        task = ""; have_task = 0
+        task = ""; have_task = 0; tord = 0
         nblocks = 0; total = 0; unchecked = 0; first_unc = ""
         negmsg = "a ! command other than the last one in the block never fails it under set -e; write `test -z \"$(...)\"`, `if ...; then exit 1; fi` or `! cmd || exit 1`"
     }
@@ -164,7 +171,8 @@ gates_spec_parse() { # <tasks-md> <outdir>
                         printf "%s", body > cmdfile
                         close(cmdfile)
                         v = (verifies == "") ? "-" : verifies
-                        printf "BLOCK\t%s\t%s\t%s\n", cmdfile, v, btask
+                        tord++
+                        printf "BLOCK\t%s\t%s\t%d\t%s\n", cmdfile, v, tord, btask
                     }
                 }
                 in_accept = 0
@@ -241,6 +249,7 @@ gates_spec_parse() { # <tasks-md> <outdir>
             }
             task = t
             have_task = 1
+            tord = 0
         }
     }
     END {
@@ -948,6 +957,19 @@ gates_spec_covered_at_ci() { # <boundary> <spec-results-json>
     printf 'accept blocks covered at ci: %s\n' "$named"
 }
 
+# One attestation block entry (data-model.md): <verifies> "-" is null, an
+# empty <declared-skip> leaves the field out (it names the boundary of a
+# covered block only).
+gates_spec_block_entry() { # <task> <ordinal> <verifies> <result> <reason> <declared-skip> <duration-s>
+    jq -cn --arg t "$1" --argjson o "$2" --arg v "$3" --arg res "$4" --arg r "$5" \
+        --arg b "$6" --argjson d "$7" '
+        { task: $t, ordinal: $o,
+          verifies: (if $v == "-" then null else $v end),
+          result: $res, reason: $r }
+        + (if $b == "" then {} else { declared_skip: $b } end)
+        + { duration_s: $d }'
+}
+
 # Driver. Sets:
 #   SPEC_RESULT   pass|fail            (severity mapping is the caller's job)
 #   SPEC_DETAIL   one-line summary (pass) or "; "-joined failures (fail)
@@ -981,6 +1003,11 @@ gates_spec_gate() { # <root> <accept-arg> <json 0|1>
         cover_b="${GATES_BOUNDARY:-none}"
     fi
     SPEC_SNAP_PREV=""
+    # A timeline or progress file inside the project is written between
+    # blocks: each block then takes its own before-snapshot instead of the
+    # last block's after-one, which predates that write.
+    local tl_fresh=0
+    gates_timeline_inside "$root" && tl_fresh=1
     GATES_SPEC_SNAPSHOT_EXCLUDE="$GATES_SPEC_SNAPSHOT_BUILTIN_EXCLUDE
 $(gates_policy_section_list spec snapshot_exclude)"
     local tmp
@@ -996,7 +1023,7 @@ $(gates_policy_section_list spec snapshot_exclude)"
         local fdir="$root/specs/$f"
         mkdir -p "$tmp/$f"
         local tasks_total=0 tasks_unchecked=0 first_unchecked=""
-        local bfiles=() bverifies=() btasks=()
+        local bfiles=() bverifies=() btasks=() bords=()
         local parse_out=""
         if [[ -f "$fdir/tasks.md" ]]; then
             parse_out="$(gates_spec_parse "$fdir/tasks.md" "$tmp/$f")"
@@ -1013,7 +1040,14 @@ $(gates_policy_section_list spec snapshot_exclude)"
                 BLOCK)
                     bfiles+=("$a1")
                     bverifies+=("$a2")
-                    btasks+=("$rest")
+                    # <ordinal><TAB><task text>; read drops the tab of an
+                    # empty task text.
+                    bords+=("${rest%%$'\t'*}")
+                    if [[ "$rest" == *$'\t'* ]]; then
+                        btasks+=("${rest#*$'\t'}")
+                    else
+                        btasks+=("")
+                    fi
                     SPEC_PARSED=$((SPEC_PARSED + 1))
                     ;;
                 TASKS)
@@ -1036,25 +1070,27 @@ $(gates_policy_section_list spec snapshot_exclude)"
         elif [[ "$accept" == "all" || "$accept" == "$f" ]]; then
             do_exec=1
         fi
-        local i=0 fpassed=0 ffailed=0 fexecuted=0 fcovered=0 fblocks="" tid ord=0
+        local i=0 fpassed=0 ffailed=0 fexecuted=0 fcovered=0 fblocks="" tid ord
         local tid_re='^(T[0-9]+)([^A-Za-z0-9_]|$)'
         if [[ "$do_exec" == "1" ]]; then
             while [[ $i -lt $nblocks ]]; do
                 local label="${bverifies[$i]}"
                 [[ "$label" == "-" ]] && label="${btasks[$i]}"
                 # Block identity (research R14): <feature> <task-id>#<n>, n
-                # the position among the blocks of its task (a task's blocks
-                # are consecutive in parse order).
+                # the position among the blocks under its own task line (the
+                # parser counts them).
                 tid="-"
                 [[ "${btasks[$i]}" =~ $tid_re ]] && tid="${BASH_REMATCH[1]}"
-                if [[ $i -gt 0 && "${btasks[$i]}" == "${btasks[$((i - 1))]}" ]]; then
-                    ord=$((ord + 1))
-                else
-                    ord=1
-                fi
+                ord="${bords[$i]}"
+                # The start line comes before any of the block's work,
+                # covering included (SC-006).
+                local bname="accept $f $tid#$ord" estart
+                [[ "$tl_fresh" == "1" ]] && SPEC_SNAP_PREV=""
+                gates_progress_start "$bname"
+                estart="$(date +%s)"
                 if [[ -n "$cover_b" ]]; then
                     local cstart cend covered=0
-                    cstart="$(date +%s)"
+                    cstart="$estart"
                     gates_spec_cover_ask "$root" "$cover_script" "$cover_s" "$f" "$tid" \
                         "${bfiles[$i]}" "$tmp/$f/cover-$i" && covered=1
                     cend="$(date +%s)"
@@ -1068,13 +1104,10 @@ $(gates_policy_section_list spec snapshot_exclude)"
                         SPEC_COVERED_NAMES="${SPEC_COVERED_NAMES:+$SPEC_COVERED_NAMES, }$f $tid#$ord"
                         local cdur=$((cend - cstart))
                         [[ "$cdur" -lt 0 ]] && cdur=0
-                        fblocks="$fblocks$(jq -cn --arg t "$tid" --argjson o "$ord" \
-                            --arg v "${bverifies[$i]}" --arg r "$SPEC_COVER_REASON" \
-                            --arg b "$cover_b" --argjson d "$cdur" '
-                            { task: $t, ordinal: $o,
-                              verifies: (if $v == "-" then null else $v end),
-                              result: "covered", reason: $r,
-                              declared_skip: $b, duration_s: $d }'),"
+                        fblocks="$fblocks$(gates_spec_block_entry "$tid" "$ord" "${bverifies[$i]}" \
+                            covered "$SPEC_COVER_REASON" "$cover_b" "$cdur"),"
+                        gates_timeline_line "$bname" "$cstart" "$cend" covered "$SPEC_COVER_REASON"
+                        gates_progress_end "$bname" covered "$cdur"
                         if [[ "$json" == "0" && "$enforced" == "1" ]]; then
                             echo "spec: $f: \"$label\" -- covered: $SPEC_COVER_REASON"
                         elif [[ "$json" == "0" ]]; then
@@ -1084,9 +1117,25 @@ $(gates_policy_section_list spec snapshot_exclude)"
                         continue
                     fi
                 fi
-                local brc=0
+                local brc=0 bstart bend bdur bres breason
+                bstart="$(date +%s)"
                 gates_spec_run_block "${bfiles[$i]}" "$timeout" "$root" "$tmp/$f/out-$i" || brc=$?
+                bend="$(date +%s)"
+                bdur=$((bend - bstart))
+                [[ "$bdur" -lt 0 ]] && bdur=0
                 fexecuted=$((fexecuted + 1))
+                # The record keeps fixed reasons only (FR-015): the detail
+                # names files and exit codes, the output stays in the report.
+                case "$brc" in
+                    0) bres="pass"; breason="" ;;
+                    2) bres="timeout"; breason="timeout after ${timeout}s" ;;
+                    3) bres="mutation"; breason="read-only check failed" ;;
+                    *) bres="fail"; breason="check failed" ;;
+                esac
+                fblocks="$fblocks$(gates_spec_block_entry "$tid" "$ord" "${bverifies[$i]}" \
+                    "$bres" "$breason" "" "$bdur"),"
+                gates_timeline_line "$bname" "$estart" "$bend" "$bres" "$breason"
+                gates_progress_end "$bname" "$bres" "$((bend - estart < 0 ? 0 : bend - estart))"
                 if [[ "$brc" -eq 0 ]]; then
                     fpassed=$((fpassed + 1))
                     if [[ "$enforced" == "0" && "$json" == "0" ]]; then
@@ -1150,9 +1199,9 @@ $(gates_policy_section_list spec snapshot_exclude)"
             --argjson bc "$fcovered" --argjson bl "[${fblocks%,}]" '
             { feature: $f, complete: $c, tasks_total: $tt,
               tasks_unchecked: $tu, blocks_parsed: $bp, blocks_executed: $be,
-              blocks_passed: $bs, blocks_failed: $bf, outcome: $o }
-            # Covered blocks (feature 007): additive, only when there are any.
-            + (if $bc > 0 then { blocks_covered: $bc, blocks: $bl } else {} end)')"
+              blocks_passed: $bs, blocks_failed: $bf, outcome: $o,
+              # Feature 007: one entry per evaluated block, in order.
+              blocks_covered: $bc, blocks: $bl }')"
         results="$results$rj,"
     done <<<"$(gates_spec_features "$root")"
     SPEC_RESULTS_JSON="[${results%,}]"

@@ -1116,6 +1116,125 @@ else
     FAIL=$((FAIL + 1))
 fi
 
+# --- timeline and progress (feature 007, US5) ---
+# GATES_TIMELINE gets one line per ended gate or block, GATES_PROGRESS a
+# line as each starts and ends; names, results and fixed reasons only.
+# Both belong to the run they are given to: nothing it starts inherits
+# them, so a nested verify.sh on another directory adds no lines.
+echo ""
+echo "=== timeline and progress ==="
+# shellcheck source=lib/fixture.sh disable=SC1091
+source "$REPO_ROOT/tests/lib/fixture.sh"
+TAB="$(printf '\t')"
+TLO="$WORKDIR/tl-other"
+project "$TLO" '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error",
+    "gates": { "inner": { "command": "true" } } } } }'
+TLD="$WORKDIR/tl"
+TLF="$WORKDIR/tl.tsv"
+TLP="$WORKDIR/tl-progress.txt"
+TLE="$WORKDIR/tl-env-seen"
+project "$TLD" "{ \"hooks\": { \"verify-quality\": { \"orchestrator\": \"none\", \"severity\": \"error\",
+    \"gates\": { \"a-first\": { \"command\": \"echo A-OUTPUT; echo own-output-of-a-first >>'$TLP'; echo \\\"gate \${GATES_TIMELINE-unset} \${GATES_PROGRESS-unset}\\\" >>'$TLE'\" },
+                 \"b-fail\": { \"command\": \"echo B-SECRET; exit 1\" },
+                 \"c-skip\": { \"command\": \"true\", \"skip_at\": [\"git\"] },
+                 \"d-nested\": { \"command\": \"CLAUDE_PROJECT_DIR='$TLO' bash '$TLO/.specify/gates/verify.sh' --boundary git >/dev/null 2>&1\" } } } },
+    \"spec\": { \"severity\": \"error\" } }"
+git init -q "$TLD"
+fx_spec_feature "$TLD" 900-demo T001 "echo \"block \${GATES_TIMELINE-unset} \${GATES_PROGRESS-unset}\" >>'$TLE'
+CLAUDE_PROJECT_DIR='$TLO' bash '$TLO/.specify/gates/verify.sh' --boundary git >/dev/null 2>&1"
+rm -f "$TLF" "$TLP" "$TLE"
+rc=0
+GATES_TIMELINE="$TLF" GATES_PROGRESS="$TLP" CLAUDE_PROJECT_DIR="$TLD" env -u GATES_SPEC_EXEC \
+    bash "$TLD/.specify/gates/verify.sh" --boundary git >"$WORKDIR/tl.out" 2>"$WORKDIR/tl.err" || rc=$?
+expect "timeline: the run fails on b-fail (exit 2)" "$rc" 2
+expect "timeline: one line per gate and block, in order" \
+    "$(cut -f1 "$TLF" | paste -sd '|' -)" "a-first|b-fail|c-skip|d-nested|accept 900-demo T001#1|spec|parity"
+expect "timeline: six fields, boundary git, start <= end in epoch seconds" \
+    "$(awk -F'\t' 'NF != 6 || $2 != "git" || $3 !~ /^[0-9]+$/ || $4 !~ /^[0-9]+$/ || $3 > $4 || $3 < 1700000000 { bad++ } END { print bad + 0 }' "$TLF")" 0
+expect "timeline: result and fixed reason per line" \
+    "$(cut -f1,5,6 "$TLF" | paste -sd '|' -)" \
+    "a-first${TAB}pass${TAB}|b-fail${TAB}fail${TAB}check failed|c-skip${TAB}skipped${TAB}skipped by declaration at git|d-nested${TAB}pass${TAB}|accept 900-demo T001#1${TAB}pass${TAB}|spec${TAB}pass${TAB}|parity${TAB}pass${TAB}"
+expect "timeline and progress: no command output" \
+    "$(cat "$TLF" "$TLP" | grep -c -e A-OUTPUT -e B-SECRET || true)" 0
+expect "progress: lines of the documented shape only" \
+    "$(grep -v -E '^gates: [0-9]{2}:[0-9]{2}:[0-9]{2} (start [^ ].*|end [^ ].* (pass|fail|warn|skipped|covered|timeout|mutation) [0-9]+s)$' "$TLP" \
+        | grep -v -c '^own-output-of-a-first$' || true)" 0
+for g in a-first b-fail d-nested "accept 900-demo T001#1" spec parity; do
+    expect "progress: one start and one end for $g" \
+        "$(grep -c -E "^gates: [0-9:]{8} start $g\$" "$TLP")/$(grep -c -E "^gates: [0-9:]{8} end $g [a-z]+ [0-9]+s\$" "$TLP")" "1/1"
+done
+expect "progress: a declared skip writes its end line only" \
+    "$(grep -c ' start c-skip$' "$TLP")/$(grep -c -E ' end c-skip skipped 0s$' "$TLP")" "0/1"
+expect "progress: a gate's start line precedes its own output, its end follows it" \
+    "$(grep -n -e ' start a-first$' -e '^own-output-of-a-first$' -e ' end a-first ' "$TLP" | cut -d: -f1 | paste -sd ' ' - \
+        | awk '{ print ($1 < $2 && $2 < $3) ? "ordered" : "unordered: " $0 }')" ordered
+expect "progress: the end line of a failing gate says fail" \
+    "$(grep -c -E ' end b-fail fail [0-9]+s$' "$TLP")" 1
+expect "neither file reaches the commands the run starts" \
+    "$(paste -sd '|' - <"$TLE")" "gate unset unset|block unset unset"
+expect "the nested runs did run (two records on the other directory)" \
+    "$(wc -l <"$TLO/.specify/gates/attestations.jsonl" | tr -d ' ')" 2
+expect "a nested verify.sh adds no lines to the parent's files" \
+    "$(cat "$TLF" "$TLP" | grep -c inner || true)" 0
+expect "progress and timeline write nothing to the report" \
+    "$(grep -c -e '^gates: [0-9]' -e "$TAB" "$WORKDIR/tl.out" "$WORKDIR/tl.err" | awk -F: '{ s += $NF } END { print s }')" 0
+# Files inside the project are written between blocks, never during one:
+# the next block's read-only check does not count them.
+TLI="$WORKDIR/tl-inside"
+project "$TLI" '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } }, "spec": { "severity": "error" } }'
+git init -q "$TLI"
+fx_spec_feature "$TLI" 900-demo T001 'true' T002 'true' T003 'true'
+rc=0
+GATES_TIMELINE="$TLI/timeline.tsv" GATES_PROGRESS="$TLI/progress.txt" CLAUDE_PROJECT_DIR="$TLI" env -u GATES_SPEC_EXEC \
+    bash "$TLI/.specify/gates/verify.sh" --boundary git >"$WORKDIR/tli.out" 2>&1 || rc=$?
+expect "files inside the project: the blocks still pass (exit 0)" "$rc" 0
+expect "files inside the project: a line per block" "$(grep -c '^accept 900-demo T00[123]#1' "$TLI/timeline.tsv")" 3
+# A failing spec gate's line carries the fixed reason, not its detail.
+fx_spec_feature "$TLI" 901-red T001 'echo RED-OUTPUT; false'
+rm -f "$TLI/timeline.tsv"
+GATES_TIMELINE="$TLI/timeline.tsv" CLAUDE_PROJECT_DIR="$TLI" env -u GATES_SPEC_EXEC \
+    bash "$TLI/.specify/gates/verify.sh" --boundary git >/dev/null 2>&1 || true
+expect "a failing spec gate: result fail, reason check failed" \
+    "$(awk -F'\t' '$1 == "spec" || $1 == "accept 901-red T001#1" { print $1 "|" $5 "|" $6 }' "$TLI/timeline.tsv" | paste -sd ' ' -)" \
+    "accept 901-red T001#1|fail|check failed spec|fail|check failed"
+# The same run without the variables prints the same report.
+CLAUDE_PROJECT_DIR="$TLD" env -u GATES_SPEC_EXEC \
+    bash "$TLD/.specify/gates/verify.sh" --boundary git >"$WORKDIR/tl-plain.out" 2>"$WORKDIR/tl-plain.err" || true
+expect "no variable set: the same report and stderr" \
+    "$(diff "$WORKDIR/tl.out" "$WORKDIR/tl-plain.out" >/dev/null && diff "$WORKDIR/tl.err" "$WORKDIR/tl-plain.err" >/dev/null && echo same || echo differ)" same
+# An unwritable file warns once and changes no exit code.
+TLG="$WORKDIR/tl-green"
+project "$TLG" '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error",
+    "gates": { "one": { "command": "true" }, "two": { "command": "true" } } } } }'
+for var in GATES_TIMELINE GATES_PROGRESS; do
+    rc=0
+    env "$var=/nonexistent/dir/f.txt" CLAUDE_PROJECT_DIR="$TLG" \
+        bash "$TLG/.specify/gates/verify.sh" --boundary git >/dev/null 2>"$WORKDIR/tl-bad.err" || rc=$?
+    expect "$var unwritable: exit code unchanged (0)" "$rc" 0
+    expect "$var unwritable: one warning, nothing else on stderr" \
+        "$(grep -c '^gates: warning: cannot write /nonexistent/dir/f.txt; no further [a-z]* lines this run$' "$WORKDIR/tl-bad.err")/$(wc -l <"$WORKDIR/tl-bad.err" | tr -d ' ')" "1/1"
+done
+# GATES_PROGRESS=/dev/stderr (the pre-commit terminal view) reaches stderr.
+GATES_PROGRESS=/dev/stderr CLAUDE_PROJECT_DIR="$TLG" \
+    bash "$TLG/.specify/gates/verify.sh" --boundary git >"$WORKDIR/tl-se.out" 2>"$WORKDIR/tl-se.err" || true
+expect "GATES_PROGRESS=/dev/stderr: the lines are on stderr, not stdout" \
+    "$(grep -c -E '^gates: [0-9:]{8} (start|end) (one|two|spec|parity)( pass [0-9]+s)?$' "$WORKDIR/tl-se.err")/$(grep -c '^gates: [0-9:]' "$WORKDIR/tl-se.out" || true)" "8/0"
+# The library alone: fields stay on one line, an unset variable is a no-op.
+TLU="$(
+    # shellcheck source=../extension/runtime/lib/timeline.sh disable=SC1091
+    source "$REPO_ROOT/extension/runtime/lib/timeline.sh"
+    GATES_TIMELINE="$WORKDIR/tl-unit.tsv"
+    gates_timeline_init ci
+    gates_timeline_line "$(printf 'a\tb')" 1 2 pass "$(printf 'x\ny\rz')"
+    printf '%s|' "${GATES_TIMELINE-unset}"
+    unset GATES_TL_FILE GATES_PG_FILE
+    gates_timeline_line ignored 1 2 pass ""
+    gates_progress_start ignored
+)"
+expect "timeline.sh: the variable is unset after init" "$TLU" "unset|"
+expect "timeline.sh: tabs, newlines and returns in fields become spaces" \
+    "$(cat "$WORKDIR/tl-unit.tsv")" "a b${TAB}ci${TAB}1${TAB}2${TAB}pass${TAB}x y z"
+
 echo ""
 echo "$PASS passed, $FAIL failed, $SKIP skipped ($TOTAL total)"
 [[ "$FAIL" -gt 0 ]] && exit 1
