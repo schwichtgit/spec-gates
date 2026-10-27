@@ -35,6 +35,15 @@ shows as `[skipped] <name> -- skipped by declaration at agent`; that is
 a policy decision, not a failure, and CI still runs it. Every gate
 command can read the running boundary from `GATES_BOUNDARY`.
 
+An accept block the policy's covering script (`spec.cover`) vouched for
+shows as `spec: <feature>: "<label>" -- covered: <reason>`, and the spec
+gate's summary names every covered block. Covering never happens at CI;
+report covered blocks as covered, not as passed.
+
+`GATES_TIMELINE=<file>` and `GATES_PROGRESS=<file>` make the run write a
+line per gate and accept block as it ends (timeline) or starts and ends
+(progress); set them only when the user asks for a timeline.
+
 ## Steps
 
 1. Confirm `.specify/gates/verify.sh` exists; if not, direct the user to

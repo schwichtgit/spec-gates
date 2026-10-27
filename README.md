@@ -73,6 +73,16 @@ proves it did:
 `skip_at` takes `agent` and `git`, never `ci`. Details in
 [How it works](docs/how-it-works.md#one-entrypoint).
 
+**Don't repeat what the run already proved.** `spec.cover` names a
+protected project script that may vouch for an accept block at the agent
+and git boundaries ("covered: the test gate passed this package"); the
+block is then not run and is named as covered in every report. CI never
+asks it, the parity gate fails CI if anything was covered there, and a
+canary proves it. `GATES_TIMELINE` and `GATES_PROGRESS` write a line as
+each gate and block runs, for CI log sections and a live terminal view;
+a commit from a terminal shows them automatically. Details in
+[How it works](docs/how-it-works.md#spec-conformance-acceptance-criteria-as-executable-gates).
+
 One gate run holds a working tree at a time (`.specify/gates/.lock`): a
 Stop-hook run that finds a commit's run in progress skips and lets the
 session end, while a git or CI run waits for the other one, up to

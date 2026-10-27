@@ -208,12 +208,12 @@ end; pre-commit shows progress on a terminal (research R8 to R10).
 
 ## Phase 8: Polish & cross-cutting concerns
 
-- [ ] T027 [P] Document `spec.cover` (the script interface, never at CI, protection, reporting), per-block attestation entries, `GATES_TIMELINE` (with a GitLab section-marker example from contracts/report-timeline.md) and `GATES_PROGRESS` in `docs/how-it-works.md` (spec conformance and evidence sections) and `README.md`
-- [ ] T028 [P] Update `extension/commands/speckit.gates.verify.md` (covered blocks in the report; the two variables) and `extension/commands/speckit.gates.doctor.md` (the cover lines) where they describe output
-- [ ] T029 [P] `CHANGELOG.md` `[Unreleased]` `### Added`: covered accept blocks (#265, with the four guards), per-block timings, timeline and progress, the pre-commit terminal view (#266); note the 18th canary and that adding `spec.cover` is a weakening contract deviation
-- [ ] T030 Run the full suite (`bash tests/run.sh`), `bash .specify/gates/verify.sh --boundary ci` and `bash .specify/gates/canary.sh` (18/18 blocked); run test-spec-gate, test-gate, test-parity and test-hooks under `/bin/bash` 3.2 and in a `node:26-slim` container with `CI=true` (mawk)
-- [ ] T031 Walk quickstart.md sections 1 to 7 in fixtures (write `.specify/gates/.runtime-version` so doctor sees a projected runtime) and record any deviation as a fix or a spec update
-- [ ] T032 Set `**Status**: Complete` in `specs/007-gate-speed-visibility/spec.md` last
+- [x] T027 [P] Document `spec.cover` (the script interface, never at CI, protection, reporting), per-block attestation entries, `GATES_TIMELINE` (with a GitLab section-marker example from contracts/report-timeline.md) and `GATES_PROGRESS` in `docs/how-it-works.md` (spec conformance and evidence sections) and `README.md`
+- [x] T028 [P] Update `extension/commands/speckit.gates.verify.md` (covered blocks in the report; the two variables) and `extension/commands/speckit.gates.doctor.md` (the cover lines) where they describe output
+- [x] T029 [P] `CHANGELOG.md` `[Unreleased]` `### Added`: covered accept blocks (#265, with the four guards), per-block timings, timeline and progress, the pre-commit terminal view (#266); note the 18th canary and that adding `spec.cover` is a weakening contract deviation
+- [x] T030 Run the full suite (`bash tests/run.sh`), `bash .specify/gates/verify.sh --boundary ci` and `bash .specify/gates/canary.sh` (18/18 blocked); run test-spec-gate, test-gate, test-parity and test-hooks under `/bin/bash` 3.2 and in a `node:26-slim` container with `CI=true` (mawk)
+- [x] T031 Walk quickstart.md sections 1 to 7 in fixtures (write `.specify/gates/.runtime-version` so doctor sees a projected runtime) and record any deviation as a fix or a spec update
+- [x] T032 Set `**Status**: Complete` in `specs/007-gate-speed-visibility/spec.md` last
 
 ---
 

@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-26
 
-**Status**: Draft
+**Status**: Complete
 
 **Input**: User description: "Gate speed and visibility (GitHub issues #265
 and #266; constitution 1.1.0 Principle III; reuses feature 006's
