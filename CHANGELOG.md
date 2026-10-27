@@ -53,6 +53,26 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   `"test_severity": "error"` makes a failing `task test` fail the run;
   the default stays warning.
 
+- **Covered accept blocks** (#265, feature 007). `spec.cover` names a
+  project script and the boundaries (`agent`, `git`) where it may vouch
+  for accept blocks. The spec gate asks it per block
+  (`<script> <feature> <task-id> <block-file>`, 30 s default); exit 0
+  with one line covers the block, which is not run and is named with
+  that line in the report, the summary and the attestation
+  (`result: covered`, `declared_skip`). Anything else runs the block.
+  Never at CI: `at: ["ci"]` is refused, the parity gate fails CI if
+  anything was covered, and the new `covered` canary (the suite now has 18) proves it. The script is protected at every boundary like
+  `policy.json`; a declared script that is missing refuses the run.
+  Adding `spec.cover` is a weakening deviation under a policy contract.
+- **Per-block timings, a timeline and progress** (#266). The attestation
+  lists every evaluated accept block with its result and duration
+  (`blocks`, `blocks_covered`; blocks are `<feature> <task-id>#<n>`).
+  `GATES_TIMELINE=<file>` gets a tab-separated line per gate and block
+  as each ends, and `GATES_PROGRESS=<file>` a line as each starts and
+  ends; nested runs never write to the caller's files, and an
+  unwritable file changes no outcome. A commit from a terminal shows the
+  progress lines.
+
 ### Changed
 
 - **A deferred agent run names what it defers** (#243). When the gate

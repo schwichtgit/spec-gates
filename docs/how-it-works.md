@@ -768,6 +768,35 @@ warning, never a result. `doctor` reads the latest record and fails on the
 no-op signature, `result=pass` with `candidates > 0` and `checked = 0`,
 because no legitimate run looks like that.
 
+**Timeline and progress.** Two optional files show a run while it
+happens. `GATES_TIMELINE=<file>` gets one tab-separated line per gate and
+per accept block as each ends: name, boundary, start and end (epoch
+seconds), result, reason (fixed strings, or a covered block's line;
+never command output). The line always has six fields, so an empty reason
+leaves a trailing tab. Block names are `accept <feature> <task-id>#<n>`.
+A CI step can render sections from it; for GitLab, for example:
+
+```sh
+while IFS="$(printf '\t')" read -r name _ start end result _; do
+  id="$(printf '%s' "$name" | tr -c 'A-Za-z0-9_' '_')"
+  printf '\033[0Ksection_start:%s:%s\r\033[0K%s (%s)\n' "$start" "$id" "$name" "$result"
+  printf '\033[0Ksection_end:%s:%s\r\033[0K\n' "$end" "$id"
+done <"$GATES_TIMELINE"
+```
+
+`GATES_PROGRESS=<file>` gets `gates: <HH:MM:SS> start <name>` as each
+gate and block starts and `gates: <HH:MM:SS> end <name> <result> <n>s`
+as it ends. The pre-commit hook sets `GATES_PROGRESS=/dev/stderr` when
+its stderr is a terminal and the variable is unset, so a long commit
+shows what is running; otherwise its output is unchanged (and, as
+before, it runs no gate when nothing is staged). `verify.sh` reads both
+variables once and unsets them for everything it starts, so a nested run
+(a fixture in an accept block, a canary sandbox) never writes to the
+caller's files. A file that cannot be written warns once and changes no
+outcome. A timeline or progress file inside the project is written
+between accept blocks, so each block then takes its own read-only
+snapshot and the lines never count as a block's writes.
+
 **Canaries.** `canary.sh` (projected next to `verify.sh`) plants known
 violations in `mktemp` sandboxes and requires the real entrypoints to
 reject them, 18 probes in all:
@@ -911,6 +940,58 @@ tool gates and before `parity`:
    feature with zero blocks is flagged as having nothing executable to hold
    it to, but does not block.
 
+**Covered accept blocks.** A project's own test gate often proves what
+an accept block would re-run seconds later. `spec.cover` lets a project
+script vouch for that, at the earlier boundaries only:
+
+```json
+"spec": {
+  "severity": "error",
+  "cover": {
+    "script": "scripts/accept-covered.sh",
+    "at": ["agent", "git"],
+    "timeout_s": 30
+  }
+}
+```
+
+At a boundary in `at`, before each accept block of an enforced (or
+`--accept`ed) feature, the spec gate runs
+`<script> <feature> <task-id> <block-file>` from the project root, under
+the gate watchdog, with stdout captured and stderr discarded. Exit `0`
+with exactly one non-empty line covers the block: it does not run, and
+the line (control characters removed, cut to 200 characters) is its
+reason. Anything else (another exit code, no line, several lines, the
+time limit, a script that is not executable) runs the block as before,
+so the script can never fail a block. The guards:
+
+- **Never at CI.** `at` takes `agent` and `git` only; `"ci"` is refused
+  like any invalid policy (exit `1`), and a run without `--boundary`
+  covers nothing. The parity gate also fails at CI if any block was
+  covered, and the `covered` canary proves a script that vouches for a
+  failing block cannot make CI pass (constitution, Principle III).
+- **Protected.** The script is protected at every boundary like
+  `policy.json`, whatever `protected_files.extra` says: a commit or pull
+  request that changes it needs `Protected-Change` and `Approved-By`,
+  and the agent hooks ask before an edit. A declared script that is
+  missing, or resolves outside the project, refuses the run (exit `1`);
+  doctor reports it `[MISSING]`, and a script that is not executable as
+  a `[rec]` (every block then runs).
+- **Named.** A covered block is `<feature> <task-id>#<n>` (`<n>` is its
+  position among its task's blocks). The report shows `-- covered:
+<reason>` (`covered (informational)` for an `--accept`ed incomplete
+  feature), the spec gate's summary names every covered block (so
+  `--json` does too), and the attestation records it with
+  `result: covered`, the reason and `declared_skip`, the same field a
+  gate skipped by declaration carries.
+- **A weakening.** Adding `spec.cover`, or a boundary to `at`, is a
+  weakening deviation under a policy contract.
+
+A covered block counts in the spec gate's `checked` total, so a run in
+which every block was covered is not taken for a no-op. After the script
+runs, the next block takes a fresh read-only snapshot, since the script
+may write to the tree.
+
 **Recursion guard.** An accept block that invokes `verify.sh` (this
 repository's own blocks do) would re-enter the spec gate and recurse.
 Blocks execute with `GATES_SPEC_EXEC=1` exported, and `verify.sh` runs no
@@ -922,9 +1003,14 @@ suite, the test suites) clear the sentinel explicitly for their sandboxed
 runs.
 
 **Evidence and self-test.** The attestation record gains a `spec` gate
-entry (`candidates` = features, `checked` = blocks executed) and a
-top-level `spec` object with per-run counts and per-feature outcomes
-(`enforced-pass | enforced-fail | informational | no-criteria`). A `spec`
+entry (`candidates` = features, `checked` = blocks executed or covered)
+and a top-level `spec` object with per-run counts and per-feature
+outcomes (`enforced-pass | enforced-fail | informational | no-criteria`).
+Each feature result lists every block it evaluated in `blocks`, in
+order: `task`, `ordinal`, `verifies`, `result` (`pass`, `fail`,
+`timeout`, `mutation`, `covered`), a fixed `reason` (or a covered
+block's line) and `duration_s`; `blocks_covered` counts the covered
+ones. A `spec`
 canary projects a sandbox feature marked Complete with a `false` accept
 block and requires the sandboxed gate to reject it: stubbing the block
 runner to a no-op fails the canary suite naming the spec gate. The

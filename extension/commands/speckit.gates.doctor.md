@@ -100,7 +100,9 @@ nothing is checked.
      none of its candidate files (the no-op signature).
    - **Spec conformance**: features, accept blocks and Complete count; a
      parse error fails; all tasks checked without the Complete flip gets a
-     nudge.
+     nudge. With `spec.cover` declared, the cover script, its boundaries,
+     time limit and protection; a missing script is `[MISSING]` (fails),
+     one that is not executable a `[rec]` (every block then runs).
    - **Git boundary**: the hooks git actually runs. A gates stub is run with
      `GATES_PROBE=1` and must answer from the gates hook. A hook another
      tool owns is read, not run: the gates call-through must be in the file

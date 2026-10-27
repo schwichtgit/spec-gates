@@ -75,6 +75,7 @@ lint<TAB>git<TAB>1793001203<TAB>1793001240<TAB>fail<TAB>check failed
 spec<TAB>git<TAB>1793001205<TAB>1793001262<TAB>pass
 ```
 
+A line always has six fields, so an empty reason leaves a trailing tab.
 Fields: name, boundary, start, end (epoch seconds), result, reason (fixed
 runtime strings, or a covered block's reason; never output). A CI step can
 render sections from it, for example GitLab
