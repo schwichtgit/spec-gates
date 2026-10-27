@@ -295,6 +295,36 @@ expect "declared skips not reported at agent -> suite fails (exit 1)" \
     "$RC_PRJ:$(grep -c "^canary: project -- ACCEPTED.*reported as 'fail" <<<"$OUT_PRJ" || true)" "1:1"
 cp "$REPO_ROOT/extension/runtime/lib/policy.sh" "$FIX/.specify/gates/lib/"
 
+# --- FR-010 (007): the covered canary catches covering at ci ---
+echo ""
+echo "=== covered canary (feature 007) ==="
+expect "healthy fixture: covered canary blocked (exit 0)" \
+    "$(canary "$FIX" --only covered)" 0
+CVJSON="$(CLAUDE_PROJECT_DIR="$FIX" bash "$FIX/.specify/gates/canary.sh" --json --only covered)"
+expect "covered canary reports status=blocked" \
+    "$(printf '%s' "$CVJSON" | jq -r '.canaries[0].status')" blocked
+# A covered decision that also covers at ci: the failing block no longer
+# fails the spec gate there. Parity still fails the run (exit 2), so the
+# canary must judge the spec gate's own line, not the exit code alone.
+# shellcheck disable=SC2016  # the stub's own code
+printf '\ngates_spec_cover_boundary() { [[ -n "$(gates_cover_script)" ]]; }\n' \
+    >>"$FIX/.specify/gates/lib/spec-gate.sh"
+RC_CV=0
+OUT_CV="$(CLAUDE_PROJECT_DIR="$FIX" bash "$FIX/.specify/gates/canary.sh" --only covered 2>&1)" || RC_CV=$?
+expect "covering at ci -> suite fails (exit 1)" "$RC_CV" 1
+expect "output names the covered canary as ACCEPTED at ci" \
+    "$(grep -c '^canary: covered -- ACCEPTED.*at ci' <<<"$OUT_CV" || true)" 1
+cp "$REPO_ROOT/extension/runtime/lib/spec-gate.sh" "$FIX/.specify/gates/lib/"
+# A covered decision that never covers: the git run fails on the block.
+printf '\ngates_spec_cover_ask() { return 1; }\n' >>"$FIX/.specify/gates/lib/spec-gate.sh"
+RC_CV=0
+OUT_CV="$(CLAUDE_PROJECT_DIR="$FIX" bash "$FIX/.specify/gates/canary.sh" --only covered 2>&1)" || RC_CV=$?
+expect "covering that never covers -> suite fails naming git" \
+    "$RC_CV:$(grep -c '^canary: covered -- ACCEPTED.*at git' <<<"$OUT_CV" || true)" "1:1"
+cp "$REPO_ROOT/extension/runtime/lib/spec-gate.sh" "$FIX/.specify/gates/lib/"
+expect "restored spec gate -> covered canary green again (exit 0)" \
+    "$(canary "$FIX" --only covered)" 0
+
 # --- skipped semantics: absent tool, and the policy-enabled gap rule ---
 echo ""
 echo "=== skipped vs enforcement-gap semantics ==="

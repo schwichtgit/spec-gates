@@ -770,7 +770,7 @@ because no legitimate run looks like that.
 
 **Canaries.** `canary.sh` (projected next to `verify.sh`) plants known
 violations in `mktemp` sandboxes and requires the real entrypoints to
-reject them, 17 probes in all:
+reject them, 18 probes in all:
 
 - the format, markdown and shell probes run through `verify.sh` itself;
   when the tool is missing but the policy enables it, the probe fails as
@@ -791,6 +791,10 @@ reject them, 17 probes in all:
   boundary: `verify.sh --boundary ci` must fail naming it, and the agent
   run must report it `skipped by declaration at agent`, since a declared
   skip never reaches CI (constitution, Principle III);
+- `covered` declares a covering script that vouches for a failing accept
+  block at agent and git: `verify.sh --boundary ci` must fail the spec gate
+  on that block, since CI never asks the script, and the git run must
+  report the block covered;
 - `spec`, `errexit` and `contract` are described with their gates below.
 
 Hooks run by path, as Claude Code runs them, so their shebang picks the

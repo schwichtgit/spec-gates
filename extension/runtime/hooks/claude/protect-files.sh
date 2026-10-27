@@ -387,6 +387,58 @@ if [[ -z "$BLOCKED" && -z "$CONSTASK" ]]; then
     fi
 fi
 
+# raw_cover <policy>: spec.cover.script without jq (feature 007), the same
+# kind of reader as raw_extra: a plain string inside a flat cover object.
+# Returns 2 when the policy names a cover this cannot read (escapes, a
+# layout other than that, or another "cover" key after it), which asks.
+raw_cover() {
+    local flat v
+    flat="$(tr '\n' ' ' <"$1")"
+    grep -qE '"cover"[[:space:]]*:' <<<"$flat" || return 0
+    v="$(sed -nE 's/.*"cover"[[:space:]]*:[[:space:]]*\{[^{}]*"script"[[:space:]]*:[[:space:]]*"([^"\\]*)".*/=\1/p' <<<"$flat")"
+    [[ -n "$v" ]] || return 2
+    printf '%s\n' "${v#=}"
+}
+
+# The covering script (spec.cover.script, feature 007) decides which accept
+# blocks are skipped, so it is protected like the policy whatever
+# protected_files.extra says. Every edit asks, as for the constitution
+# (#200): writing it is a legitimate step a human confirms, and a refusal
+# would push the agent to Bash. Without jq the raw reader decides; what it
+# cannot read asks.
+COVERASK=""
+if [[ -z "$BLOCKED" && -z "$CONSTASK" ]]; then
+    COVER=""
+    POLICY_FILE="$PROJECT_ROOT/.specify/gates/policy.json"
+    if [[ -n "$DEGRADED" ]]; then
+        if [[ -f "$POLICY_FILE" ]]; then
+            rc=0
+            COVER="$(raw_cover "$POLICY_FILE")" || rc=$?
+            [[ "$rc" -eq 0 ]] \
+                || COVERASK="policy spec.cover.script cannot be read ($DEGRADED); confirm $FILE_PATH is not the covering script"
+        fi
+    elif command -v gates_cover_script >/dev/null 2>&1; then
+        COVER="$(gates_cover_script)"
+    elif [[ -f "$POLICY_FILE" ]]; then
+        COVER="$(jq -r '(.spec.cover.script // empty) | strings' "$POLICY_FILE" 2>/dev/null)" || COVER=""
+    fi
+    # ./a, a//b and a/./b name the same file as a, a/b.
+    COVER="$(printf '%s' "$COVER" | sed -e 's#//*#/#g' -e 's#/\(\./\)*#/#g' -e 's#^\(\./\)*##')"
+    if [[ -n "$COVER" && -z "$COVERASK" ]]; then
+        CREL="$FILE_PATH"
+        [[ "$FILE_PATH" == "$PROJECT_ROOT/"* ]] && CREL="${FILE_PATH:$((${#PROJECT_ROOT} + 1))}"
+        CREL="$(printf '%s' "$CREL" | sed -e 's#//*#/#g' -e 's#/\(\./\)*#/#g' -e 's#^\(\./\)*##')"
+        CREAL=""
+        CROOT="$(cd "$PROJECT_ROOT" 2>/dev/null && pwd -P)" || CROOT=""
+        [[ -n "$CROOT" && "$REAL_PATH" == "$CROOT/"* ]] && CREAL="${REAL_PATH:$((${#CROOT} + 1))}"
+        # The real path also catches a link to the script; -ef a hard link.
+        if [[ "$CREL" == "$COVER" || "$CREAL" == "$COVER" ]] \
+            || { [[ -f "$REAL_PATH" && -f "$PROJECT_ROOT/$COVER" ]] && [[ "$REAL_PATH" -ef "$PROJECT_ROOT/$COVER" ]]; }; then
+            COVERASK="this edits the covering script $COVER (spec.cover.script), protected like the policy; confirm the change (committing it needs Protected-Change and Approved-By trailers)"
+        fi
+    fi
+fi
+
 shopt -u nocasematch
 if [[ -n "$BLOCKED" ]]; then
     echo "BLOCKED: $BLOCKED" >&2
@@ -415,6 +467,7 @@ fi
 [[ "$SECRETS_LIB" == ok ]] \
     || ask "lib/secrets.sh cannot load, so this edit cannot be checked against the secret-file list; run /speckit.gates.doctor"
 [[ -n "$CONSTASK" ]] && ask "$CONSTASK"
+[[ -n "$COVERASK" ]] && ask "$COVERASK"
 [[ -n "$ASK" ]] && ask "$ASK"
 [[ -n "$NAMEASK" ]] && ask "$NAMEASK"
 

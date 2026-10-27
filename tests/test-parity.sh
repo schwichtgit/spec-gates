@@ -357,6 +357,72 @@ if command -v jq >/dev/null 2>&1; then
     rm -rf "$PD"
 fi
 
+# ===========================================================================
+# Parity on covering (feature 007, research R6): at ci no accept block may
+# be reported covered. gates_spec_covered_at_ci is fed spec results
+# directly; through verify.sh a covered decision stubbed to cover at ci
+# (appended to the projected lib/spec-gate.sh) must fail parity.
+echo ""
+echo "=== parity: nothing covered at ci (feature 007) ==="
+covered_at() { # <boundary> <spec-results-json>: the message, or "-" when none
+    (
+        # shellcheck source=../extension/runtime/lib/spec-gate.sh disable=SC1091
+        source "$REPO_ROOT/extension/runtime/lib/spec-gate.sh"
+        gates_spec_covered_at_ci "$@" || echo "-"
+    )
+}
+expect_covered() { # <name> <wanted> <boundary> <spec-results-json>
+    local got
+    got="$(covered_at "$3" "$4")"
+    if [[ "$got" == "$2" ]]; then
+        pass "$1"
+    else
+        fail "$1 (got '$got', want '$2')"
+    fi
+}
+CVR='[{"feature":"006-x","blocks":[{"task":"T014","ordinal":1,"result":"covered"},{"task":"T014","ordinal":2,"result":"pass"},{"task":"T020","ordinal":1,"result":"covered"}]},{"feature":"007-y","blocks":[{"task":"-","ordinal":1,"result":"covered"}]},{"feature":"008-z"}]'
+expect_covered "ci: every covered block is named" \
+    "accept blocks covered at ci: 006-x T014#1, 006-x T020#1, 007-y -#1" ci "$CVR"
+expect_covered "git: covered blocks are allowed" "-" git "$CVR"
+expect_covered "agent: covered blocks are allowed" "-" agent "$CVR"
+expect_covered "ci: no covered block passes" "-" ci '[{"feature":"a","blocks":[{"task":"T1","ordinal":1,"result":"pass"}]},{"feature":"b"}]'
+expect_covered "ci: no spec results (the spec gate did not run) passes" "-" ci ""
+expect_covered "ci: unreadable spec results fail closed" \
+    "accept blocks covered at ci: the spec results could not be read" ci 'not-json'
+
+if command -v jq >/dev/null 2>&1; then
+    PC="$(mktemp -d 2>/dev/null || mktemp -d -t gates-parity-cover)"
+    git init -q "$PC"
+    mkdir -p "$PC/.specify/gates/lib" "$PC/specs/900-demo"
+    cp "$REPO_ROOT/extension/runtime/verify.sh" "$PC/.specify/gates/"
+    cp "$REPO_ROOT/extension/runtime/lib/"*.sh "$PC/.specify/gates/lib/"
+    printf '%s' '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } },
+        "spec": { "severity": "error", "cover": { "script": "cover.sh", "at": ["git"] } } }' \
+        >"$PC/.specify/gates/policy.json"
+    printf '#!/bin/sh\necho "proven"\n' >"$PC/cover.sh"
+    chmod +x "$PC/cover.sh"
+    printf '# F\n\n**Status**: Complete\n' >"$PC/specs/900-demo/spec.md"
+    # shellcheck disable=SC2016  # the backticks are the fence
+    printf -- '- [x] T001 a task\n\n```accept\ntrue\n```\n' >"$PC/specs/900-demo/tasks.md"
+    rc=0
+    out="$(CLAUDE_PROJECT_DIR="$PC" env -u GATES_SPEC_EXEC bash "$PC/.specify/gates/verify.sh" --boundary git 2>&1)" || rc=$?
+    if [[ "$rc" == 0 ]] && grep -qx '  \[pass\] parity' <<<"$out" && grep -q -- '-- covered: proven' <<<"$out"; then
+        pass "verify.sh: a block covered at git passes parity"
+    else
+        fail "verify.sh: covered at git (exit $rc): $out"
+    fi
+    # shellcheck disable=SC2016  # the stub's own code
+    printf '\ngates_spec_cover_boundary() { [[ -n "$(gates_cover_script)" ]]; }\n' >>"$PC/.specify/gates/lib/spec-gate.sh"
+    rc=0
+    out="$(CLAUDE_PROJECT_DIR="$PC" env -u GATES_SPEC_EXEC bash "$PC/.specify/gates/verify.sh" --boundary ci 2>&1)" || rc=$?
+    if [[ "$rc" == 2 ]] && grep -qx '  \[fail\] parity -- accept blocks covered at ci: 900-demo T001#1' <<<"$out"; then
+        pass "verify.sh: a block covered at ci fails parity naming it (exit 2)"
+    else
+        fail "verify.sh: parity did not catch a block covered at ci (exit $rc): $out"
+    fi
+    rm -rf "$PC"
+fi
+
 # --- version lockstep: every version-bearing file agrees ---
 # The release workflow refuses a tag that disagrees, but that check fires
 # at tag time; this one fires on every PR, so drift can never even reach a

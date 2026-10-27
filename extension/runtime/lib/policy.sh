@@ -12,6 +12,8 @@
 #   gates_project_gates_declared       # [{name, skip_at}] for parity
 #   gates_declared_skip <boundary> <skip_at-json>  # the boundary-skip
 #                                      # decision; feature 007 reuses it
+#   gates_cover_script / gates_cover_at / gates_cover_timeout
+#                                      # spec.cover (feature 007)
 #
 # Missing hook, missing field, or missing policy file all yield empty output
 # with exit 0 -- the loader is fail-open. Strict checks happen in
@@ -229,6 +231,60 @@ gates_declared_skip() { # <boundary> <skip_at-json>
     printf 'skipped by declaration at %s\n' "$boundary"
 }
 
+# The covering script (feature 007, spec.cover). Fail-open like the other
+# accessors: the validator is the strict check.
+gates_cover_script() { # the declared path, empty when none
+    gates_cover_field '.script | if type == "string" then . else empty end'
+}
+
+gates_cover_at() { # compact JSON array, empty when none
+    gates_cover_field '.at | if type == "array" then tojson else empty end'
+}
+
+gates_cover_timeout() { # seconds, default 30
+    local t
+    t="$(gates_cover_field '.timeout_s | if type == "number" then tostring else empty end')"
+    printf '%s\n' "${t:-30}"
+}
+
+# Is the declared script <path> a regular file inside <root> (research R5)?
+# Symlinks are followed, and one whose target leaves the project counts as
+# outside. Returns 0 when it is; otherwise prints why on stdout, returns 1.
+gates_cover_script_check() { # <root> <path>
+    local root real p="$2" dir t n=0
+    root="$(cd "$1" 2>/dev/null && pwd -P)" || { echo "project root not found"; return 1; }
+    p="$root/$p"
+    while [[ -L "$p" && $n -lt 40 ]]; do
+        t="$(readlink "$p" 2>/dev/null)" || break
+        [[ "$t" == /* ]] || t="${p%/*}/$t"
+        p="$t"
+        n=$((n + 1))
+    done
+    if [[ ! -e "$p" && ! -L "$p" ]]; then
+        echo "not found"
+        return 1
+    fi
+    dir="$(cd "${p%/*}" 2>/dev/null && pwd -P)" || { echo "not found"; return 1; }
+    real="$dir/${p##*/}"
+    if [[ "$real" != "$root"/* ]]; then
+        echo "resolves outside the project"
+        return 1
+    fi
+    if [[ -L "$real" || ! -f "$real" ]]; then
+        echo "not a regular file"
+        return 1
+    fi
+    return 0
+}
+
+gates_cover_field() { # <jq filter on .spec.cover>
+    local file
+    file="$(gates_policy_file)"
+    [[ -f "$file" ]] || return 0
+    jq -r "(.spec.cover // {}) | if type == \"object\" then ($1) else empty end" \
+        "$file" 2>/dev/null || true
+}
+
 # Protected-change trailer switch (git.protected_change_trailer, default on).
 gates_protected_trailer_enabled() {
     [[ "$(gates_policy_section_get git protected_change_trailer)" != "false" ]]
@@ -283,7 +339,10 @@ gates_policy_at_rev() { # <rev> <dest>
 # own rules in hooks.local.d (#95) and the policy-contract artifacts, which
 # decide what is enforced exactly like policy.json (#137). Changing one is a
 # reviewed change with a Protected-Change trailer, like any
-# protected_files.extra entry. One entry per line.
+# protected_files.extra entry. One entry per line. gates_protected_list adds
+# a declared covering script (spec.cover.script, feature 007) of every
+# policy it reads next to these: it decides which accept blocks are
+# skipped, so it is protected like the policy.
 GATES_BUILTIN_PROTECTED=".specify/gates/hooks.local.d/**
 .specify/gates/baseline.json
 .specify/gates/baseline.lock.json
@@ -293,13 +352,15 @@ GATES_BUILTIN_PROTECTED=".specify/gates/hooks.local.d/**
 # plus the worktree policy when called with no revs (worktree + HEAD). Reading
 # the committed copy means a staged policy.json that drops its own protection
 # is still judged by the protection it removes (issue #47). The built-in
-# entries above always come first.
+# entries above always come first, then the covering script each of those
+# policies declares (gates_cover_protected), whatever extra says.
 # shellcheck disable=SC2120  # revs are passed by protected-range.sh
 gates_protected_list() { # [rev...]
     local tmp rev
     local -a revs=("$@")
     {
         printf '%s\n' "$GATES_BUILTIN_PROTECTED"
+        gates_cover_protected "$@"
         if [[ "${#revs[@]}" -eq 0 ]]; then
             gates_policy_section_list protected_files extra
             revs=(HEAD)
@@ -314,6 +375,31 @@ gates_protected_list() { # [rev...]
             rm -f "$tmp"
         fi
     } | awk 'NF && !seen[$0]++'
+}
+
+# The spec.cover.script paths of the policies committed at <rev>..., plus
+# the worktree policy when called with no revs (worktree + HEAD), one per
+# line, normalized as git names paths (./a, a//b and a/./b are a, a/b).
+# Used by gates_protected_list and by pr-check with the trailer rule off.
+# shellcheck disable=SC2120  # revs are passed by pr-check.sh
+gates_cover_protected() { # [rev...]
+    local tmp rev
+    local -a revs=("$@")
+    {
+        if [[ "${#revs[@]}" -eq 0 ]]; then
+            gates_cover_script
+            revs=(HEAD)
+        fi
+        tmp="$(mktemp 2>/dev/null || mktemp -t gates-policy)" || tmp=""
+        if [[ -n "$tmp" ]]; then
+            for rev in "${revs[@]}"; do
+                if gates_policy_at_rev "$rev" "$tmp"; then
+                    GATES_POLICY_FILE="$tmp" gates_cover_script
+                fi
+            done
+            rm -f "$tmp"
+        fi
+    } | sed -e 's#//*#/#g' -e 's#/\(\./\)*#/#g' -e 's#^\(\./\)*##' | awk 'NF && !seen[$0]++'
 }
 
 # Filter paths on stdin down to those matching a protected entry in
@@ -541,7 +627,40 @@ gates_validate_policy() {
         def brand_keys: ["terms", "allow_phrases"];
         def att_keys: ["enabled", "max_records", "parity"];
         def parity_values: ["error", "warning", "off"];
-        def spec_keys: ["enabled", "severity", "include", "exclude", "timeout_s", "snapshot_exclude"];
+        def spec_keys: ["enabled", "severity", "include", "exclude", "timeout_s", "snapshot_exclude", "cover"];
+        # The covering script (feature 007): each error names spec.cover.<key>.
+        # Only the shape of the path is checked here; verify.sh refuses a run whose
+        # declared script is not a regular file inside the project.
+        def cover_keys: ["script", "at", "timeout_s"];
+        def cover_errors($c):
+            if ($c | type) != "object" then ["spec.cover: must be an object"]
+            else
+              [ $c | keys[] | select(IN(cover_keys[]) | not) | "spec.cover.\(.): unknown field" ]
+              + ( if ($c | has("script")) | not then ["spec.cover.script: missing required field"]
+                  elif ($c.script | type) != "string" or ($c.script | length) == 0
+                    then ["spec.cover.script: must be a non-empty string"]
+                  elif ($c.script | startswith("/"))
+                    then ["spec.cover.script: must be a project-relative path, not absolute"]
+                  elif any($c.script | split("/")[]; . == "..")
+                    then ["spec.cover.script: must not contain a .. segment"]
+                  else [] end )
+              + ( if ($c | has("at")) | not then ["spec.cover.at: missing required field (allowed: agent, git)"]
+                  elif ($c.at | type) != "array"
+                    then ["spec.cover.at: must be an array of boundaries (allowed: agent, git)"]
+                  elif ($c.at | length) == 0 then ["spec.cover.at: must not be empty"]
+                  else
+                    [ $c.at[] | select(. == "ci")
+                      | "spec.cover.at: \"ci\" is refused: CI runs the full policy (constitution, Principle III)" ]
+                    + [ $c.at[] | select(. != "ci" and . != "agent" and . != "git")
+                        | "spec.cover.at: invalid boundary \(tojson) (allowed: agent, git)" ]
+                    + ( if ($c.at | length) != ($c.at | unique | length)
+                          then ["spec.cover.at: duplicate entries"] else [] end )
+                  end )
+              + ( if ($c | has("timeout_s")) and ($c.timeout_s
+                      | (type == "number" and floor == . and . >= 1 and . <= 300) | not)
+                    then ["spec.cover.timeout_s: must be an integer from 1 to 300"]
+                  else [] end )
+            end;
         def spec_sev_values: ["error", "warning"];
         def ext_keys: ["source", "version", "file"];
         def pos_int: type == "number" and floor == . and . >= 1;
@@ -621,6 +740,7 @@ gates_validate_policy() {
                     + ( if ($s | has("timeout_s")) and ($s.timeout_s | pos_int | not)
                           then ["spec: timeout_s must be an integer >= 1"]
                         else [] end )
+                    + ( if ($s | has("cover")) then cover_errors($s.cover) else [] end )
                   end
             else [] end;
         def ext_errors:

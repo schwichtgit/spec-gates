@@ -2274,6 +2274,108 @@ for c in 'git push origin main' 'git push -u origin feat/x' 'git push origin HEA
     check "allowed: $c" 0 bash -c "out=\$(printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$VM' '$HOOKS/validate-bash.sh') && [[ -z \"\$out\" ]]" _ "$(vm_payload "$c")"
 done
 
+# ===========================================================================
+# The covering script (feature 007, spec.cover.script) is protected like the
+# policy at every boundary, whatever protected_files.extra says: the agent
+# hooks ask (also without jq), commit-msg needs Protected-Change and
+# Approved-By.
+# ===========================================================================
+echo ""
+echo "=== covering script protected (feature 007) ==="
+# reason_has <name> <needle> <payload> <hook> [VAR=value...]: an "ask"
+# whose reason contains <needle>.
+reason_has() {
+    local name="$1" needle="$2" payload="$3" hook="$4" out rc=0 why
+    shift 4
+    TOTAL=$((TOTAL + 1))
+    out="$(printf '%s' "$payload" | env "$@" "$HOOKS/$hook" 2>/dev/null)" || rc=$?
+    why="$(printf '%s' "$out" | jq -r 'select(.hookSpecificOutput.permissionDecision == "ask")
+        | .hookSpecificOutput.permissionDecisionReason' 2>/dev/null)" || why=""
+    if [[ "$rc" -eq 0 ]] && grep -qF -- "$needle" <<<"$why"; then
+        echo "PASS: $name"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL: $name (exit=$rc, stdout=$out)"
+        FAIL=$((FAIL + 1))
+    fi
+}
+CV="$WORKDIR/cover-hooks"
+project_runtime "$CV" "true"
+printf '%s' '{ "hooks": {}, "spec": { "cover": { "script": "./scripts//cover.sh", "at": ["git"] } } }' \
+    >"$CV/.specify/gates/policy.json"
+mkdir -p "$CV/scripts"
+printf '#!/bin/sh\nexit 1\n' >"$CV/scripts/cover.sh"
+cv_edit() { jq -nc --arg f "$1" '{tool_input:{file_path:$f}}'; }
+cv_cmd() { jq -nc --arg c "$1" --arg d "$CV" '{cwd:$d,tool_input:{command:$c}}'; }
+for f in scripts/cover.sh ./scripts/cover.sh "$CV/scripts/cover.sh" SCRIPTS/Cover.sh; do
+    reason_has "protect-files asks on an edit of the covering script: $f" 'covering script scripts/cover.sh' \
+        "$(cv_edit "$f")" protect-files.sh CLAUDE_PROJECT_DIR="$CV"
+    reason_has "protect-files asks without jq: $f" 'covering script scripts/cover.sh' \
+        "$(cv_edit "$f")" protect-files.sh PATH="$NOJQ" CLAUDE_PROJECT_DIR="$CV"
+done
+ln -s scripts/cover.sh "$CV/cover-link.sh"
+reason_has "protect-files asks on an edit through a link to it" 'covering script' \
+    "$(cv_edit "$CV/cover-link.sh")" protect-files.sh CLAUDE_PROJECT_DIR="$CV"
+for f in scripts/other.sh cover.sh; do
+    check "protect-files allows another file: $f" 0 bash -c "out=\$(printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$CV' '$HOOKS/protect-files.sh') && [[ -z \"\$out\" ]]" _ "$(cv_edit "$f")"
+    check "protect-files allows another file without jq: $f" 0 bash -c "out=\$(printf '%s' \"\$1\" | PATH='$NOJQ' CLAUDE_PROJECT_DIR='$CV' '$HOOKS/protect-files.sh') && [[ -z \"\$out\" ]]" _ "$(cv_edit "$f")"
+done
+for c in 'rm scripts/cover.sh' 'echo exit 0 > scripts/cover.sh' 'sed -i s/1/0/ ./scripts/cover.sh'; do
+    reason_has "validate-bash asks: $c" 'scripts/cover.sh' "$(cv_cmd "$c")" validate-bash.sh CLAUDE_PROJECT_DIR="$CV"
+    reason_has "validate-bash asks without jq: $c" 'scripts/cover.sh' "$(cv_cmd "$c")" validate-bash.sh PATH="$NOJQ" CLAUDE_PROJECT_DIR="$CV"
+done
+check "validate-bash allows reading it" 0 bash -c "out=\$(printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$CV' '$HOOKS/validate-bash.sh') && [[ -z \"\$out\" ]]" _ "$(cv_cmd 'cat scripts/cover.sh')"
+# A cover the raw reader cannot read (an escape in the path) asks.
+printf '%s' '{ "hooks": {}, "spec": { "cover": { "script": "scripts\\u002fcover.sh", "at": ["git"] } } }' \
+    >"$CV/.specify/gates/policy.json"
+reason_has "protect-files without jq: an unreadable cover asks" 'spec.cover.script cannot be read' \
+    "$(cv_edit src/a.ts)" protect-files.sh PATH="$NOJQ" CLAUDE_PROJECT_DIR="$CV"
+reason_has "validate-bash without jq: an unreadable cover asks on a change" 'spec.cover.script cannot be read' \
+    "$(cv_cmd 'rm src/a.ts')" validate-bash.sh PATH="$NOJQ" CLAUDE_PROJECT_DIR="$CV"
+# Without spec.cover nothing changes.
+printf '%s' '{ "hooks": {} }' >"$CV/.specify/gates/policy.json"
+check "protect-files: no spec.cover, the script is a plain file" 0 bash -c "out=\$(printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$CV' '$HOOKS/protect-files.sh') && [[ -z \"\$out\" ]]" _ "$(cv_edit scripts/cover.sh)"
+check "validate-bash: no spec.cover, the script is a plain file" 0 bash -c "out=\$(printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$CV' '$HOOKS/validate-bash.sh') && [[ -z \"\$out\" ]]" _ "$(cv_cmd 'rm scripts/cover.sh')"
+
+# commit-msg: a change to the declared script needs a declaration and an
+# approver, although protected_files.extra does not list it.
+CG="$WORKDIR/cover-git"
+mkdir -p "$CG"
+git -C "$CG" init -q -b main
+git -C "$CG" config user.email t@example.com
+git -C "$CG" config user.name tester
+project_runtime "$CG" "true"
+cp "$GITHOOKS/pre-commit" "$GITHOOKS/commit-msg" "$CG/.git/hooks/"
+chmod +x "$CG/.git/hooks/pre-commit" "$CG/.git/hooks/commit-msg"
+printf '%s' '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error", "custom_command": "true" } }, "git": { "block_main_commits": false }, "spec": { "cover": { "script": "scripts/cover.sh", "at": ["git"] } } }' \
+    >"$CG/.specify/gates/policy.json"
+mkdir -p "$CG/scripts"
+printf '#!/bin/sh\nexit 1\n' >"$CG/scripts/cover.sh"
+chmod +x "$CG/scripts/cover.sh"
+CGM="$WORKDIR/cg-msg.txt"
+# cg_refused <name> <setup>: the commit is refused naming the script.
+cg_refused() {
+    check "$1" 0 bash -c "cd '$CG' && $2 && out=\$(git commit -q -F '$CGM' 2>&1); [[ \$? -eq 1 ]] && grep -q 'protected file changed without a declaration: scripts/cover.sh' <<<\"\$out\""
+}
+printf 'chore: seed\n' >"$CGM"
+cg_refused "commit-msg: adding the declared covering script without a declaration is refused" "git add -A"
+printf 'chore: seed\n\nProtected-Change: scripts/cover.sh\nApproved-By: Reviewer\n' >"$CGM"
+check "commit-msg: with Protected-Change and Approved-By it passes" 0 bash -c "cd '$CG' && git commit -q -F '$CGM'"
+printf 'echo covered\n' >>"$CG/scripts/cover.sh"
+printf 'chore: cover everything\n' >"$CGM"
+cg_refused "commit-msg: changing it without a declaration is refused" "git add -A"
+printf 'chore: cover everything\n\nProtected-Change: scripts/cover.sh\n' >"$CGM"
+check "commit-msg: a declaration without Approved-By is refused" 1 bash -c "cd '$CG' && git commit -q -F '$CGM'"
+printf 'chore: cover everything\n\nProtected-Change: scripts/cover.sh\nApproved-By: Reviewer\n' >"$CGM"
+check "commit-msg: changing it with Protected-Change and Approved-By passes" 0 bash -c "cd '$CG' && git commit -q -F '$CGM'"
+# Dropping spec.cover and the script in one commit: HEAD's policy still
+# declares it, so the deletion needs a declaration too.
+printf '%s' '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error", "custom_command": "true" } }, "git": { "block_main_commits": false } }' \
+    >"$CG/.specify/gates/policy.json"
+printf 'chore: drop the script\n' >"$CGM"
+cg_refused "commit-msg: dropping spec.cover and the script needs a declaration (HEAD's policy)" "git rm -q scripts/cover.sh && git add -A"
+( cd "$CG" && git reset -q --hard >/dev/null 2>&1 )
+
 # --- Summary ---
 echo ""
 echo "$PASS of $TOTAL tests passed."

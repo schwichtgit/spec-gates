@@ -729,6 +729,50 @@ expect "it says the lib predates pr-check.sh" "$(grep -c 'secrets.sh predates pr
 RUN_SCRIPT=.specify/gates/pr-check.sh
 sg checkout -q "$ORIG"
 
+# --- the covering script (feature 007) -----------------------------------
+# spec.cover.script is protected like the policy, whatever
+# protected_files.extra says: a PR that adds spec.cover and the script
+# together is judged with the script protected (the union of the base and
+# head policies), and a later undeclared change to it is refused.
+echo ""
+echo "=== the covering script is protected (feature 007) ==="
+CVPOL='{ "hooks": {}, "protected_files": { "extra": ["c.md"] }, "spec": { "cover": { "script": "scripts/cover.sh", "at": ["git"] } } }'
+(
+    cd "$W"
+    git checkout -q -b feat/cover "$BASE"
+    printf '%s\n' "$CVPOL" >.specify/gates/policy.json
+    mkdir -p scripts && printf '#!/bin/sh\nexit 1\n' >scripts/cover.sh
+    git add -A && git commit -q -m "chore: add a covering script" \
+        -m $'Protected-Change: .specify/gates/policy.json\nApproved-By: Reviewer'
+) >/dev/null 2>&1
+expect "spec.cover and the script added together, only the policy declared -> exit 1" \
+    "$(run GATES_COMMIT_RANGE="$BASE..HEAD")" 1
+expect "the script is named" "$(grep -c 'without a declaration: scripts/cover.sh' "$WORKDIR/out.txt")" 1
+expect "both declared -> exit 0" \
+    "$(cd "$W" && git commit -q --amend -m "chore: add a covering script" \
+        -m $'Protected-Change: .specify/gates/policy.json\nProtected-Change: scripts/cover.sh\nApproved-By: Reviewer' \
+        && run GATES_COMMIT_RANGE="$BASE..HEAD")" 0
+(cd "$W" && echo 'echo covered' >>scripts/cover.sh && git add -A && git commit -q -m "chore: cover more") >/dev/null 2>&1
+expect "a later undeclared change to the script -> exit 1" "$(run GATES_COMMIT_RANGE="$BASE..HEAD")" 1
+expect "it is named" "$(grep -c 'without a declaration: scripts/cover.sh' "$WORKDIR/out.txt")" 1
+expect "declared with an approver -> exit 0" \
+    "$(cd "$W" && git commit -q --amend -m "chore: cover more" \
+        -m $'Protected-Change: scripts/cover.sh\nApproved-By: Reviewer' && run GATES_COMMIT_RANGE="$BASE..HEAD")" 0
+# With the trailer rule off only the always-protected paths are checked;
+# the covering script is one of them, like the policy.
+(
+    cd "$W"
+    printf '%s\n' '{ "hooks": {}, "git": { "protected_change_trailer": false }, "spec": { "cover": { "script": "scripts/cover.sh", "at": ["git"] } } }' \
+        >.specify/gates/policy.json
+    git add -A && git commit -q -m "chore: trailer rule off" \
+        -m $'Protected-Change: .specify/gates/policy.json\nApproved-By: Reviewer'
+) >/dev/null 2>&1
+CVOFF="$(git -C "$W" rev-parse HEAD)"
+(cd "$W" && echo 'exit 0' >>scripts/cover.sh && git add -A && git commit -q -m "chore: cover all") >/dev/null 2>&1
+expect "trailer rule off: an undeclared change to the script -> exit 1" "$(run GATES_COMMIT_RANGE="$CVOFF..HEAD")" 1
+expect "trailer rule off: it is named" "$(grep -c 'without a declaration: scripts/cover.sh' "$WORKDIR/out.txt")" 1
+sg checkout -q "$ORIG"
+
 echo ""
 echo "$PASS of $TOTAL tests passed."
 [[ "$SKIPPED" -gt 0 ]] && echo "$SKIPPED case group(s) skipped: this host lacks a tool they need."

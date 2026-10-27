@@ -54,6 +54,9 @@ unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_PREFIX GIT_COMMON_DIR \
 #   project -- failing project gate declared to skip the agent boundary
 #              blocks at ci, and is reported skipped at agent
 #                                     -> verify.sh project gates   (exit 2)
+#   covered -- failing accept block a covering script vouches for at
+#              agent and git fails at ci, and is reported covered at git
+#                                     -> verify.sh spec gate       (exit 2)
 #
 # Usage:
 #   canary.sh [--json] [--only <id>[,<id>...]]
@@ -82,7 +85,7 @@ done
 CANARY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 
-CANARY_SET="format markdown shell bash protect prhook bulk local secret credential protected branding pr spec errexit contract project"
+CANARY_SET="format markdown shell bash protect prhook bulk local secret credential protected branding pr spec errexit contract project covered"
 
 if [[ -n "$ONLY" ]]; then
     IFS=',' read -r -a _only_ids <<<"$ONLY"
@@ -749,6 +752,44 @@ run_project_canary() {
 }
 
 # ---------------------------------------------------------------------------
+# Covered canary (feature 007, research R12): a Complete feature whose one
+# accept block fails, and a covering script that vouches for every block at
+# agent and git. At ci the spec gate itself must fail naming the block (CI
+# never asks the script, constitution Principle III); the parity gate
+# failing alone does not count. At git the block must be reported covered
+# and the run pass, proving the mechanism works where it is declared.
+# ---------------------------------------------------------------------------
+run_covered_canary() {
+    local d="$WORKDIR/covered"
+    project_sandbox "$d" '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } }, "spec": { "severity": "error", "cover": { "script": "cover.sh", "at": ["agent", "git"] } } }'
+    mkdir -p "$d/specs/900-canary-fixture" || setup_fail "covered fixture dir"
+    git init -q "$d" >/dev/null 2>&1 || setup_fail "covered fixture git init"
+    printf '# Canary Fixture\n\n**Status**: Complete\n' \
+        >"$d/specs/900-canary-fixture/spec.md" || setup_fail "covered fixture spec.md"
+    {
+        echo '- [x] T001 A criterion that must fail'
+        echo ''
+        echo '  ```accept'
+        echo '  false'
+        echo '  ```'
+    } >"$d/specs/900-canary-fixture/tasks.md" || setup_fail "covered fixture tasks.md"
+    printf '#!/bin/sh\necho "covered by canary"\n' >"$d/cover.sh" || setup_fail "covered fixture script"
+    chmod +x "$d/cover.sh" || setup_fail "covered fixture chmod"
+    local rc=0 grc=0 out gout
+    out="$(CLAUDE_PROJECT_DIR="$d" env -u GATES_SPEC_EXEC \
+        bash "$d/.specify/gates/verify.sh" --boundary ci 2>&1)" || rc=$?
+    gout="$(CLAUDE_PROJECT_DIR="$d" env -u GATES_SPEC_EXEC \
+        bash "$d/.specify/gates/verify.sh" --boundary git 2>&1)" || grc=$?
+    if [[ "$rc" -ne 2 ]] || ! grep -q '^  \[fail\] spec -- 900-canary-fixture: "T001 A criterion that must fail"' <<<"$out"; then
+        record covered accepted "verify.sh exit $rc at ci on a failing block a covering script vouches for -- the spec gate did not fail it at ci" 1
+    elif [[ "$grc" -ne 0 ]] || ! grep -q -- '-- covered: covered by canary' <<<"$gout"; then
+        record covered accepted "at git the declared covering script did not cover the block (exit $grc)" 1
+    else
+        record covered blocked "a failing block a covering script vouches for failed at ci and was reported covered at git" 0
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # Run + report
 # ---------------------------------------------------------------------------
 for id in $CANARY_SET; do
@@ -771,6 +812,7 @@ for id in $CANARY_SET; do
         errexit) run_errexit_canary ;;
         contract) run_contract_canary ;;
         project) run_project_canary ;;
+        covered) run_covered_canary ;;
     esac
 done
 

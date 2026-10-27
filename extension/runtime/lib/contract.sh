@@ -85,6 +85,15 @@ gates_contract_merge() { # <snapshot> <overlay>
 # timeout_s, test_severity and gate_timeout_s of baseline gates are
 # compared too, not only the baseline's leaves.
 #
+# The covering script (feature 007, contracts/policy-cover.md): spec.cover
+# present in the effective policy and absent from the baseline is ONE
+# weakened deviation marked "cover script added", although additions are
+# otherwise not deviations (a covering script skips proof); a baseline
+# spec.cover the effective side drops is ONE strengthened line ("cover
+# script removed"). With both present, spec.cover.at gaining a boundary is
+# weakened and losing one strengthened; script and timeout_s are
+# "changed", the effective side's keys compared too.
+#
 # With mode "delta" (sync --update: old baseline vs new baseline) the
 # strengthenings are reported too, and a hook or gate the new side adds is
 # ONE strengthened line marked "added": an update review needs every change.
@@ -139,6 +148,7 @@ gates_contract_deviations() { # <snapshot> <effective> [delta]
         def row($c; $p; $bv; $ev; $kind):
             [ $c, ($p | map(tostring) | join(".")), ($bv | tojson), ($ev | tojson), ($p | tojson),
               (if $kind == "" then summary($p | last | tostring; $bv; $ev)
+               elif ($kind | startswith("cover ")) then $kind
                elif ($p | length) == 4 then "gate \($kind)" else "hook \($kind)" end),
               $kind ]
             | join("\t");
@@ -154,6 +164,9 @@ gates_contract_deviations() { # <snapshot> <effective> [delta]
         | (if "verify-quality" | IN(($removed + $added)[]) then [] else ($eff | gate_names) end) as $eg
         | [ $bg[] | select(IN($eg[]) | not) ] as $gremoved
         | [ $eg[] | select(IN($bg[]) | not) ] as $gadded
+        | def cover_of: (try .spec.cover catch null) | if type == "object" then . else null end;
+          ($base | cover_of) as $bc
+        | ($eff | cover_of) as $ec
         | ( $removed[] | row("weakened"; ["hooks", .]; $base.hooks[.]; null; "removed") ),
           ( if $mode == "delta" then
               $added[] | row("strengthened"; ["hooks", .]; null; $eff.hooks[.]; "added")
@@ -166,14 +179,22 @@ gates_contract_deviations() { # <snapshot> <effective> [delta]
               | row("strengthened"; ["hooks", "verify-quality", "gates", .];
                     null; $eff.hooks["verify-quality"].gates[.]; "added")
             else empty end ),
+          ( if $bc == null and $ec != null then
+              row("weakened"; ["spec", "cover"]; null; $ec; "cover script added")
+            elif $bc != null and $ec == null and $mode == "delta" then
+              row("strengthened"; ["spec", "cover"]; $bc; null; "cover script removed")
+            else empty end ),
           ( ( ($base | leaves)
               + (if $mode == "delta" then ($eff | leaves)
                  else [ $eff | leaves | .[]
                         | select((. == ["hooks", "verify-quality", "test_severity"])
                                  or (. == ["hooks", "verify-quality", "gate_timeout_s"])
-                                 or (is_gate_field(.) and (.[3] | IN($bg[])))) ] end) )
+                                 or (is_gate_field(.) and (.[3] | IN($bg[])))
+                                 or (.[0:2] == ["spec", "cover"] and $bc != null)) ] end) )
             | unique[]
             | . as $p
+            # An added or removed spec.cover is its one line above.
+            | select((.[0:2] == ["spec", "cover"] and ($bc == null or $ec == null)) | not)
             | select(($p[0] == "hooks" and (($p[1] // "") | IN(($removed + $added)[])))
                      or ($p == ["hooks"])
                      or (($p | length) >= 4 and $p[0:3] == ["hooks", "verify-quality", "gates"]
@@ -193,7 +214,7 @@ gates_contract_deviations() { # <snapshot> <effective> [delta]
                   ( if sev_rank[$es|tostring] > sev_rank[$bs|tostring] then "weakened"
                     elif sev_rank[$es|tostring] < sev_rank[$bs|tostring] then "strengthened"
                     else "changed" end )
-                elif is_gate_field($p) and $leaf == "skip_at"
+                elif ((is_gate_field($p) and $leaf == "skip_at") or $p == ["spec", "cover", "at"])
                      and (($bv // []) | type) == "array" and (($ev // []) | type) == "array" then
                   ( (($ev // []) - ($bv // []) | length) as $gained
                     | (($bv // []) - ($ev // []) | length) as $lost
