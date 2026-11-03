@@ -289,7 +289,11 @@ gates_spec_parse() { # <tasks-md> <outdir>
 # Editor temporary files (#303) come and go while a block runs whenever a file
 # is open in an editor: vim's swap files and its 4913 write probe, backup
 # files, Emacs lock and auto-save files. Being gitignored does not exempt
-# them, since ignored files are checked too.
+# them, since ignored files are checked too. Agent tooling writes its own
+# state in the background the same way (#327): a Claude Code memory plugin
+# keeps .claude/mind.* (its store, locks and write-ahead log). Only those
+# files: what an agent edits under .claude/ on purpose (settings, skills,
+# commands) stays checked.
 GATES_SPEC_SNAPSHOT_BUILTIN_EXCLUDE=".specify/gates/attestations.jsonl
 .specify/gates/.attestations.jsonl.*
 .specify/gates/.lock/
@@ -299,7 +303,8 @@ GATES_SPEC_SNAPSHOT_BUILTIN_EXCLUDE=".specify/gates/attestations.jsonl
 **/*~
 **/.#*
 **/#*#
-**/4913"
+**/4913
+**/.claude/mind.*"
 
 # A directory below the root with its own .git (file or directory) is a
 # nested repository or worktree, such as an agent's worktree under

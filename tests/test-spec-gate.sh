@@ -920,6 +920,15 @@ OUT="$(isoblock editor '  mkdir -p sub
   touch .policy.json.swp sub/.f.swo sub/f~ "sub/.#f" "sub/#f#" 4913')"
 expect_contains "editor temporary files do not fail a block (#303)" "$OUT" "EXIT=0"
 
+# Issue #327: a memory plugin's background state under .claude/ is not the
+# block's write either; a file an agent edits there on purpose still is.
+OUT="$(isoblock agentstate '  mkdir -p .claude
+  touch .claude/mind.mv2 .claude/mind.mv2.lock .claude/mind.mv2.lock.lock .claude/mind.manifest.wal')"
+expect_contains "a memory plugin's state does not fail a block (#327)" "$OUT" "EXIT=0"
+OUT="$(isoblock agentsettings '  mkdir -p .claude
+  touch .claude/settings.json')"
+expect_contains "a block writing .claude/settings.json still fails (#327)" "$OUT" "EXIT=2"
+
 # Issue #302: a pipe reader that exits early fails the block under
 # pipefail with the writer's 141; the failure names SIGPIPE. The writer
 # exits 141 itself: a runner that ignores SIGPIPE (GitHub Actions does,

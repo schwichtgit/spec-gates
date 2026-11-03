@@ -208,7 +208,9 @@ read-only check skips, for a cache another process writes while blocks
 run; `cache/` covers the directory and everything under it, and a pattern
 of only `*`, `?` and `/` (which would match every path) makes the policy
 invalid. Editor temporary files (`*.swp`, `*.swo`, `*~`, `.#*`, `#*#`,
-vim's `4913`) are skipped without it, at any depth. Ignoring a file in
+vim's `4913`) and a Claude Code memory plugin's state
+(`.claude/mind.*`) are skipped without it, at any depth; other files
+under `.claude/` stay checked. Ignoring a file in
 `.gitignore` does not exempt it, since ignored files are checked too:
 for another process's files, list them in `snapshot_exclude` (for
 example `["**/*.tmp"]`). Writes inside nested repositories and worktrees (a directory
@@ -458,11 +460,17 @@ add `--boundary agent|git|ci` to each.
 without a terminal (a script, an agent session), it reads no answer,
 prints "Aborted." and exits 1; pipe `yes` into it there.
 
-If your `speckit-gates-*` skills were last rendered by `specify
-integration upgrade` (`metadata.source: extension:gates`), some Spec Kit
-CLI versions render them in the older format on `add`, and the upgrade
-diff reverts the format. Run `specify integration upgrade --force` after
-the `add`, then re-apply any deliberate edits to managed files.
+`add` renders the `speckit-gates-*` skills in the older format
+(`metadata.source: gates:commands/...`, an empty `registered_skills`):
+Spec Kit CLI 1.2.3 through 1.3.0 do so. Run
+`specify integration upgrade --force` after the `add` to render them in
+the current one (`metadata.source: extension:gates`), then re-apply any
+deliberate edits to managed files. That command re-renders the whole
+Spec Kit scaffold to the CLI's version too, not only the gates skills:
+scripts such as `create-new-feature.sh` and `setup-plan.sh`, the
+manifests and init options, and `.specify/.gitignore` (#328). Review its
+diff, and commit it on its own, apart from the gates upgrade, so a
+Spec Kit change is never hidden in a gates one.
 
 **Branches still on 0.3.x, and rolling back.** The git hook stubs in
 `.git/hooks` are shared by every branch and worktree of the clone, and

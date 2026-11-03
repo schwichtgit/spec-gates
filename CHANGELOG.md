@@ -124,6 +124,18 @@ npm ci`. The gate still fails until the install matches.
 
 ### Fixed
 
+- **A memory plugin's state no longer fails an accept block** (#327). A
+  Claude Code memory plugin writes `.claude/mind.*` (its store, locks and
+  write-ahead log) in the background, and a block that ran meanwhile
+  failed its read-only check for files it never wrote. Those files join
+  the built-in snapshot excludes, next to the editor temporary files
+  (#303); other files under `.claude/` stay checked.
+- **The README says what `integration upgrade --force` also changes**
+  (#328). Run after `specify extension add` to render the gates skills in
+  the current format, it also re-renders the whole Spec Kit scaffold to
+  the CLI's version (scripts, manifests, init options,
+  `.specify/.gitignore`). The Upgrade section now says so, and to review
+  and commit that diff apart from the gates upgrade.
 - **A child on its way out no longer fails a passing block** (#294). An
   accept block or `hooks.local.d` rule that killed a child without
   waiting for it failed with "left a process running" when the child was
