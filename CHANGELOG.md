@@ -60,6 +60,10 @@ init` set the main repository's `core.bare = true` and `git add -A`
   `Claude`", a `Co-Authored-By` trailer, and in PR text
   "Generated with `Claude Code`". Branding terms are still checked
   inside code spans.
+- **validate-pr gives glab users advice glab can follow** (#312). The
+  refusal of a description it cannot read named gh's `--body` and
+  `--body-file`, which glab does not have. For glab it now names
+  `--description '...'` and the description file form below.
 
 ### Changed
 
@@ -74,6 +78,15 @@ init` set the main repository's `core.bare = true` and `git add -A`
   index): `GIT_INDEX_FILE="$GATES_GIT_INDEX_FILE" git diff --cached
 --name-only` lists exactly what the commit holds. A command that read
   the staged files through the inherited variable switches to it.
+
+### Added
+
+- **glab descriptions from a file** (#312). glab has no
+  description-file flag. validate-pr now reads
+  `--description "$(cat <path>)"` and `--description "$(<path)"`, with a
+  literal path, as a description file, with the rules of gh's
+  `--body-file`: the file's text is checked, and a file it cannot read is
+  refused. Anything else in the substitution stays refused.
 
 ## 0.5.0 — 2026-10-27
 

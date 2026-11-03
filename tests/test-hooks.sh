@@ -2261,6 +2261,38 @@ done
 vp "gh -R o/r pr edit with an AI-ism refused" 2 "gh -R o/r pr edit 5 --body 'Generated with Claude Code'"
 vp "glab -R g/p mr update non-conventional title refused" 2 "glab -R g/p mr update 3 --title 'add stuff'"
 vp "gh -R o/r pr list is not a PR command" 0 "gh -R o/r pr list"
+
+echo ""
+echo "=== validate-pr: glab reads a description from a file (#312) ==="
+# glab has no description-file flag: --description "$(cat <path>)" or
+# "$(<path)" with a literal path is read and checked like gh's --body-file.
+printf "Adds the parser's tests.\n" >"$WORKDIR/gl-ok.md"
+printf 'I have made it seamless.\n' >"$WORKDIR/gl-bad.md"
+# shellcheck disable=SC2016  # literal command text under test
+for c in "glab mr create --title 'fix: x' --description \"\$(cat $WORKDIR/gl-ok.md)\"" \
+    "glab mr create --title 'fix: x' -d \"\$(<$WORKDIR/gl-ok.md)\"" \
+    "glab mr update 3 --description \"\$( cat $WORKDIR/gl-ok.md )\""; do
+    vp "glab description file read and allowed: $c" "$PR_OK" "$c"
+done
+# shellcheck disable=SC2016
+for c in "glab mr create --title 'fix: x' --description \"\$(cat $WORKDIR/gl-bad.md)\"" \
+    "glab mr create --title 'fix: x' --description \"\$(cat $WORKDIR/gl-none.md)\"" \
+    "glab mr create --title 'fix: x' --description \"\$(cat $WORKDIR/gl-ok.md | head)\"" \
+    'glab mr create --title "fix: x" --description "$(cat $F)"' \
+    "glab mr create --title 'fix: x' --description \"x \$(cat $WORKDIR/gl-ok.md)\"" \
+    "glab mr create --title 'fix: x' --description \$(cat $WORKDIR/gl-ok.md)" \
+    "glab mr create --title \"\$(cat $WORKDIR/gl-ok.md)\" --description 'ok'" \
+    'glab mr create --title "fix: x" --description "$(cat -)"' \
+    'gh pr create --title "fix: x" --body "$(cat body.md)"'; do
+    vp "glab description file refused: $c" 2 "$c"
+done
+# shellcheck disable=SC2016
+check "glab refusal names --description, not gh's flags (#312)" 0 bash -c \
+    "out=\$(jq -nc --arg c \"\$1\" '{tool_input:{command:\$c}}' | CLAUDE_PROJECT_DIR='$RT' '$HOOKS/validate-pr.sh' 2>&1); grep -qF 'glab has no description-file flag' <<<\"\$out\" && ! grep -qF -- '--body-file' <<<\"\$out\"" \
+    _ 'glab mr create --title "fix: x" --description "$B"'
+check "a glab description file it cannot read names the file" 0 bash -c \
+    "out=\$(jq -nc --arg c \"\$1\" '{tool_input:{command:\$c}}' | CLAUDE_PROJECT_DIR='$RT' '$HOOKS/validate-pr.sh' 2>&1); grep -qF 'cannot read --description \"\$(cat $WORKDIR/gl-none.md)\"' <<<\"\$out\"" \
+    _ "glab mr create --title 'fix: x' --description \"\$(cat $WORKDIR/gl-none.md)\""
 vp "a PR alias inside sh -c refused" 2 "sh -c 'gh -R o/r pr new -t x -b y'"
 
 echo ""

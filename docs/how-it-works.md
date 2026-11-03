@@ -78,7 +78,11 @@ spec-gates uses four of them:
   command inside `sh -c`, behind `eval` or behind `xargs`. A PR command
   after a shell keyword (`if …; then gh pr create …`) or a wrapper and
   its options (`env -i`, `sudo -u bob`) is checked; `gh api "$EP"`, whose
-  endpoint only the shell knows, asks.
+  endpoint only the shell knows, asks. A body file is read and its text
+  checked: gh's `--body-file <path>`, and for glab, which has no
+  description-file flag, `--description "$(cat <path>)"` or
+  `--description "$(<path)"` with a literal path. A file it cannot read
+  is refused.
 - `PostToolUse(Write|Edit)` → `post-edit.sh`: formats the touched file per
   policy.
 - `Stop` → `format-changed.sh` + `verify-quality.sh`: a stop while

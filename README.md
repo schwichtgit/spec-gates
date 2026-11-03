@@ -581,6 +581,13 @@ CI) apply the same rules, from `lib/message.sh`:
 - No `Co-Authored-By` trailer, whatever the policy says, and in PR text
   no "Generated with Claude Code" attribution line.
 
+The agent's PR hook checks the text before the command runs, so it
+refuses a title or body it cannot read (a variable, a command
+substitution). Pass a long body as a file: `gh pr create --body-file
+body.md`, or for glab, which has no file flag,
+`glab mr create --description "$(cat body.md)"`. The hook reads the file
+and checks it.
+
 `git cherry-pick`, `git rebase`, `git am` and `git revert` (also with
 `--continue` or `--skip`) create commits without running any commit hook,
 so `pre-commit` and `commit-msg` never see them and only CI checks the
