@@ -1028,6 +1028,19 @@ printf '#!/bin/sh\nexit 0\n' >"$GPD/.git/hooks/commit-msg"
 chmod +x "$GPD/.git/hooks/commit-msg"
 run_doctor "$GPD" >/dev/null
 has "another tool's hook without the call-through fails (static)" "$GPD" "[MISSING] commit-msg (static): git runs .git/hooks/commit-msg, owned by another tool, and it does not call .specify/gates/hooks/commit-msg on a line that runs"
+# A hook whose only command calls the gates hook (#298), as 0.3.x installs
+# wrote it: gates code, probed, and the stub is recommended.
+# shellcheck disable=SC2016  # the hook body is written literally
+printf '#!/bin/sh\n# spec-gates: delegate to projected git hook (survives extension removal)\nexec "$(git rev-parse --show-toplevel)/.specify/gates/hooks/commit-msg" "$@"\n' >"$GPD/.git/hooks/commit-msg"
+run_doctor "$GPD" >/dev/null
+has "a delegate hook is probed, not read" "$GPD" "[ok]  commit-msg probe: the hook git runs reaches the gates commit-msg hook"
+has "a delegate hook gets the stub recommended" "$GPD" "[rec] commit-msg only calls .specify/gates/hooks/commit-msg — run /speckit.gates.upgrade to replace it with the gates stub"
+lacks "a delegate hook is not another tool's" "$GPD" "commit-msg (static)"
+# shellcheck disable=SC2016  # the hook body is written literally
+printf '#!/bin/sh\nnpm test\nexec "$(git rev-parse --show-toplevel)/.specify/gates/hooks/commit-msg" "$@"\n' >"$GPD/.git/hooks/commit-msg"
+run_doctor "$GPD" >/dev/null
+has "a hook that runs more than the gates hook stays another tool's" "$GPD" "[ok]  commit-msg (static): another tool owns the hook and calls the gates commit-msg hook"
+lacks "and gets no stub recommendation" "$GPD" "commit-msg only calls"
 # A foreign hook that leaves a trace when it runs: doctor must not run it.
 # shellcheck disable=SC2016  # the hook body is written literally
 printf '#!/bin/sh\ntouch "$(git rev-parse --show-toplevel)/ran.txt"\nexec bash "$(git rev-parse --show-toplevel)/.specify/gates/hooks/commit-msg" "$@"\n' >"$GPD/.git/hooks/commit-msg"

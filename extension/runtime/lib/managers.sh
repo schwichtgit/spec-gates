@@ -6,6 +6,9 @@
 #   gates_git_probe <root> <hook>   # run it: 0 = a gates refusal reaches
 #                                   # git; else 1, with GATES_PROBE_MSG set
 #   gates_hook_owner <root> <hook>  # gates | absent | other
+#   gates_hook_is_gates <file> <hook>
+#                                   # the stub, a copied gates hook, or a
+#                                   # hook that only calls the gates hook
 #   gates_hook_static <root> <hook> # read it: is the call-through there?
 #   gates_git_check <root> <hook> <probe:0|1>
 #                                   # probe when gates owns the hook (or on
@@ -99,10 +102,10 @@ gates_git_probe() { # <root> <hook>
     return 1
 }
 
-# Who owns the hook git runs (#74): "gates" when it is the gates stub or a
-# copied gates hook (the whole chain is gates code), "absent" when there is
-# none, "other" for anything else (husky, lefthook, the pre-commit
-# framework, a custom script).
+# Who owns the hook git runs (#74): "gates" when the whole chain is gates
+# code (gates_hook_is_gates), "absent" when there is none, "other" for
+# anything else (husky, lefthook, the pre-commit framework, a custom
+# script).
 gates_hook_owner() { # <root> <hook>
     local dir f
     dir="$(gates_hooks_dir "$1")" || { echo absent; return 0; }
@@ -111,9 +114,38 @@ gates_hook_owner() { # <root> <hook>
         echo absent
     elif grep -q 'spec-gates hook stub\|Git commit-msg hook\.\|Git pre-commit hook --' "$f" 2>/dev/null; then
         echo gates
+    elif [[ "$(gates_hook_manager "$1" "$2")" == "script" ]] && gates_hook_delegates "$f" "$2"; then
+        # A delegate (#298). Under husky the same line is husky's script.
+        echo gates
     else
         echo other
     fi
+}
+
+# The hook file is gates code: the stub or a copied gates hook (by their
+# marker text), or a delegate (gates_hook_delegates).
+gates_hook_is_gates() { # <file> <hook>
+    grep -q 'spec-gates hook stub\|Git commit-msg hook\.\|Git pre-commit hook --' "$1" 2>/dev/null \
+        || gates_hook_delegates "$1" "$2"
+}
+
+# A delegate (#298): a hook whose only command is a call-through to the
+# projected gates hook, in a form GATES_CALL_AWK accepts, on a top-level
+# line. 0.3.x installs left such hand-written hooks:
+#   exec "$(git rev-parse --show-toplevel)/.specify/gates/hooks/pre-commit" "$@"
+# Judged by what the file runs, not by a comment: the shebang, comments,
+# blank lines and `set` option lines aside, nothing else may run. It does
+# what the stub does, minus the stub's fail-closed and pre-merge-commit
+# handling, so replacing it with the stub loses nothing.
+gates_hook_delegates() { # <file> <hook>
+    [[ -f "$1" ]] || return 1
+    awk -v needle=".specify/gates/hooks/$2" "$GATES_CALL_AWK"'
+        NR == 1 && /^#!/ { next }
+        /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+        /^set([ \t]+[-+][a-zA-Z]+|[ \t]+[-+]o[ \t]+[a-z]+)+[ \t]*$/ { next }
+        { n++; if (n == 1 && $0 ~ /^[^ \t]/ && gates_call($0, needle)) ok = 1 }
+        END { exit !(n == 1 && ok) }
+    ' "$1"
 }
 
 # A call-through counts only in a form whose failure refuses the commit

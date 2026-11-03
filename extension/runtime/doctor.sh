@@ -884,6 +884,12 @@ elif git -C "$PROJECT_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
                     echo "${REC}$h runs gates twice: .pre-commit-config.yaml calls the gates hook as well (fix: \`pre-commit install -f --hook-type $h\` deletes $h.legacy)"
                 fi
             fi
+        elif [[ "$DOC_MGR" != "husky" ]] && declare -f gates_hook_delegates >/dev/null 2>&1 \
+            && gates_hook_delegates "$hf" "$h"; then
+            # Its only command calls the gates hook (#298), as the 0.3.x
+            # hand-written hooks do: gates code, so the probe below runs it.
+            echo "${OK}$h installed, executable, delegates to the gates runtime"
+            echo "${REC}$h only calls .specify/gates/hooks/$h — run /speckit.gates.upgrade to replace it with the gates stub (it also fails closed when this branch's hook goes missing)"
         elif declare -f gates_calls_through >/dev/null 2>&1 && gates_calls_through "$hf" "$h"; then
             # The call-through to .specify/gates/hooks/<name> on a line that
             # runs, not any mention of "gates" (#128).

@@ -355,8 +355,10 @@ if [[ "$GITHOOKS" -eq 1 ]]; then
                 fi
             elif [[ ! -e "$f" ]] || cmp -s "$STUB" "$f"; then
                 { [[ -e "$f" ]] && [[ -x "$f" ]]; } || HOOKPLAN="$(addline "$HOOKPLAN" "$n")"
-            elif grep -q 'spec-gates hook stub\|Git commit-msg hook\.\|Git pre-commit hook --' "$f"; then
-                HOOKPLAN="$(addline "$HOOKPLAN" "$n")" # an older stub or a copied gates hook
+            elif gates_hook_is_gates "$f" "$n"; then
+                # An older stub, a copied gates hook, or a hook that only
+                # calls the gates hook (#298): the stub runs the same.
+                HOOKPLAN="$(addline "$HOOKPLAN" "$n")"
             elif ! gates_calls_through "$f" "$n"; then
                 FOREIGN="$(addline "$FOREIGN" "$n")"
             fi

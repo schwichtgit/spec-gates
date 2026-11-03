@@ -787,6 +787,22 @@ ok "projected copy reports the half-done upgrade (exit 2)" test "$rc" -eq 2
 ok "it prints the add command" grep -q 'specify extension add gates --from' <<<"$OUT"
 
 echo ""
+echo "=== a hook that only calls the gates hook (#298) ==="
+fixture
+# shellcheck disable=SC2016  # the 0.3.x hook text, written literally
+printf '#!/bin/sh\n# spec-gates: delegate to projected git hook (survives extension removal)\nexec "$(git rev-parse --show-toplevel)/.specify/gates/hooks/pre-commit" "$@"\n' >"$D/.git/hooks/pre-commit"
+chmod +x "$D/.git/hooks/pre-commit"
+rc_is "a delegate: --check plans the stub" 1 "$D" --check
+ok "a delegate: the plan names the stub" grep -q 'install the gates stub as git hook pre-commit' <<<"$OUT"
+rc_is "a delegate is replaced with the stub" 0 "$D" --skip-canary
+ok "a delegate: now the stub" cmp -s "$D/.specify/extensions/gates/runtime/hooks/git/stub.sh" "$D/.git/hooks/pre-commit"
+ok "a delegate: not reported as another tool's" bash -c "! grep -q 'another tool owns' <<<\"\$1\"" _ "$OUT"
+# shellcheck disable=SC2016  # the hook text, written literally
+printf '#!/bin/sh\nnpm test\nexec "$(git rev-parse --show-toplevel)/.specify/gates/hooks/pre-commit" "$@"\n' >"$D/.git/hooks/pre-commit"
+rc_is "a hook that runs more than the gates hook" 0 "$D" --skip-canary
+ok "that hook stays the user's" grep -q '^npm test' "$D/.git/hooks/pre-commit"
+
+echo ""
 echo "=== git boundary ==="
 fixture
 printf '#!/bin/sh\necho mine\n' >"$D/.git/hooks/pre-commit"

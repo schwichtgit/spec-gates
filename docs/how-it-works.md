@@ -264,6 +264,13 @@ certainly still valid; otherwise it prints it.
 | pre-commit framework                                      | a `repo: local` item in `.pre-commit-config.yaml` | Appended only when `repos:` is the last top-level key and a block list (not `repos: []`); otherwise printed. Needs pre-commit 3.2+; run `pre-commit install --hook-type <hook>` for `commit-msg` and `pre-merge-commit`. Installed after projection, it runs the gates stub as `<hook>.legacy` (below).                   |
 | anything else (another `core.hooksPath`, a custom script) | nothing is written                                | `project.sh` prints the call-through line to add, before any `exit`.                                                                                                                                                                                                                                                      |
 
+Ownership is judged by what the hook file runs. The stub, a hook copied
+from an older release, and a hook whose only command is the call-through
+to `.specify/gates/hooks/<hook>` (as some 0.3.x installs wrote them by
+hand) are gates code: they are probed, and `project.sh` replaces them with
+the current stub, which runs the same hook and also fails closed when the
+branch's hook is missing.
+
 **Proving the hooks run.** A hook that exists is not a hook git runs. The
 projected hooks answer `GATES_PROBE=1` with a marker before reading any
 policy, so a probe works with every rule off, and then refuse (exit 1).

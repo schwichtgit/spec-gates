@@ -37,6 +37,13 @@ init` set the main repository's `core.bare = true` and `git add -A`
   command it printed dropped the options. Once the install checks pass,
   the projected copy now hands the whole invocation to the installed copy,
   as it already did for `--check`.
+- **A hook that only calls the gates hook is gates-owned** (#298). A
+  hand-written hook from a 0.3.x install whose only command is
+  `exec "$(git rev-parse --show-toplevel)/.specify/gates/hooks/<hook>" "$@"`
+  was reported as another tool's, and `project.sh` never replaced it.
+  Ownership is now judged by what the file runs: such a delegate is probed
+  like the stub, doctor recommends the upgrade, and `project.sh` replaces
+  it with the stub, which runs the same hook and also fails closed.
 
 ### Added
 
