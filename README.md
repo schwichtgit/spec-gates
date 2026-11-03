@@ -193,7 +193,11 @@ section, with its defaults:
 read-only check skips, for a cache another process writes while blocks
 run; `cache/` covers the directory and everything under it, and a pattern
 of only `*`, `?` and `/` (which would match every path) makes the policy
-invalid. Writes inside nested repositories and worktrees (a directory
+invalid. Editor temporary files (`*.swp`, `*.swo`, `*~`, `.#*`, `#*#`,
+vim's `4913`) are skipped without it, at any depth. Ignoring a file in
+`.gitignore` does not exempt it, since ignored files are checked too:
+for another process's files, list them in `snapshot_exclude` (for
+example `["**/*.tmp"]`). Writes inside nested repositories and worktrees (a directory
 with its own `.git`, such as agents' worktrees under `.claude/worktrees/`)
 are skipped without it.
 

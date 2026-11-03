@@ -54,6 +54,11 @@ init` set the main repository's `core.bare = true` and `git add -A`
   (SIGPIPE: a pipe reader exited early under pipefail)", doctor
   recommends the capture-first form for each such pipe in an accept
   block, and the README documents it.
+- **Editor temporary files no longer fail an accept block** (#303). A vim
+  swap file written while a block ran failed its read-only check, and a
+  `.gitignore` entry did not help, since ignored files are checked too.
+  `*.swp`, `*.swo`, `*~`, `.#*`, `#*#` and `4913` are now exempt at any
+  depth; `spec.snapshot_exclude` covers other processes' files.
 
 ### Changed
 

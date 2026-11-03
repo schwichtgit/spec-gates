@@ -957,6 +957,14 @@ tool gates and before `parity`:
    process writes during the run; `cache/` names the directory and
    everything under it, like `cache/**`, and a pattern of only `*`, `?`
    and `/` (which would exempt everything) makes the policy invalid.
+   Editor temporary files are exempt without it, at any depth: `*.swp`,
+   `*.swo`, `*~`, `.#*`, `#*#` and vim's `4913` write probe, which an
+   editor holding a file open writes while a block runs. A `.gitignore`
+   entry is no substitute, since ignored files are checked too. One
+   limit: inside a directory that is ignored as a whole, a new or deleted
+   entry also changes the directory, and that change still counts, since
+   it may be a deleted file; exempt such a directory through
+   `spec.snapshot_exclude` if an editor works in it.
    Writes inside a nested repository or worktree (a directory below the
    root with its own `.git`, such as an agent's worktree under an ignored
    `.claude/worktrees/`) are left out of the ignored-files check by

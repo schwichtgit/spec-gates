@@ -891,6 +891,12 @@ if [[ -r /proc/self/environ ]]; then
     fi
 fi
 
+# Issue #303: an editor's temporary files are not the block's writes, at
+# any depth.
+OUT="$(isoblock editor '  mkdir -p sub
+  touch .policy.json.swp sub/.f.swo sub/f~ "sub/.#f" "sub/#f#" 4913')"
+expect_contains "editor temporary files do not fail a block (#303)" "$OUT" "EXIT=0"
+
 # Issue #302: a pipe reader that exits early fails the block under
 # pipefail; the failure names SIGPIPE.
 OUT="$(isoblock sigpipe '  yes | head -n 1')"
