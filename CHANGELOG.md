@@ -48,17 +48,6 @@ npm ci`. The gate still fails until the install matches.
 
 ### Changed
 
-- **Gate commands read the commit's index through
-  `GATES_GIT_INDEX_FILE`** (#293). They no longer inherit
-  `GIT_INDEX_FILE`, and `git commit -a` or `git commit <paths>` hands the
-  hook a temporary index, so a plain `git diff --cached` in a custom
-  command or project gate now reads the repository's index, not the
-  commit's (for `git commit <paths>` it names files the commit does not
-  hold). `verify.sh` exports the absolute path of the index the commit
-  uses as `GATES_GIT_INDEX_FILE` (outside a hook, the repository's own
-  index): `GIT_INDEX_FILE="$GATES_GIT_INDEX_FILE" git diff --cached
---name-only` lists exactly what the commit holds. A command that read
-  the staged files through the inherited variable switches to it.
 - **The secret scan skips the credential heuristic in unedited gates
   files** (#308). A match of "Possible credential assignment" in the
   vendored `.specify/extensions/gates/**` or the projected
@@ -130,25 +119,6 @@ npm ci`. The gate still fails until the install matches.
 
 ### Fixed
 
-- **No false timeouts** (#292). An accept block or project gate that
-  finished in seconds could fail as "timeout after Ns", more often the
-  higher the load (in 0.4.1 for accept blocks, in 0.5.0 also for project
-  gates); raising the limit did not help. A timer process slept for the
-  limit and then wrote a timeout marker, and stopping it after the command
-  had ended could still let that write happen. Now the command reports its
-  exit status on a FIFO and the gate decides with one wait of at most the
-  limit: there is no timer process, and no sleep decides the outcome. The
-  `hooks.local.d` rule limit works the same way.
-- **Gate commands no longer reach the caller's repository from a linked
-  worktree** (#293). In a linked worktree git runs its hooks with an
-  absolute `GIT_DIR` and `GIT_INDEX_FILE`. The custom command, project
-  gates and the `task` orchestrator's commands inherited them, so a
-  command that built a throwaway repository acted on the real one: `git
-init` set the main repository's `core.bare = true` and `git add -A`
-  staged every tracked file as deleted. 0.4.0 cleared these variables for
-  accept blocks and the canary only (#173). Every command the gates run,
-  and the `contract.sh sync` fetch, now starts without git's
-  per-repository variables; one list serves all of them.
 - **A child on its way out no longer fails a passing block** (#294). An
   accept block or `hooks.local.d` rule that killed a child without
   waiting for it failed with "left a process running" when the child was
@@ -177,6 +147,58 @@ init` set the main repository's `core.bare = true` and `git add -A`
   `.gitignore` entry did not help, since ignored files are checked too.
   `*.swp`, `*.swo`, `*~`, `.#*`, `#*#` and `4913` are now exempt at any
   depth; `spec.snapshot_exclude` covers other processes' files.
+
+## 0.5.1 — 2026-11-03
+
+### Upgrading
+
+- Upgrade as for 0.5.0 (README "Upgrade"): one `project.sh` run, then
+  commit `.specify/gates/.projected.sha256` with the upgrade. No policy
+  change is needed, and no new policy key exists.
+- A custom command or project gate that reads the files being committed
+  (`git diff --cached`) must read them through `GATES_GIT_INDEX_FILE`:
+  `GIT_INDEX_FILE="$GATES_GIT_INDEX_FILE" git diff --cached --name-only`.
+  Gate commands no longer inherit `GIT_INDEX_FILE`, so without it they
+  read the repository's index, not the commit's (`git commit -a`,
+  `git commit <paths>`).
+- `hooks.local.d` rules and the time limits of accept blocks and project
+  gates now need `mkfifo` (POSIX; the accept-block lease already did).
+
+### Fixed
+
+- **No false timeouts** (#292). An accept block or project gate that
+  finished in seconds could fail as "timeout after Ns", more often the
+  higher the load (in 0.4.1 for accept blocks, in 0.5.0 also for project
+  gates); raising the limit did not help. A timer process slept for the
+  limit and then wrote a timeout marker, and stopping it after the command
+  had ended could still let that write happen. Now the command reports its
+  exit status on a FIFO and the gate decides with one wait of at most the
+  limit: there is no timer process, and no sleep decides the outcome. The
+  `hooks.local.d` rule limit works the same way.
+- **Gate commands no longer reach the caller's repository from a linked
+  worktree** (#293). In a linked worktree git runs its hooks with an
+  absolute `GIT_DIR` and `GIT_INDEX_FILE`. The custom command, project
+  gates and the `task` orchestrator's commands inherited them, so a
+  command that built a throwaway repository acted on the real one: `git
+init` set the main repository's `core.bare = true` and `git add -A`
+  staged every tracked file as deleted. 0.4.0 cleared these variables for
+  accept blocks and the canary only (#173). Every command the gates run,
+  and the `contract.sh sync` fetch, now starts without git's
+  per-repository variables; one list serves all of them.
+
+### Changed
+
+- **Gate commands read the commit's index through
+  `GATES_GIT_INDEX_FILE`** (#293). They no longer inherit
+  `GIT_INDEX_FILE`, and `git commit -a` or `git commit <paths>` hands the
+  hook a temporary index, so a plain `git diff --cached` in a custom
+  command or project gate now reads the repository's index, not the
+  commit's (for `git commit <paths>` it names files the commit does not
+  hold). `verify.sh` exports the absolute path of the index the commit
+  uses as `GATES_GIT_INDEX_FILE` (outside a hook, the repository's own
+  index): `GIT_INDEX_FILE="$GATES_GIT_INDEX_FILE" git diff --cached
+--name-only` lists exactly what the commit holds. A command that read
+  the staged files through the inherited variable switches to it.
 
 ## 0.5.0 — 2026-10-27
 

@@ -73,8 +73,13 @@ proves it did:
 }
 ```
 
-`skip_at` takes `agent` and `git`, never `ci`. Details in
-[How it works](docs/how-it-works.md#one-entrypoint).
+`skip_at` takes `agent` and `git`, never `ci`. Gate commands run from the
+project root without git's per-repository variables (`GIT_DIR`,
+`GIT_INDEX_FILE` and the rest), so one that builds a throwaway repository
+cannot touch this one, even from a linked worktree. To read the files a
+commit holds, use the index `verify.sh` names:
+`GIT_INDEX_FILE="$GATES_GIT_INDEX_FILE" git diff --cached --name-only`.
+Details in [How it works](docs/how-it-works.md#one-entrypoint).
 
 **Don't repeat what the run already proved.** `spec.cover` names a
 protected project script that may vouch for an accept block at the agent
@@ -323,10 +328,12 @@ its enforcement frontmatter — one registry, two consumers.
 - **python3** with the `json` module: the PR hook parses commands with it
   and refuses every PR command without it. The message rules' emoji check
   needs python3 or perl. `doctor` fails when either is missing.
-- **Standard POSIX tools** (`awk`, `sed`, `grep`, `cmp`, `sha256sum` or
-  `shasum`): `project.sh` refuses to run without `cmp` and a SHA-256
-  tool, the contract gate cannot verify its pin without a SHA-256 tool,
-  and `doctor` fails when either is missing.
+- **Standard POSIX tools** (`awk`, `sed`, `grep`, `cmp`, `mkfifo`,
+  `sha256sum` or `shasum`): `project.sh` refuses to run without `cmp` and
+  a SHA-256 tool, the contract gate cannot verify its pin without a
+  SHA-256 tool, and `doctor` fails when either is missing. The time limits
+  of accept blocks, project gates and `hooks.local.d` rules wait on a
+  FIFO: without `mkfifo` such a block, gate or rule fails, naming it.
 - **Node** with the linters your policy uses (default: **prettier**,
   **markdownlint-cli2**). Pin them in `package.json` so local and CI agree.
   A linter the policy enables but the host lacks does not block anything
