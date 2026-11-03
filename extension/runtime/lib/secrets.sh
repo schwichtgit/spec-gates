@@ -12,6 +12,10 @@
 #   gates_secret_scan_range       # stdin: commit ids, one per line,
 #                                 # oldest first; the files each adds or
 #                                 # changes; report and exit as above
+#   gates_secret_scan_file <file> # a file outside git (a gate's kept
+#                                 # output); 0 clean, 1 a rule matched
+#                                 # (its label in GATES_SECRET_WHAT), 2
+#                                 # unreadable
 #
 # The agent-boundary hooks (protect-files.sh, validate-bash.sh) source this
 # file too and call gates_forbidden_path, so the forbidden-name list has one
@@ -133,6 +137,28 @@ _gates_pristine() { # <rev> <path> <object>
     [[ -n "$_GATES_KNOWN_RELEASES" && -f "$_GATES_KNOWN_RELEASES" ]] || return 1
     awk -F '\t' -v p="$target" -v h="$sum" '$2 == h && $3 == p { found = 1 } END { exit !found }' \
         "$_GATES_KNOWN_RELEASES"
+}
+
+# Scan one file that git does not hold, such as a gate's kept output
+# (verify.sh, #309): the same rules, in the same order, as a staged file.
+# GATES_SECRET_WHAT names the first rule that matched. An unreadable file
+# returns 2, so it is never taken for a clean one.
+gates_secret_scan_file() { # <file>
+    local i rc
+    # shellcheck disable=SC2034  # read by the caller
+    GATES_SECRET_WHAT=""
+    [[ -f "$1" && -r "$1" ]] || return 2
+    for i in "${!GATES_SECRET_PATTERNS[@]}"; do
+        rc=0
+        grep -q -E "${GATES_SECRET_FLAGS[$i]}" -e "${GATES_SECRET_PATTERNS[$i]}" -- "$1" 2>/dev/null || rc=$?
+        if [[ "$rc" -eq 0 ]]; then
+            # shellcheck disable=SC2034  # read by the caller
+            GATES_SECRET_WHAT="${GATES_SECRET_LABELS[$i]}"
+            return 1
+        fi
+        [[ "$rc" -eq 1 ]] || return 2
+    done
+    return 0
 }
 
 # Paths (of the NUL-separated list on stdin) whose content matches rule <i>
