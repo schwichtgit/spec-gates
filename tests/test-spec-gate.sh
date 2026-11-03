@@ -320,6 +320,22 @@ expect "Complete + passing block passes" "$(gate "$D")" 0
 expect "outcome is enforced-pass" \
     "$(gate_json "$D" | jq -r '.attestation.spec.results[0].outcome')" "enforced-pass"
 
+# Issue #300: features that are not enforced get one counting line, not
+# one line each; GATES_SPEC_VERBOSE=1 lists them, --json carries them.
+for st in Done Implemented; do
+    printf -- '- [x] T001 Task\n' | mkfeature "$D" "210-$st" "$st"
+done
+OUT="$(gate_out "$D")"
+expect "informational features: one counting line" \
+    "$(grep -c 'spec: 2 informational, 1 enforced -- not enforced unless spec.md says exactly \*\*Status\*\*: Complete' <<<"$OUT")/$(grep -c 'not enforced (Status:' <<<"$OUT" || true)" "1/0"
+OUT="$(GATES_SPEC_VERBOSE=1 gate_out "$D")"
+expect "GATES_SPEC_VERBOSE=1 lists each informational feature" \
+    "$(grep -c 'criteria parsed, not enforced (Status: ' <<<"$OUT")/$(grep -c 'informational, 1 enforced' <<<"$OUT" || true)" "2/0"
+expect "--json carries every informational feature" \
+    "$(gate_json "$D" | jq -c '[.attestation.spec.results[] | select(.outcome == "informational") | .feature]')" \
+    '["210-Done","210-Implemented"]'
+rm -rf "$D/specs/210-Done" "$D/specs/210-Implemented"
+
 D="$WORKDIR/enforced-fail"
 project "$D" "$MINIMAL"
 mkfeature "$D" 200-broken Complete <<'EOF'

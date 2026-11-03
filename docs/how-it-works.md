@@ -975,8 +975,13 @@ tool gates and before `parity`:
 
 4. **Enforce**: a Complete feature fails the `spec` gate on any unchecked
    task or failing block, naming the feature, the task or criterion, and
-   the cause. Incomplete features are informational
-   (`spec: <feature> -- N criteria parsed, not enforced`); a Complete
+   the cause. Incomplete features are informational, counted on one line
+   (`spec: <n> informational, <m> enforced -- ...`);
+   `GATES_SPEC_VERBOSE=1` lists each instead
+   (`spec: <feature> -- N criteria parsed, not enforced (Status: ...)`),
+   and `--json` carries every feature's outcome. `Complete` is the only
+   token that enforces: `Done`, `Implemented` or `Complete (merged)` do
+   not, and there is no setting to add one. A Complete
    feature with zero blocks is flagged as having nothing executable to hold
    it to, but does not block. An enforced feature's blocks run at every
    boundary, each agent Stop, each commit and CI, so a block that takes

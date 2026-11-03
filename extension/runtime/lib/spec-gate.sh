@@ -1044,7 +1044,9 @@ gates_spec_block_entry() { # <task> <ordinal> <verifies> <result> <reason> <decl
 #   SPEC_COVERED_NAMES "<feature> <task-id>#<n>, ..." of those blocks
 #   SPEC_RESULTS_JSON  FeatureConformance array (data-model.md)
 # In text mode (json=0) informational lines print directly: per-criterion
-# results for --accept runs and one line per not-enforced feature.
+# results for --accept runs, and one summary line counting the features
+# that are not enforced (#300). GATES_SPEC_VERBOSE=1 lists each of them
+# instead, with its Status; --json always carries every feature.
 gates_spec_gate() { # <root> <accept-arg> <json 0|1>
     local root="${1:-}" accept="${2:-}" json="${3:-0}"
     SPEC_RESULT="pass"
@@ -1082,7 +1084,7 @@ $(gates_policy_section_list spec snapshot_exclude)"
         SPEC_DETAIL="spec gate: could not create work dir (mktemp)"
         return 0
     fi
-    local failures="" results="" complete_n=0 f
+    local failures="" results="" complete_n=0 info_n=0 f
     while IFS= read -r f; do
         [[ -z "$f" ]] && continue
         SPEC_FEATURES=$((SPEC_FEATURES + 1))
@@ -1256,7 +1258,11 @@ $(gates_policy_section_list spec snapshot_exclude)"
             fi
         else
             outcome="informational"
-            if [[ "$json" == "0" && "$accept" != "all" && "$accept" != "$f" ]]; then
+            if [[ "$accept" != "all" && "$accept" != "$f" ]]; then
+                info_n=$((info_n + 1))
+            fi
+            if [[ "$json" == "0" && "$accept" != "all" && "$accept" != "$f" \
+                && "${GATES_SPEC_VERBOSE:-}" == "1" ]]; then
                 local status
                 status="$(gates_spec_status "$fdir/spec.md")"
                 # Display-clip the raw Status value (issue #34): enforcement
@@ -1283,6 +1289,11 @@ $(gates_policy_section_list spec snapshot_exclude)"
     done <<<"$(gates_spec_features "$root")"
     SPEC_RESULTS_JSON="[${results%,}]"
     rm -rf "$tmp"
+    # One line for every feature not enforced, not one each (#300): a
+    # repository with many open specs would bury the gate summary.
+    if [[ "$json" == "0" && "$info_n" -gt 0 && "${GATES_SPEC_VERBOSE:-}" != "1" ]]; then
+        echo "spec: $info_n informational, $complete_n enforced -- not enforced unless spec.md says exactly **Status**: Complete (GATES_SPEC_VERBOSE=1 lists each)"
+    fi
     # Every covered block is named in the summary, so --json names it too
     # (constitution, Principle III); with none covered the detail is as
     # before.

@@ -62,6 +62,13 @@ init` set the main repository's `core.bare = true` and `git add -A`
 
 ### Changed
 
+- **One line counts the features that are not enforced** (#300). The
+  spec gate printed a "not enforced" line for every feature whose Status
+  is not `Complete`, which buried the summary in a repository with many
+  specs. It now prints one line ("88 informational, 2 enforced") that
+  restates that only `**Status**: Complete` enforces; `GATES_SPEC_VERBOSE=1`
+  lists each feature as before, and `--json` carries them all. `Complete`
+  stays the only completion token.
 - **doctor's nudge to set `Complete` names the cost** (#304). Once a
   feature is `Complete`, its accept blocks run at the agent, git and ci
   boundaries, on every agent Stop and every commit. The recommendation,

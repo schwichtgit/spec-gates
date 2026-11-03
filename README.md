@@ -160,10 +160,14 @@ recommends that form for every such pipe it finds.
 Enforcement follows the feature's own completion claim, read from
 `spec.md`:
 
-- **In progress** (any `**Status**:` other than `Complete`) — blocks are
-  parsed and reported on every run, executed only on demand:
-  `verify.sh --accept <feature|all>` runs them informationally, never
-  changing the exit code.
+- **In progress** (any `**Status**:` other than `Complete`, including
+  `Done` or `Implemented`) — blocks are parsed on every run and executed
+  only on demand: `verify.sh --accept <feature|all>` runs them
+  informationally, never changing the exit code. One line counts these
+  features (`spec: 88 informational, 2 enforced -- ...`);
+  `GATES_SPEC_VERBOSE=1` lists each with its Status, and `--json` carries
+  them all. `Complete` is the only completion token, and no setting
+  changes that.
 - **`**Status**: Complete`** — the claim is enforced. Any unchecked
   `- [ ]` task or failing accept block fails the run, naming the feature,
   the task or criterion, and the cause (exit code, `timeout after <N>s`
