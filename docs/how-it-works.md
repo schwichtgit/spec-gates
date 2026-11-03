@@ -176,7 +176,13 @@ file.
 When work becomes history. `pre-commit` blocks commits to `main`, scans
 staged content for secrets and forbidden files (renamed and typechanged
 files included), and runs the same verify
-entrypoint. `commit-msg` enforces Conventional Commits and refuses
+entrypoint. That run judges the working tree, not the commit: an unstaged
+fix can let a broken commit pass (CI then fails), and an untracked file
+can fail a clean one. When the working tree differs from the commit
+(tracked changes the commit leaves out, for `git commit -a` and
+`git commit <paths>` too, or untracked files that are not ignored),
+`pre-commit` prints one line, `gates: warning: the gate judges the working
+tree, not this commit: ...`, with the counts. `commit-msg` enforces Conventional Commits and refuses
 AI-isms, emoji (anywhere in the message, not only the subject; comment
 lines and the scissors section are dropped first), AI branding and
 `Co-Authored-By` trailers. The branding

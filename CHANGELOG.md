@@ -31,6 +31,15 @@ init` set the main repository's `core.bare = true` and `git add -A`
   accept blocks and the canary only (#173). Every command the gates run,
   and the `contract.sh sync` fetch, now starts without git's
   per-repository variables; one list serves all of them.
+- **The git boundary says when it judged more than the commit** (#305).
+  `pre-commit` runs the gates on the working tree, so an unstaged fix
+  could let a broken commit pass and an untracked file could fail a clean
+  one, while the hook and the README promised "if the git boundary
+  passed, CI passes" without the condition. Both now state it: the
+  promise holds when the working tree matches the commit. When it does
+  not (tracked changes the commit leaves out, including for
+  `git commit -a` and `git commit <paths>`, or untracked files that are
+  not ignored), the hook prints one warning line with the counts.
 
 ### Changed
 

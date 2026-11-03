@@ -20,9 +20,12 @@ fi
 #   2. The shared quality gate, delegated to verify.sh --boundary git, so the
 #      lint/format checks are identical to the agent and CI boundaries.
 #
-# The quality gate runs against the whole tree (not staged-only). That is
-# intentional: whole-tree checking is what makes "if the git boundary passed,
-# CI passes" a guarantee rather than a hope. Emergency override: GATES_SKIP=1.
+# The quality gate runs against the whole working tree (not staged-only),
+# the same tree CI checks out. "If the git boundary passed, CI passes" holds
+# when the working tree matches what is committed: an unstaged fix can let a
+# broken commit pass, and an untracked file can fail a clean one (#305). The
+# hook says so on one line when the two differ. Emergency override:
+# GATES_SKIP=1.
 
 # Every staged path whose content lands in the commit (issue #186):
 # --no-renames lists a rename under its new name (A) instead of as an R
@@ -223,6 +226,17 @@ else
     VERIFY="$PROJECT_ROOT/.specify/gates/verify.sh"
     if [[ -x "$VERIFY" ]]; then
         echo "Pre-commit: running quality gate (verify.sh --boundary git)..."
+        # The gate judges the working tree; name it when that is not the
+        # commit (#305). git reads the index it handed this hook, the
+        # temporary one for `commit -a` and `commit <paths>`, so tracked
+        # changes left out of the commit count, and so do the untracked
+        # files the walk lints (not ignored).
+        TREE_UNSTAGED="$(git diff --name-only 2>/dev/null | wc -l | tr -d ' ' || true)"
+        TREE_UNTRACKED="$(git ls-files --others --exclude-standard --directory --no-empty-directory 2>/dev/null \
+            | wc -l | tr -d ' ' || true)"
+        if [[ "${TREE_UNSTAGED:-0}" -gt 0 || "${TREE_UNTRACKED:-0}" -gt 0 ]]; then
+            echo "gates: warning: the gate judges the working tree, not this commit: $TREE_UNSTAGED file(s) with changes outside the commit, $TREE_UNTRACKED untracked path(s)" >&2
+        fi
         # On a terminal, show a line as each gate and block starts and ends
         # (feature 007): verify.sh appends them to GATES_PROGRESS. A caller
         # that set the variable (even to empty) keeps its choice; off a
