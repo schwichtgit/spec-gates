@@ -44,6 +44,15 @@ init` set the main repository's `core.bare = true` and `git add -A`
   Ownership is now judged by what the file runs: such a delegate is probed
   like the stub, doctor recommends the upgrade, and `project.sh` replaces
   it with the stub, which runs the same hook and also fails closed.
+- **A hook manager's config alone no longer keeps old gates hooks**
+  (#314). With `.pre-commit-config.yaml` (or a lefthook config) tracked but
+  the tool never installed, `project.sh` treated it as the hook owner: the
+  0.3.x hook copies git still ran were not replaced, the missing
+  `pre-merge-commit` hook was not installed, and the only fix offered was a
+  config entry that does nothing without the tool. A config now counts only
+  when the tool generated a hook or no gates hook is installed. Older gates
+  hooks become the stub whatever the config says, and the summary names
+  what git runs.
 
 ### Added
 

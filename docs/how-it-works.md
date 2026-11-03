@@ -269,7 +269,12 @@ from an older release, and a hook whose only command is the call-through
 to `.specify/gates/hooks/<hook>` (as some 0.3.x installs wrote them by
 hand) are gates code: they are probed, and `project.sh` replaces them with
 the current stub, which runs the same hook and also fails closed when the
-branch's hook is missing.
+branch's hook is missing. A `lefthook.yml` or `.pre-commit-config.yaml`
+alone does not make that tool the owner: while the hooks directory holds
+a gates hook and no hook the tool generated, the tool was never installed
+and the repository is treated as having no manager. Where the tool is
+installed, an older gates hook it has not replaced yet still becomes the
+stub.
 
 **Proving the hooks run.** A hook that exists is not a hook git runs. The
 projected hooks answer `GATES_PROBE=1` with a marker before reading any

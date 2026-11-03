@@ -330,6 +330,12 @@ if [[ "$GITHOOKS" -eq 1 ]]; then
                 [[ -x "$f.legacy" ]] && LEGACY=1
             fi
             if [[ "$MANAGER" == "husky" || "$MANAGER" == "lefthook" || "$MANAGER" == "pre-commit" ]]; then
+                # A copied gates hook or an older stub is replaced with the
+                # stub whatever the manager's config says (#314): git runs
+                # it until the manager's install command replaces it.
+                if [[ "$MANAGER" != "husky" && -e "$f" ]] && ! cmp -s "$STUB" "$f" && gates_hook_is_gates "$f" "$n"; then
+                    HOOKPLAN="$(addline "$HOOKPLAN" "$n")"
+                fi
                 if [[ "$LEGACY" -eq 1 && "$WIREMGR" -eq 0 ]]; then
                     :
                 elif ! gates_manager_wired "$ROOT" "$MANAGER" "$n"; then
@@ -526,16 +532,24 @@ report_side() {
         # Before the manager's install command replaces them, the gates
         # stubs still run (#203): name those apart, so the summary does
         # not claim a hook runs no gates when it does today.
+        # Named by what git runs now (#314): the stub, or a copied gates
+        # hook this run replaces with the stub (--check and --dry-run
+        # leave it in place).
+        local copyrun=""
         for n in $MGRPLAN; do
-            if [[ "$(gates_hook_owner "$ROOT" "$n")" == "gates" ]]; then
+            if [[ "$(gates_hook_owner "$ROOT" "$n")" != "gates" ]]; then
+                notrun="$notrun $n"
+            elif cmp -s "$STUB" "$HOOKSDIR/$n"; then
                 stubrun="$stubrun $n"
             else
-                notrun="$notrun $n"
+                copyrun="$copyrun $n"
             fi
         done
         [[ -n "$notrun" ]] && say "$MANAGER owns the git hooks and does not run gates for:$notrun"
         [[ -n "$stubrun" ]] \
             && say "$(gates_manager_file "$ROOT" "$MANAGER" pre-commit) has no gates entry for:$stubrun (git still runs the gates stub for them, until $MANAGER's install command replaces it)"
+        [[ -n "$copyrun" ]] \
+            && say "$(gates_manager_file "$ROOT" "$MANAGER" pre-commit) has no gates entry for:$copyrun (git runs an older gates hook for them; projection replaces it with the gates stub, which runs until $MANAGER's install command replaces it)"
         for n in $MGRPLAN; do
             mf="$(gates_manager_file "$ROOT" "$MANAGER" "$n")"
             if gates_manager_appendable "$ROOT" "$MANAGER" "$n"; then
