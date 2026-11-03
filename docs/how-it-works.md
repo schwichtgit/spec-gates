@@ -56,7 +56,15 @@ spec-gates uses four of them:
   discarding the whole working tree with `git checkout`, `git restore` or
   `git rm` of `.`, `:/` or other pathspec magic in any option order,
   `git checkout -f`, `git switch -f` or `--discard-changes`,
-  `git stash clear`, `git clean` with `-f` or `--force` anywhere, …). With
+  `git stash clear`, `git clean` with `-f` or `--force` anywhere, …). A
+  force-push refusal names the alternatives: a normal push, a new branch,
+  or the forge's rebase (GitLab's
+  `PUT /projects/:id/merge_requests/:iid/rebase`). With
+  `git.allow_force_with_lease_on_branches` the bare
+  `git push --force-with-lease <remote> <branch>...` passes when every
+  branch it names is none of `main`, `master` and the remote's default
+  branch (`refs/remotes/<remote>/HEAD`; unknown refuses); no named branch,
+  a refspec it cannot read, or a cd it cannot follow refuses. With
   `git.block_bulk_staging` it also refuses bulk staging: `git add` or
   `git stage` with `-A` (also in a cluster such as `-vA`), `--all`,
   `--no-ignore-removal`, `--pathspec-from-file`, `.`, `:/` and other

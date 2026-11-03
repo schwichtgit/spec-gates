@@ -64,6 +64,10 @@ init` set the main repository's `core.bare = true` and `git add -A`
   refusal of a description it cannot read named gh's `--body` and
   `--body-file`, which glab does not have. For glab it now names
   `--description '...'` and the description file form below.
+- **The force-push refusal names what to do instead** (#313). It said
+  only "(force push)". It now names a normal push, a new branch, the
+  forge's rebase (GitLab: `PUT /projects/:id/merge_requests/:iid/rebase`)
+  and a human running the push, and the policy key below.
 
 ### Changed
 
@@ -87,6 +91,13 @@ init` set the main repository's `core.bare = true` and `git add -A`
   literal path, as a description file, with the rules of gh's
   `--body-file`: the file's text is checked, and a file it cannot read is
   refused. Anything else in the substitution stays refused.
+- **`git.allow_force_with_lease_on_branches`** (#313, default `false`).
+  When `true`, the agent may run `git push --force-with-lease <remote>
+<branch>`, that form only, to branches other than `main`, `master` and
+  the remote's default branch (`refs/remotes/<remote>/HEAD`, which must
+  be known). `--force`, `-f`, `--force-with-lease=<ref>`, `+ref`,
+  `--mirror` and `--all` stay refused. Under a policy contract, turning
+  it on is a weakening deviation.
 
 ## 0.5.0 — 2026-10-27
 

@@ -517,7 +517,7 @@ enforcement backstop.
 if grep -q 'vendor/'; then echo "vendor/ is generated; run make vendor" >&2; exit 1; fi
 ```
 
-Two settings in `.specify/gates/policy.json` cover the most common cases:
+Settings in `.specify/gates/policy.json` cover the most common cases:
 
 - `git.block_bulk_staging: true` refuses `git add` and `git stage` forms
   that can sweep an untracked directory into a commit: `-A`, `--all`,
@@ -528,6 +528,16 @@ Two settings in `.specify/gates/policy.json` cover the most common cases:
   forms that stage only tracked changes (`git add -u`, `--renormalize`,
   `git commit -a`) stay allowed. The git boundary cannot tell how files
   were staged, so this is an agent-boundary rule.
+- Every force push is refused, and the refusal names what to do instead:
+  a normal push, a new branch, or the forge's rebase (GitLab:
+  `PUT /projects/:id/merge_requests/:iid/rebase`). With
+  `git.allow_force_with_lease_on_branches: true` the agent may run
+  `git push --force-with-lease <remote> <branch>`, that form only, to a
+  branch other than `main`, `master` and the remote's default branch
+  (`refs/remotes/<remote>/HEAD`, which must be known). `--force`, `-f`,
+  `+ref`, `--mirror` and `--all` stay refused. The key weakens
+  enforcement, so under a policy contract turning it on is a weakening
+  deviation.
 - The file hook blocks only on strong evidence: `.env` files, keys and
   certificates (`*.pem`, `*.key`, `*.p12`, `*.jks`, `*.keystore`, …),
   exact credential file names (`credentials.json`, `.netrc`, `.pypirc`,

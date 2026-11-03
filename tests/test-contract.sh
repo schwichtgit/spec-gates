@@ -560,6 +560,19 @@ expect "_-prefixed keys are no delta" "$(grep -c '_comment\|_note' <<<"$OUT" || 
 cp "$CL/new.json" "$CL/old.json"
 printf '%s' '{"git":{"ai_branding":{"terms":["x"]}}}' >"$CL/new.json"
 expect_contains "dropped branding terms are a weakening" "$(devs delta)" "- weakened: git.ai_branding.terms"
+# git.allow_force_with_lease_on_branches relaxes the force-push refusal
+# (#313): on is the weaker side, also when the baseline leaves it unset.
+FWL=allow_force_with_lease_on_branches
+printf '%s' '{"hooks":{}}' >"$CL/old.json"
+printf '%s' "{\"hooks\":{},\"git\":{\"$FWL\":true}}" >"$CL/new.json"
+expect_contains "git.$FWL unset->true is a weakening" "$(devs "")" "- weakened: git.$FWL"
+expect_contains "git.$FWL unset->true is a weakening (delta)" "$(devs delta)" "- weakened: git.$FWL"
+printf '%s' "{\"hooks\":{},\"git\":{\"$FWL\":false}}" >"$CL/old.json"
+expect_contains "git.$FWL false->true is a weakening" "$(devs "")" "- weakened: git.$FWL"
+cp "$CL/new.json" "$CL/old.json"
+printf '%s' "{\"hooks\":{},\"git\":{\"$FWL\":false}}" >"$CL/new.json"
+expect_contains "git.$FWL true->false is a strengthening" "$(devs delta)" "- strengthened: git.$FWL"
+expect "git.$FWL true->false is no overlay deviation" "$(devs "" | grep -c "$FWL" || true)" 0
 
 echo ""
 echo "=== project gate classification (feature 006, contracts/policy-gates.md) ==="

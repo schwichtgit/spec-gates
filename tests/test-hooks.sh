@@ -2458,6 +2458,51 @@ for c in 'git push origin main' 'git push -u origin feat/x' 'git push origin HEA
     check "allowed: $c" 0 bash -c "out=\$(printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$VM' '$HOOKS/validate-bash.sh') && [[ -z \"\$out\" ]]" _ "$(vm_payload "$c")"
 done
 
+echo ""
+echo "=== force push: the refusal names alternatives; --force-with-lease by policy (#313) ==="
+# A clone whose origin's default branch is trunk (refs/remotes/origin/HEAD),
+# and a second remote whose default branch is unknown.
+FW="$WORKDIR/fwl"
+git init -q --bare -b trunk "$FW/o.git"
+git init -q -b trunk "$FW/w"
+git -C "$FW/w" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m "chore: init"
+git -C "$FW/w" remote add origin "$FW/o.git"
+git -C "$FW/w" push -q origin trunk
+git -C "$FW/w" remote set-head origin trunk >/dev/null
+git -C "$FW/w" remote add nohead "$FW/o.git"
+mkdir -p "$FW/w/.specify/gates"
+fw_payload() { jq -nc --arg c "$1" --arg d "$FW/w" '{cwd:$d,tool_input:{command:$c}}'; }
+fw_check() { # <name> <expect> <command> [VAR=value...]
+    local name="$1" want="$2" c="$3"
+    shift 3
+    check "$name" "$want" bash -c "printf '%s' \"\$1\" | env $* CLAUDE_PROJECT_DIR='$FW/w' '$HOOKS/validate-bash.sh'" _ "$(fw_payload "$c")"
+}
+printf '%s' '{ "hooks": {} }' >"$FW/w/.specify/gates/policy.json"
+fw_check "policy off: --force-with-lease to a feature branch refused" 2 'git push --force-with-lease origin feat/x'
+for c in 'git push --force origin feat/x' 'git push --force-with-lease origin feat/x'; do
+    check "the refusal names the alternatives: $c" 0 bash -c "out=\$(printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$FW/w' '$HOOKS/validate-bash.sh' 2>&1); grep -qF 'merge_requests/:iid/rebase' <<<\"\$out\" && grep -qF 'to a new branch' <<<\"\$out\" && grep -qF 'git.allow_force_with_lease_on_branches' <<<\"\$out\"" _ "$(fw_payload "$c")"
+done
+printf '%s' '{ "hooks": {}, "git": { "allow_force_with_lease_on_branches": true } }' >"$FW/w/.specify/gates/policy.json"
+for c in 'git push --force-with-lease origin feat/x' 'git push origin feat/x --force-with-lease' \
+    'git push --force-with-lease --force-if-includes -u origin HEAD:feat/x' \
+    'git push --force-with-lease -o ci.skip origin refs/heads/feat/x'; do
+    fw_check "policy on: allowed: $c" 0 "$c"
+done
+fw_check "policy on, without jq: allowed" 0 'git push --force-with-lease origin feat/x' PATH="$NOJQ"
+# shellcheck disable=SC2016  # literal command text under test
+for c in 'git push --force-with-lease origin trunk' 'git push --force-with-lease origin main' \
+    'git push --force-with-lease origin master' 'git push --force-with-lease origin feat/x:trunk' \
+    'git push --force-with-lease origin feat/x trunk' 'git push --force-with-lease origin' \
+    'git push --force-with-lease' 'git push --force-with-lease origin HEAD' 'git push --force-with-lease origin "$B"' \
+    'git push --force-with-lease origin +feat/x' 'git push --force-with-lease=feat/x:abc origin feat/x' \
+    'git push -f origin feat/x' 'git push --force origin feat/x' 'git push --force-with-lease --all origin' \
+    'git push --force-with-lease --mirror origin' 'git push --force-with-lease nohead feat/x' \
+    'git push --force-with-lease https://example.com/r.git feat/x' 'cd "$D" && git push --force-with-lease origin feat/x' \
+    'git push --force-with-lease origin feat/x && git push --force-with-lease origin trunk'; do
+    fw_check "policy on: still refused: $c" 2 "$c"
+done
+fw_check "policy on, without jq: the default branch still refused" 2 'git push --force-with-lease origin trunk' PATH="$NOJQ"
+
 # ===========================================================================
 # The covering script (feature 007, spec.cover.script) is protected like the
 # policy at every boundary, whatever protected_files.extra says: the agent
