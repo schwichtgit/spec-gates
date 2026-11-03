@@ -159,15 +159,25 @@ failing command or pipeline stage anywhere fails the criterion, not just
 the last line. A `!`-negated command never trips errexit, so a `!` line
 followed by more commands is a parse error; write `test -z "$(...)"`,
 `if ...; then exit 1; fi`, or `! cmd || exit 1` instead (a `!` on the last
-line is fine).
+line is fine). For the same reason a pipe into `grep -q` or `head` can
+fail a block that holds: the reader exits at its first match, the writer
+dies of SIGPIPE, and the block fails with
+`exit 141 (SIGPIPE: a pipe reader exited early under pipefail)`, more
+often the more the writer prints after the match. Capture the output
+first: `out="$(cmd 2>&1)"; grep -qE 'pattern' <<<"$out"`. doctor
+recommends that form for every such pipe it finds.
 
 Enforcement follows the feature's own completion claim, read from
 `spec.md`:
 
-- **In progress** (any `**Status**:` other than `Complete`) — blocks are
-  parsed and reported on every run, executed only on demand:
-  `verify.sh --accept <feature|all>` runs them informationally, never
-  changing the exit code.
+- **In progress** (any `**Status**:` other than `Complete`, including
+  `Done` or `Implemented`) — blocks are parsed on every run and executed
+  only on demand: `verify.sh --accept <feature|all>` runs them
+  informationally, never changing the exit code. One line counts these
+  features (`spec: 88 informational, 2 enforced -- ...`);
+  `GATES_SPEC_VERBOSE=1` lists each with its Status, and `--json` carries
+  them all. `Complete` is the only completion token, and no setting
+  changes that.
 - **`**Status**: Complete`** — the claim is enforced. Any unchecked
   `- [ ]` task or failing accept block fails the run, naming the feature,
   the task or criterion, and the cause (exit code, `timeout after <N>s`
@@ -176,9 +186,12 @@ Enforcement follows the feature's own completion claim, read from
   auto-reverted). The read-only check covers the working tree, git
   config and hooks, `HEAD` and refs, and gitignored files; work in a
   sibling worktree does not count. A block that leaves a process running
-  fails too. Outside a git work tree blocks fail closed. What the check
+  at its time limit fails too. Outside a git work tree blocks fail closed. What the check
   covers, and its limits, is in
   [How it works](docs/how-it-works.md#spec-conformance-acceptance-criteria-as-executable-gates).
+  Enforced blocks run at every boundary (each agent Stop, each commit
+  and CI), so check their runtime and network needs before you set
+  `Complete`.
 
 Results land in the attestation record (a `spec` gate entry plus per-run
 counts and per-feature outcomes), a `spec` canary proves the gate still
@@ -194,7 +207,11 @@ section, with its defaults:
 read-only check skips, for a cache another process writes while blocks
 run; `cache/` covers the directory and everything under it, and a pattern
 of only `*`, `?` and `/` (which would match every path) makes the policy
-invalid. Writes inside nested repositories and worktrees (a directory
+invalid. Editor temporary files (`*.swp`, `*.swo`, `*~`, `.#*`, `#*#`,
+vim's `4913`) are skipped without it, at any depth. Ignoring a file in
+`.gitignore` does not exempt it, since ignored files are checked too:
+for another process's files, list them in `snapshot_exclude` (for
+example `["**/*.tmp"]`). Writes inside nested repositories and worktrees (a directory
 with its own `.git`, such as agents' worktrees under `.claude/worktrees/`)
 are skipped without it.
 
@@ -511,7 +528,8 @@ running after 10 seconds (`GATES_LOCAL_TIMEOUT`, a whole number above 0;
 any other value refuses): it is stopped with every process in its process
 group. A rule that exits but leaves a process running refuses too, and the
 process is stopped; a child that leaves the group (`setsid`) is out of
-reach.
+reach. A child the rule killed without waiting gets the rest of the
+limit to exit, so only one still running at the limit refuses.
 
 The rules are the project's, not the agent's: the agent cannot write or
 delete them (Write/Edit is refused, and a Bash command that appears to
