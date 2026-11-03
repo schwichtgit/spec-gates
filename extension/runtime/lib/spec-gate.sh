@@ -11,7 +11,7 @@
 #   gates_spec_covered_at_ci <boundary> <results>      # parity check on covering
 #   gates_spec_gate <root> <accept> <json>       # driver; results in SPEC_* globals
 #
-# Sources lib/watch.sh (gates_group_stop) and lib/timeline.sh (timeline
+# Sources lib/watch.sh (gates_group_stop, gates_watch_wait) and lib/timeline.sh (timeline
 # and progress lines) from its own directory.
 #
 # Fenced ```accept blocks in specs/*/tasks.md are executable acceptance
@@ -802,50 +802,67 @@ gates_spec_run_block() { # <cmdfile> <timeout-s> <root> <outfile>
         : >"$eof"
     ) </dev/null >/dev/null 2>&1 &
     reader=$!
-    # The watchdog gets /dev/null stdio: it (and its sleep) must not hold
-    # inherited fds, or a block that captures a nested verify.sh via $()
-    # would wait on the pipe until the sleep expires. It is a job of its
-    # own, so stopping it takes its sleep along.
+    # The block's exit status comes back on a FIFO, and one read with the
+    # block's time limit decides (gates_watch_wait, lib/watch.sh): no timer
+    # process, so a block that has finished is never reported as timed out.
+    # Only that decision writes the timeout marker.
+    local status="$outfile.status"
+    rm -f "$status"
+    if ! mkfifo "$status" 2>/dev/null; then
+        kill -TERM "$reader" 2>/dev/null
+        wait "$reader" 2>/dev/null
+        rm -f "$mark" "$lease" "$eof"
+        SPEC_BLOCK_DETAIL="cannot watch the block: mkfifo failed"
+        return 1
+    fi
     (
         set -m
+        exec 6<>"$status"
         # A git hook runs this with GIT_DIR and GIT_INDEX_FILE set (absolute
         # in a linked worktree): a block that builds a sandbox repository
         # would then add, commit and tag in the caller's repository (#173).
         # The block gets a clean git environment; it runs in the project
         # directory, so its own git calls still find this repository.
-        (cd "$root" && GATES_SPEC_EXEC=1 GATES_SPEC_BLOCK="$bid" exec env -u GIT_DIR -u GIT_INDEX_FILE \
-            -u GIT_WORK_TREE -u GIT_PREFIX -u GIT_COMMON_DIR -u GIT_OBJECT_DIRECTORY \
-            -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_NAMESPACE -u GIT_QUARANTINE_PATH \
-            bash -eo pipefail "$cmdfile") 7>"$lease" >"$outfile" 2>&1 </dev/null &
+        # The job around it leads the block's process group, outlives a TERM
+        # to that group (a handler, not an ignore, so the block still gets
+        # the signal), and reports the block's status however it ended. Its
+        # own stdio is /dev/null, so it never holds a caller's $() pipe.
+        {
+            trap : HUP INT TERM
+            (cd "$root" && GATES_SPEC_EXEC=1 GATES_SPEC_BLOCK="$bid" exec env -u GIT_DIR -u GIT_INDEX_FILE \
+                -u GIT_WORK_TREE -u GIT_PREFIX -u GIT_COMMON_DIR -u GIT_OBJECT_DIRECTORY \
+                -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_NAMESPACE -u GIT_QUARANTINE_PATH \
+                bash -eo pipefail "$cmdfile") 7>"$lease" >"$outfile" 2>&1 </dev/null 6>&-
+            echo "$?" >&6
+        } >/dev/null 2>&1 </dev/null &
         pid=$!
-        trap 'kill -TERM -- -"$pid" 2>/dev/null' HUP INT TERM
-        (
-            sleep "$timeout"
-            : >"$marker"
+        stopped=""
+        trap 'stopped=1; kill -TERM -- -"$pid" 2>/dev/null' HUP INT TERM
+        gates_watch_wait "$timeout" 6
+        brc="$GATES_WATCH_RC"
+        if [[ -z "$brc" ]]; then
             gates_spec_group_stop "$pid"
-        ) >/dev/null 2>&1 </dev/null &
-        watcher=$!
-        brc=0
-        wait "$pid" 2>/dev/null || brc=$?
-        if [[ -f "$marker" ]]; then
-            wait "$watcher" 2>/dev/null
-        else
-            kill -TERM -- -"$watcher" 2>/dev/null
-            wait "$watcher" 2>/dev/null
-            # A child that is already on its way out (the block killed it
-            # without waiting) gets half a second before it counts.
-            n=0
-            while [[ $n -lt 5 ]] && gates_spec_group_alive "$pid"; do
-                sleep 0.1
-                n=$((n + 1))
-            done
-            if gates_spec_group_alive "$pid"; then
-                : >"$leftover"
-                gates_spec_group_stop "$pid"
-            fi
+            wait "$pid" 2>/dev/null
+            # Stopped from outside (the caller was interrupted): not a timeout.
+            [[ -n "$stopped" ]] && exit 143
+            : >"$marker"
+            exit 2
+        fi
+        wait "$pid" 2>/dev/null
+        # A child that is already on its way out (the block killed it
+        # without waiting) gets half a second before it counts.
+        n=0
+        while [[ $n -lt 5 ]] && gates_spec_group_alive "$pid"; do
+            sleep 0.1
+            n=$((n + 1))
+        done
+        if gates_spec_group_alive "$pid"; then
+            : >"$leftover"
+            gates_spec_group_stop "$pid"
         fi
         exit "$brc"
     ) 2>/dev/null || rc=$?
+    rm -f "$status"
     # A process outside the group is stopped on every path, pass or not.
     local detached=""
     gates_spec_detached_stop "$bid" "$procs" "$lease" "$eof" ||
