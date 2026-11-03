@@ -63,6 +63,16 @@ jobs:
           fi
       - name: Run quality gates
         run: bash .specify/gates/verify.sh --boundary ci
+      # A failed gate's full output stays in .specify/gates/output/ (the
+      # log shows its last 40 lines); keep it with the run.
+      - name: Keep the failed gates' output
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: gates-output
+          path: .specify/gates/output/*.log
+          include-hidden-files: true
+          if-no-files-found: ignore
       # A red step here means a BROKEN GATE, not a dirty tree: a canary
       # (known violation) was accepted instead of blocked, or a linter the
       # policy enables is not installed (the gate would skip it).

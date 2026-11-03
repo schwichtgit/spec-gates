@@ -460,6 +460,60 @@ check "secret scan: api_key = \"AKIA...\" blocked" 1 \
 check "secret scan: token: '<10 chars>' blocked as a credential assignment" 0 \
     bash -c "cd '$GF' && printf \"token: '%s'\\n\" abcdefgh12 >k2.txt && git add k2.txt && ! git commit -q -m 'chore: k2' 2>'$WORKDIR/k2.err' && grep -q 'SECRET: Possible credential assignment in k2.txt' '$WORKDIR/k2.err'"
 ( cd "$GF" && git reset -q -- . >/dev/null 2>&1; rm -f k2.txt )
+# #310: a variable reference or command substitution is no literal secret,
+# and a camel-case name ending in a keyword is no keyword. Literal values
+# after a keyword that starts a name (or follows _ or -) are still refused.
+# shellcheck source=/dev/null disable=SC1091
+CRED_RE="$(source "$REPO_ROOT/extension/runtime/lib/secrets.sh" && printf '%s' "${GATES_SECRET_PATTERNS[5]}")"
+while IFS= read -r line; do
+    check "credential rule passes: $line" 1 grep -qiE -e "$CRED_RE" <<<"$line"
+done <<'EOF'
+COSIGN_PASSWORD="$(printf '%s' "$COSIGN_PASSWORD_B64" | base64 -d)"
+  --password="${REGISTRY_PASSWORD}"
+token="$(tool create token)"
+token="$GITLAB_TOKEN_VALUE"
+identitySecret = "hub-identity"
+EOF
+# The @ keeps this file clean for the repository's own scan; it is dropped
+# before the check.
+while IFS= read -r line; do
+    check "credential rule refuses: $line" 0 grep -qiE -e "$CRED_RE" <<<"$line"
+done < <(tr -d @ <<'EOF'
+password@: "hunter22x"
+API_TOKEN@="abcd1234efgh"
+DB_PASSWORD@="$3cr3tPa55"
+  --password@='abcdefgh12'
+secret@ = "abcdefghij"
+EOF
+)
+check "secret scan: a quoted variable reference commits clean (#310)" 0 \
+    bash -c "cd '$GF' && printf '%s\n' 'password=\"\${REGISTRY_PASSWORD}\"' >k3.sh && git add k3.sh && git commit -q -m 'chore: k3'"
+# #308: a vendored or projected gates file that holds what the manifest
+# records skips the heuristic rule; an edited copy, another path with the
+# same text, and the exact key rules are scanned as before.
+GF_HEAD="$(git -C "$GF" rev-parse HEAD)"
+VEND=".specify/extensions/gates/runtime/lib/vend.sh"
+mkdir -p "$GF/${VEND%/*}"
+vend_manifest() { # record the vendored file's content as projected
+    # shellcheck source=/dev/null disable=SC1091
+    printf '# spec-gates-manifest v1 version=0.5.0\n%s  .specify/gates/lib/vend.sh\n' \
+        "$(source "$REPO_ROOT/extension/runtime/lib/attest.sh" && gates_sha256 "$GF/$VEND")" \
+        >"$GF/.specify/gates/.projected.sha256"
+}
+printf 'token = "%s"\n' abcdefgh1234 >"$GF/$VEND"
+vend_manifest
+check "secret scan: a pristine vendored gates file commits (#308)" 0 \
+    bash -c "cd '$GF' && git add '$VEND' .specify/gates/.projected.sha256 && git commit -q -m 'chore: vendor gates'"
+check "secret scan: an edited vendored gates file is refused (#308)" 0 \
+    bash -c "cd '$GF' && echo '# local' >>'$VEND' && git add '$VEND' && ! git commit -q -m 'chore: edit' 2>'$WORKDIR/v.err' && grep -qF 'SECRET: Possible credential assignment in $VEND' '$WORKDIR/v.err'"
+check "secret scan: the same text elsewhere is refused (#308)" 0 \
+    bash -c "cd '$GF' && git reset -q -- . && git checkout -q -- '$VEND' && cp '$VEND' vend.sh && git add vend.sh && ! git commit -q -m 'chore: copy' 2>'$WORKDIR/v.err' && grep -qF 'SECRET: Possible credential assignment in vend.sh' '$WORKDIR/v.err'"
+( cd "$GF" && git reset -q -- . >/dev/null 2>&1; rm -f vend.sh )
+printf 'AKIA%s\n' ABCDEFGHIJKLMNOP >"$GF/$VEND"
+vend_manifest
+check "secret scan: a key in a pristine gates file is still refused (#308)" 0 \
+    bash -c "cd '$GF' && git add '$VEND' .specify/gates/.projected.sha256 && ! git commit -q -m 'chore: key' 2>'$WORKDIR/v.err' && grep -qF 'SECRET: AWS key pattern in $VEND' '$WORKDIR/v.err'"
+( cd "$GF" && git reset -q --hard "$GF_HEAD" >/dev/null 2>&1; rm -rf .specify/extensions .specify/gates/.projected.sha256 )
 
 # The scan reads the staged blobs in one batch per rule (issue #133): a name
 # with a space is one file, binary content is scanned, the staged copy is
@@ -1020,15 +1074,20 @@ for co in "$WM" "$WT"; do
             echo "$form" >>"$co/pa.txt"
             echo "$form" >>"$co/pb.txt"
             git -C "$co" add pa.txt
+            # The tree differs from the commit (#305) unless `commit -a`
+            # takes every change: the hook reads the index git hands it.
             case "$form" in
-                plain) args=() want="pa.txt " ;;
-                all) args=(-a) want="pa.txt pb.txt " ;;
-                path) args=(pb.txt) want="pb.txt " ;;
+                plain) args=() want="pa.txt " differs=1 ;;
+                all) args=(-a) want="pa.txt pb.txt " differs=0 ;;
+                path) args=(pb.txt) want="pb.txt " differs=1 ;;
             esac
             rm -f "$PROBE_OUT"
             rc=0
-            (cd "$co" && PROBE_OUT="$PROBE_OUT" git commit -q ${args[@]+"${args[@]}"} -m "docs: probe $form") >/dev/null 2>&1 || rc=$?
+            (cd "$co" && PROBE_OUT="$PROBE_OUT" git commit -q ${args[@]+"${args[@]}"} -m "docs: probe $form") \
+                >/dev/null 2>"$WORKDIR/probe.err" || rc=$?
             check "$where $mode commit ($form): the commit passes the gate" 0 test "$rc" -eq 0
+            check "$where $mode commit ($form): the tree warning appears iff the tree is not the commit (#305)" 0 \
+                test "$(grep -c 'judges the working tree, not this commit: 1 file(s) with changes outside the commit,' "$WORKDIR/probe.err")" == "$differs"
             check "$where $mode commit ($form): the gate sees the commit's files" 0 \
                 test "$(cat "$PROBE_OUT" 2>/dev/null)" == "$want"
             check "$where $mode commit ($form): the commit holds those files" 0 \
@@ -1039,6 +1098,27 @@ for co in "$WM" "$WT"; do
         done
     done
 done
+# An untracked file the walk would lint is named too (#305); an ignored
+# one is not.
+WT_EXCLUDE="$(git -C "$WT" rev-parse --git-path info/exclude)"
+[[ "$WT_EXCLUDE" == /* ]] || WT_EXCLUDE="$WT/$WT_EXCLUDE"
+mkdir -p "$(dirname "$WT_EXCLUDE")"
+printf 'ignored-305.md\n' >"$WT_EXCLUDE"
+printf 'stray\n' >"$WT/stray-305.md"
+printf 'ignored\n' >"$WT/ignored-305.md"
+echo untracked >>"$WT/pa.txt"
+git -C "$WT" add pa.txt
+(cd "$WT" && PROBE_OUT="$PROBE_OUT" git commit -q -m "docs: probe untracked") >/dev/null 2>"$WORKDIR/probe.err" || true
+check "an untracked file outside the commit is named (#305)" 0 \
+    test "$(grep -c 'judges the working tree, not this commit: 0 file(s) with changes outside the commit, 1 untracked' "$WORKDIR/probe.err")" == 1
+rm -f "$WT/stray-305.md" "$WT/ignored-305.md"
+: >"$WT_EXCLUDE"
+echo clean >>"$WT/pa.txt"
+git -C "$WT" add pa.txt
+(cd "$WT" && PROBE_OUT="$PROBE_OUT" git commit -q -m "docs: probe clean") >/dev/null 2>"$WORKDIR/probe.err" || true
+check "a commit equal to the working tree prints no tree warning (#305)" 0 \
+    test "$(grep -c 'judges the working tree' "$WORKDIR/probe.err")" == 0
+
 # Outside a hook (the agent boundary) it names the repository's own index.
 echo agent >>"$WT/pa.txt"
 git -C "$WT" add pa.txt
@@ -1063,6 +1143,25 @@ abcheck() { # <name> <expect> <msg>
 abcheck "branding: default refuses Copilot" 1 'feat: Acme Copilot add-in\n'
 abcheck "branding: default refuses GPT-4" 1 'feat: support GPT-4\n'
 abcheck "branding: default ignores embedded substrings" 0 'feat: copilotage support\n'
+# #297: a lowercase kebab-case identifier names an API, not the tool; a
+# term joined to a number or written as a name is still refused.
+abcheck "branding: a kebab-case identifier passes (#297)" 0 'feat: add openai-completions provider\n'
+abcheck "branding: identifiers next to each other pass" 0 'feat: add azure-openai-client, copilot-proxy.\n'
+abcheck "branding: lowercase gpt-4o is still refused" 1 'feat: support gpt-4o\n'
+abcheck "branding: OpenAI-compatible is still refused" 1 'feat: an OpenAI-compatible endpoint\n'
+abcheck "branding: a bare term beside an identifier is still refused" 1 'feat: add openai-completions for OpenAI\n'
+# #307: "claude" in an inline code span is a command, not an attribution;
+# a code span does not hide one, and branding terms are still checked.
+# shellcheck disable=SC2016  # the backticks are message text
+abcheck "standalone Claude: a code span passes (#307)" 0 'chore: refresh the integration\n\nRan `specify integration upgrade claude` after the CLI bump.\n'
+abcheck "standalone Claude: a claude-* identifier after 'built by' passes" 0 'chore: x\n\nBuilt by claude-code-action.\n'
+abcheck "standalone Claude: the same words in prose are refused" 1 'chore: refresh the integration\n\nRan specify integration upgrade claude after the CLI bump.\n'
+# shellcheck disable=SC2016
+abcheck "standalone Claude: an attribution in a code span is refused" 1 'chore: x\n\nGenerated by `Claude`.\n'
+# shellcheck disable=SC2016
+abcheck "a Co-Authored-By trailer in a code span is refused" 1 'chore: x\n\n`Co-Authored-By: Claude <noreply@example.com>`\n'
+# shellcheck disable=SC2016
+abcheck "a branding term in a code span is refused" 1 'chore: x\n\nRan `copilot setup`.\n'
 abcheck "editor comments (# On branch ...) are not checked" 0 'feat: x\n\n# Please enter the commit message for your changes.\n# On branch feat/acme-copilot\n'
 abcheck "scissors section (commit -v diff) is not checked" 0 'feat: x\n\n# ------------------------ >8 ------------------------\n# Do not modify or remove the line above.\ndiff --git a/x b/x\n+I have added a TODO for GPT\n'
 printf '%s' '{ "hooks": {}, "git": { "ai_branding": { "allow_phrases": ["Acme Copilot", "feat/acme-copilot"] } } }' \
@@ -1073,6 +1172,8 @@ abcheck "branding: allow phrases ignore case, like the terms (#130)" 0 'feat: ac
 printf '%s' '{ "hooks": {}, "git": { "ai_branding": { "terms": [] } } }' >"$AB/.specify/gates/policy.json"
 abcheck "branding: terms [] disables the term list" 0 'feat: OpenAI client\n'
 abcheck "branding: terms [] keeps the standalone Claude rule" 1 'feat: x\n\nGenerated by Claude.\n'
+printf '%s' '{ "hooks": {}, "git": { "ai_branding": { "terms": ["ai-generated"] } } }' >"$AB/.specify/gates/policy.json"
+abcheck "branding: a hyphenated term is matched in an identifier (#297)" 1 'feat: add ai-generated code\n'
 printf '%s' '{ "hooks": {}, "git": { "ai_branding": { "allow_phrases": ["Claude Haiku"] } } }' >"$AB/.specify/gates/policy.json"
 abcheck "branding: allow phrase also exempts standalone Claude" 0 'feat: support Claude Haiku\n'
 check "validate-pr: allow phrase passes" "$PR_OK" bash -c "printf '%s' '{\"hooks\":{},\"git\":{\"ai_branding\":{\"allow_phrases\":[\"Acme Copilot\"]}}}' >'$AB/.specify/gates/policy.json' && echo '{\"tool_input\":{\"command\":\"gh pr create --title \\\"feat: x\\\" --body \\\"Ships Acme Copilot\\\"\"}}' | CLAUDE_PROJECT_DIR='$AB' '$HOOKS/validate-pr.sh'"
@@ -1271,7 +1372,8 @@ done
 # ===========================================================================
 echo ""
 echo "=== protect-files: block on strong evidence, ask on a name alone (#71) ==="
-for f in tests/test_no_secret_leak.py src/token_parser.ts docs/password-policy.md lib/keystore_util.go; do
+for f in tests/test_no_secret_leak.py src/token_parser.ts docs/password-policy.md lib/keystore_util.go \
+    tests/assert_no_credential_values.sh etc/passwd.txt docs/Passwd-rotation.md; do
     askcheck "name alone asks: $f" "$(jq -nc --arg f "$f" '{tool_input:{file_path:$f}}')" protect-files.sh CLAUDE_PROJECT_DIR="$WORKDIR/none"
 done
 for f in .env config/.env.prod id_ed25519 server.pem app.keystore release.jks credentials credentials.json .netrc .pypirc aws-credentials service-account-x.json; do
@@ -2204,6 +2306,12 @@ Claude Code'; do
     vp "agent attribution variant refused: $b" 2 "gh pr create --title 'feat: x' --body '$b'"
 done
 vp "Claude Code named in prose is not attribution" "$PR_OK" "gh pr create --title 'feat: x' --body 'Adds a hook for Claude Code users.'"
+# shellcheck disable=SC2016  # literal command text under test
+for b in 'Generated with `Claude Code`' 'Generated with [`Claude Code`](https://claude.com/claude-code)'; do
+    vp "agent attribution in a code span refused (#307): $b" 2 "gh pr create --title 'feat: x' --body '$b'"
+done
+# shellcheck disable=SC2016
+vp "claude in a code span of a PR body passes (#307)" "$PR_OK" "gh pr create --title 'feat: x' --body 'Run \`specify integration upgrade claude\` first.'"
 
 echo ""
 echo "=== validate-pr: the new alias and a repo flag before the subcommand (#192) ==="
@@ -2219,6 +2327,38 @@ done
 vp "gh -R o/r pr edit with an AI-ism refused" 2 "gh -R o/r pr edit 5 --body 'Generated with Claude Code'"
 vp "glab -R g/p mr update non-conventional title refused" 2 "glab -R g/p mr update 3 --title 'add stuff'"
 vp "gh -R o/r pr list is not a PR command" 0 "gh -R o/r pr list"
+
+echo ""
+echo "=== validate-pr: glab reads a description from a file (#312) ==="
+# glab has no description-file flag: --description "$(cat <path>)" or
+# "$(<path)" with a literal path is read and checked like gh's --body-file.
+printf "Adds the parser's tests.\n" >"$WORKDIR/gl-ok.md"
+printf 'I have made it seamless.\n' >"$WORKDIR/gl-bad.md"
+# shellcheck disable=SC2016  # literal command text under test
+for c in "glab mr create --title 'fix: x' --description \"\$(cat $WORKDIR/gl-ok.md)\"" \
+    "glab mr create --title 'fix: x' -d \"\$(<$WORKDIR/gl-ok.md)\"" \
+    "glab mr update 3 --description \"\$( cat $WORKDIR/gl-ok.md )\""; do
+    vp "glab description file read and allowed: $c" "$PR_OK" "$c"
+done
+# shellcheck disable=SC2016
+for c in "glab mr create --title 'fix: x' --description \"\$(cat $WORKDIR/gl-bad.md)\"" \
+    "glab mr create --title 'fix: x' --description \"\$(cat $WORKDIR/gl-none.md)\"" \
+    "glab mr create --title 'fix: x' --description \"\$(cat $WORKDIR/gl-ok.md | head)\"" \
+    'glab mr create --title "fix: x" --description "$(cat $F)"' \
+    "glab mr create --title 'fix: x' --description \"x \$(cat $WORKDIR/gl-ok.md)\"" \
+    "glab mr create --title 'fix: x' --description \$(cat $WORKDIR/gl-ok.md)" \
+    "glab mr create --title \"\$(cat $WORKDIR/gl-ok.md)\" --description 'ok'" \
+    'glab mr create --title "fix: x" --description "$(cat -)"' \
+    'gh pr create --title "fix: x" --body "$(cat body.md)"'; do
+    vp "glab description file refused: $c" 2 "$c"
+done
+# shellcheck disable=SC2016
+check "glab refusal names --description, not gh's flags (#312)" 0 bash -c \
+    "out=\$(jq -nc --arg c \"\$1\" '{tool_input:{command:\$c}}' | CLAUDE_PROJECT_DIR='$RT' '$HOOKS/validate-pr.sh' 2>&1); grep -qF 'glab has no description-file flag' <<<\"\$out\" && ! grep -qF -- '--body-file' <<<\"\$out\"" \
+    _ 'glab mr create --title "fix: x" --description "$B"'
+check "a glab description file it cannot read names the file" 0 bash -c \
+    "out=\$(jq -nc --arg c \"\$1\" '{tool_input:{command:\$c}}' | CLAUDE_PROJECT_DIR='$RT' '$HOOKS/validate-pr.sh' 2>&1); grep -qF 'cannot read --description \"\$(cat $WORKDIR/gl-none.md)\"' <<<\"\$out\"" \
+    _ "glab mr create --title 'fix: x' --description \"\$(cat $WORKDIR/gl-none.md)\""
 vp "a PR alias inside sh -c refused" 2 "sh -c 'gh -R o/r pr new -t x -b y'"
 
 echo ""
@@ -2383,6 +2523,51 @@ for c in 'git push origin main' 'git push -u origin feat/x' 'git push origin HEA
     'bash .specify/gates/constitution.sh draft --corpus c --selections s.json --out /tmp/c.md'; do
     check "allowed: $c" 0 bash -c "out=\$(printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$VM' '$HOOKS/validate-bash.sh') && [[ -z \"\$out\" ]]" _ "$(vm_payload "$c")"
 done
+
+echo ""
+echo "=== force push: the refusal names alternatives; --force-with-lease by policy (#313) ==="
+# A clone whose origin's default branch is trunk (refs/remotes/origin/HEAD),
+# and a second remote whose default branch is unknown.
+FW="$WORKDIR/fwl"
+git init -q --bare -b trunk "$FW/o.git"
+git init -q -b trunk "$FW/w"
+git -C "$FW/w" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m "chore: init"
+git -C "$FW/w" remote add origin "$FW/o.git"
+git -C "$FW/w" push -q origin trunk
+git -C "$FW/w" remote set-head origin trunk >/dev/null
+git -C "$FW/w" remote add nohead "$FW/o.git"
+mkdir -p "$FW/w/.specify/gates"
+fw_payload() { jq -nc --arg c "$1" --arg d "$FW/w" '{cwd:$d,tool_input:{command:$c}}'; }
+fw_check() { # <name> <expect> <command> [VAR=value...]
+    local name="$1" want="$2" c="$3"
+    shift 3
+    check "$name" "$want" bash -c "printf '%s' \"\$1\" | env $* CLAUDE_PROJECT_DIR='$FW/w' '$HOOKS/validate-bash.sh'" _ "$(fw_payload "$c")"
+}
+printf '%s' '{ "hooks": {} }' >"$FW/w/.specify/gates/policy.json"
+fw_check "policy off: --force-with-lease to a feature branch refused" 2 'git push --force-with-lease origin feat/x'
+for c in 'git push --force origin feat/x' 'git push --force-with-lease origin feat/x'; do
+    check "the refusal names the alternatives: $c" 0 bash -c "out=\$(printf '%s' \"\$1\" | CLAUDE_PROJECT_DIR='$FW/w' '$HOOKS/validate-bash.sh' 2>&1); grep -qF 'merge_requests/:iid/rebase' <<<\"\$out\" && grep -qF 'to a new branch' <<<\"\$out\" && grep -qF 'git.allow_force_with_lease_on_branches' <<<\"\$out\"" _ "$(fw_payload "$c")"
+done
+printf '%s' '{ "hooks": {}, "git": { "allow_force_with_lease_on_branches": true } }' >"$FW/w/.specify/gates/policy.json"
+for c in 'git push --force-with-lease origin feat/x' 'git push origin feat/x --force-with-lease' \
+    'git push --force-with-lease --force-if-includes -u origin HEAD:feat/x' \
+    'git push --force-with-lease -o ci.skip origin refs/heads/feat/x'; do
+    fw_check "policy on: allowed: $c" 0 "$c"
+done
+fw_check "policy on, without jq: allowed" 0 'git push --force-with-lease origin feat/x' PATH="$NOJQ"
+# shellcheck disable=SC2016  # literal command text under test
+for c in 'git push --force-with-lease origin trunk' 'git push --force-with-lease origin main' \
+    'git push --force-with-lease origin master' 'git push --force-with-lease origin feat/x:trunk' \
+    'git push --force-with-lease origin feat/x trunk' 'git push --force-with-lease origin' \
+    'git push --force-with-lease' 'git push --force-with-lease origin HEAD' 'git push --force-with-lease origin "$B"' \
+    'git push --force-with-lease origin +feat/x' 'git push --force-with-lease=feat/x:abc origin feat/x' \
+    'git push -f origin feat/x' 'git push --force origin feat/x' 'git push --force-with-lease --all origin' \
+    'git push --force-with-lease --mirror origin' 'git push --force-with-lease nohead feat/x' \
+    'git push --force-with-lease https://example.com/r.git feat/x' 'cd "$D" && git push --force-with-lease origin feat/x' \
+    'git push --force-with-lease origin feat/x && git push --force-with-lease origin trunk'; do
+    fw_check "policy on: still refused: $c" 2 "$c"
+done
+fw_check "policy on, without jq: the default branch still refused" 2 'git push --force-with-lease origin trunk' PATH="$NOJQ"
 
 # ===========================================================================
 # The covering script (feature 007, spec.cover.script) is protected like the

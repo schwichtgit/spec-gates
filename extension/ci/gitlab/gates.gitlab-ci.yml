@@ -56,8 +56,22 @@ gates:
     # adopting spec-gates) runs the MR's own copy. This file still comes
     # from the MR: protect it and .specify/gates/** with protected branches
     # + CODEOWNERS (approval required).
+    # Renovate and Dependabot descriptions quote upstream release notes
+    # (emoji, third-party prose) nobody here wrote, so the description of an
+    # MR pipeline their bot user started is not checked; its title,
+    # protected changes and secrets are. GitLab names no MR author, so this
+    # goes by the user who started the pipeline (GITLAB_USER_LOGIN): a
+    # pipeline a person starts or retries checks the description. Put your
+    # bots' user names in bots.
     - |
       set -e
+      bots="renovate-bot dependabot"
+      case " $bots " in
+        *" ${GITLAB_USER_LOGIN:-none} "*)
+          echo "pr-check: the MR pipeline was started by the bot user ${GITLAB_USER_LOGIN}; its description (quoted release notes) is not checked"
+          export CI_MERGE_REQUEST_DESCRIPTION="" CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED=false
+          ;;
+      esac
       base="${CI_MERGE_REQUEST_DIFF_BASE_SHA:-}"
       if [ -z "$base" ]; then
         bash .specify/gates/pr-check.sh
@@ -70,6 +84,13 @@ gates:
         echo "pr-check: the base ($base) has no pr-check.sh (adoption MR); running the merge request's own copy"
         bash .specify/gates/pr-check.sh
       fi
+  # A failed gate's full output stays in .specify/gates/output/ (the log
+  # shows its last 40 lines); keep it with the job.
+  artifacts:
+    when: on_failure
+    paths:
+      - .specify/gates/output/
+    expire_in: 14 days
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == "main"'

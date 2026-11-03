@@ -293,8 +293,10 @@ if have_node_linters; then
     RC_DRIFT=0
     DRIFT_OUT="$(CLAUDE_PROJECT_DIR="$DP" bash "$DP/.specify/gates/verify.sh" --boundary ci 2>&1)" || RC_DRIFT=$?
     expect "version drift -> gate fails (exit 2)" "$RC_DRIFT" 2
-    expect "report names the tool and both versions" \
-        "$(printf '%s' "$DRIFT_OUT" | grep -c 'parity -- prettier: resolved 3\..*, pinned 9\.9\.9 (run npm ci)' || true)" 1
+    # node_modules (the repository's, linked) was installed from the
+    # lockfile before the edit, so the report names that cause (#299).
+    expect "report names the tool, both versions and the stale install" \
+        "$(printf '%s' "$DRIFT_OUT" | grep -c 'parity -- prettier: resolved 3\..*, pinned 9\.9\.9 (node_modules was installed from another lockfile; run npm ci)' || true)" 1
     DRIFT_REC="$(tail -1 "$DP/.specify/gates/attestations.jsonl" \
         | jq -r '.gates[] | select(.name == "parity") | "\(.result):\(.reason | contains("pinned 9.9.9"))"')"
     expect "attestation carries the parity fail entry with reason" "$DRIFT_REC" "fail:true"
@@ -347,6 +349,26 @@ if have_node_linters; then
 else
     skip "parity gate checks" "run npm ci to install pinned prettier"
 fi
+
+# --- 10a: a stale install names its cause (#299) ---
+echo ""
+echo "=== parity: node_modules installed from another lockfile (#299) ==="
+mism_of() { # <dir> <gates-json> -> gates_pin_mismatches' line
+    (source "$REPO_ROOT/extension/runtime/lib/attest.sh" && gates_pin_mismatches "$2" "$1")
+}
+DSI="$WORKDIR/stale-install"
+mkdir -p "$DSI/node_modules"
+printf '{"packages":{"node_modules/prettier":{"version":"3.9.6"},"node_modules/markdownlint-cli2":{"version":"0.23.2"}}}' >"$DSI/package-lock.json"
+printf '{"packages":{"node_modules/prettier":{"version":"3.9.10"},"node_modules/markdownlint-cli2":{"version":"0.23.2"}}}' >"$DSI/node_modules/.package-lock.json"
+SI_GATES='[{"name":"prettier","bin":"node_modules/.bin/prettier","version":"3.9.10","pinned":"3.9.6"},
+           {"name":"markdownlint","bin":"node_modules/.bin/markdownlint-cli2","version":"0.24.0","pinned":"0.23.2"}]'
+expect "an install from another lockfile is named; a matching entry is not" \
+    "$(mism_of "$DSI" "$SI_GATES")" \
+    "prettier: resolved 3.9.10, pinned 3.9.6 (node_modules was installed from another lockfile; run npm ci); markdownlint: resolved 0.24.0, pinned 0.23.2 (run npm ci)"
+rm -f "$DSI/node_modules/.package-lock.json"
+expect "without node_modules/.package-lock.json only the versions are named" \
+    "$(mism_of "$DSI" "$SI_GATES")" \
+    "prettier: resolved 3.9.10, pinned 3.9.6 (run npm ci); markdownlint: resolved 0.24.0, pinned 0.23.2 (run npm ci)"
 
 # --- 10b: pin sources (#260): package-lock.json, mise, .tool-versions ---
 echo ""
