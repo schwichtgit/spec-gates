@@ -307,7 +307,9 @@ project "$DO" '{ "hooks": { "verify-quality": { "orchestrator": "custom", "sever
 } >"$DO/check.sh"
 DOF="$DO/.specify/gates/output/custom.log"
 rc=0
-OUT="$(cd "$DO" && CLAUDE_PROJECT_DIR="$DO" bash "$DO/.specify/gates/verify.sh" --boundary ci 2>/dev/null)" || rc=$?
+# Off a forge (no GITHUB_ACTIONS, no GITLAB_CI), as on a plain CI runner.
+OUT="$(cd "$DO" && env -u GITHUB_ACTIONS -u GITLAB_CI CLAUDE_PROJECT_DIR="$DO" \
+    bash "$DO/.specify/gates/verify.sh" --boundary ci 2>/dev/null)" || rc=$?
 expect "ci: the run fails (exit 2)" "$rc" 2
 expect "the report names the kept file after the summary" \
     "$(grep -A1 '^  \[fail\] custom -- ' <<<"$OUT" | sed -n 2p)" "    output: .specify/gates/output/custom.log"
@@ -318,6 +320,38 @@ expect "ci: the report prints the last 40 lines of the output" \
 expect "a project gate keeps its output too" \
     "$(cat "$DO/.specify/gates/output/pg.log" 2>/dev/null | paste -sd ' ' -)|$(grep -c '^    output: .specify/gates/output/pg.log$' <<<"$OUT")" "pg-first-309 pg-last-309|1"
 expect "the output directory ignores itself" "$(cat "$DO/.specify/gates/output/.gitignore" 2>/dev/null)" "*"
+# On a forge the whole output goes to the job log, folded, where the forge
+# masks secrets; every line indented, so none can act as a workflow command.
+OUT="$(cd "$DO" && env -u GITLAB_CI GITHUB_ACTIONS=true CLAUDE_PROJECT_DIR="$DO" \
+    bash "$DO/.specify/gates/verify.sh" --boundary ci 2>/dev/null || true)"
+expect "GitHub: the whole output in a collapsed group" \
+    "$(grep -c '^::group::custom: full output$' <<<"$OUT")|$(grep -c '^::endgroup::$' <<<"$OUT")|$(sed -n '/^::group::custom/,/^::endgroup::/p' <<<"$OUT" | grep -c '^    | ')|$(grep -c '^    | noise line 1$' <<<"$OUT")" "1|2|53|1"
+expect "GitHub: no output line starts a workflow command" "$(grep -c '^::' <<<"$OUT")" 4
+OUT="$(cd "$DO" && env -u GITHUB_ACTIONS GITLAB_CI=true CLAUDE_PROJECT_DIR="$DO" \
+    bash "$DO/.specify/gates/verify.sh" --boundary ci 2>/dev/null || true)"
+expect "GitLab: the whole output in a collapsed section" \
+    "$(grep -c 'section_start:[0-9]*:gates_custom\[collapsed=true\]' <<<"$OUT")|$(grep -c 'section_end:[0-9]*:gates_custom' <<<"$OUT")|$(grep -c '^    | noise line 1$' <<<"$OUT")" "1|1|1"
+# Output that looks like it holds a secret is not kept at ci and not
+# printed: a file is never masked, and the scan is the same as pre-commit's.
+DSX="$WORKDIR/secret-output"
+project "$DSX" '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error", "custom_command": "sh ./leak.sh" } } }'
+# shellcheck disable=SC2016 # the script's own expansion builds the token
+printf '#!/bin/sh\necho "calling the API"\nprintf "auth: ghp_%%s\\n" "$(printf %%036d 7)"\nexit 1\n' >"$DSX/leak.sh"
+for forge in GITHUB_ACTIONS GITLAB_CI none; do
+    rc=0
+    if [[ "$forge" == none ]]; then
+        OUT="$(cd "$DSX" && env -u GITHUB_ACTIONS -u GITLAB_CI CLAUDE_PROJECT_DIR="$DSX" bash "$DSX/.specify/gates/verify.sh" --boundary ci 2>&1)" || rc=$?
+    else
+        OUT="$(cd "$DSX" && env -u GITHUB_ACTIONS -u GITLAB_CI "$forge=true" CLAUDE_PROJECT_DIR="$DSX" bash "$DSX/.specify/gates/verify.sh" --boundary ci 2>&1)" || rc=$?
+    fi
+    expect "ci ($forge): output with a secret is withheld, named by its rule" \
+        "$rc|$(grep -c '^  \[fail\] custom -- output withheld: it looks like it holds a secret (GitHub token pattern); run the step locally to see it$' <<<"$OUT")" "2|1"
+    expect "ci ($forge): the secret is printed nowhere and no file is kept" \
+        "$(grep -c 'ghp_' <<<"$OUT" || true)|$(grep -c 'calling the API' <<<"$OUT" || true)|$(find "$DSX/.specify/gates/output" -name '*.log' 2>/dev/null | grep -c . || true)" "0|0|0"
+done
+OUT="$(cd "$DSX" && CLAUDE_PROJECT_DIR="$DSX" bash "$DSX/.specify/gates/verify.sh" --boundary agent 2>/dev/null || true)"
+expect "agent: the local file is kept for the developer" \
+    "$(grep -c '^    output: .specify/gates/output/custom.log$' <<<"$OUT")|$(grep -c 'ghp_' "$DSX/.specify/gates/output/custom.log" 2>/dev/null)" "1|1"
 expect "the attestation carries no tool output" \
     "$(grep -c 'noise line\|pg-first-309' "$DO/.specify/gates/attestations.jsonl" || true)" 0
 OUT="$(cd "$DO" && CLAUDE_PROJECT_DIR="$DO" bash "$DO/.specify/gates/verify.sh" --boundary agent 2>/dev/null || true)"
