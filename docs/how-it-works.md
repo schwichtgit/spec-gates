@@ -994,7 +994,12 @@ with exactly one non-empty line covers the block: it does not run, and
 the line (control characters removed, cut to 200 characters) is its
 reason. Anything else (another exit code, no line, several lines, the
 time limit, a script that is not executable) runs the block as before,
-so the script can never fail a block. The guards:
+so the script can never fail a block. The script's own limit is
+`spec.cover.timeout_s` (default 30 s), separate from the block's
+`spec.timeout_s` (default 30 s): a script that runs out of it costs its
+limit and then the block's full run. Such a block's reason, in the
+report, the attestation and the timeline, begins with
+`covering timed out after <N>s; block ran`. The guards:
 
 - **Never at CI.** `at` takes `agent` and `git` only; `"ci"` is refused
   like any invalid policy (exit `1`), and a run without `--boundary`

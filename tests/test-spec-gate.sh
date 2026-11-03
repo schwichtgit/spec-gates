@@ -1183,6 +1183,9 @@ exit 0 with two lines|echo one; echo two
 exit 0 with a line and an empty one|echo one; echo
 exit 124 with a line|echo covered; exit 124
 EOF
+# The script's own exit 124 is its answer, not a covering timeout (#295).
+expect "not covered (exit 124): the reason names no covering timeout" \
+    "$(cv_last "$D4" '.spec.results[0].blocks[0].reason')" '""'
 rm -f "$CVM"/*
 cv_script "$D4" 'echo covered'
 chmod -x "$D4/scripts/cover.sh"
@@ -1197,6 +1200,11 @@ T0="$(date +%s)"
 OUT="$(cv_run "$D4" git)"
 T1="$(date +%s)"
 expect "timeout: the block runs" "$([[ -e "$CVM/answer-block-ran" ]] && echo ran || echo not-run)" ran
+# The block's line and its record say why it ran (#295).
+expect_contains "timeout: the block's line names the covering timeout" "$OUT" \
+    '" -- pass (covering timed out after 2s; block ran)'
+expect "timeout: the attestation reason names the covering timeout" \
+    "$(cv_last "$D4" '.spec.results[0].blocks[0].reason')" '"covering timed out after 2s; block ran"'
 expect "timeout: the run ends within 7s of a 2s limit" "$([[ $((T1 - T0)) -le 7 ]] && echo yes || echo "no ($((T1 - T0))s)")" yes
 sleep 0.5
 # shellcheck disable=SC2009  # pgrep -x matches the name, not "sleep 67"

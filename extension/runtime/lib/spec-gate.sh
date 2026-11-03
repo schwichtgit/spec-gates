@@ -942,17 +942,24 @@ gates_spec_cover_boundary() {
 # <outfile> and stderr discarded. Covered (return 0, the reason in
 # SPEC_COVER_REASON) means exit 0 and exactly one non-empty line; the line
 # is cut to 200 characters with control characters removed (FR-008).
-# Anything else returns 1 and the block runs: a non-zero exit, a timeout
-# (the script's process group is stopped), no line, several lines, a
-# script that is not executable. GATES_GATE_ROOT keeps a script that starts
-# verify.sh on this project from running the full suite inside the run.
+# Anything else returns 1 and the block runs: a non-zero exit, no line,
+# several lines, a script that is not executable. A timeout (the script's
+# process group is stopped) returns 124, so the caller can say why the
+# block ran (#295); the block runs then too. GATES_GATE_ROOT keeps a script
+# that starts verify.sh on this project from running the full suite inside
+# the run.
 gates_spec_cover_ask() { # <root> <script> <timeout-s> <feature> <task-id> <block-file> <outfile>
-    local root="$1" script="$1/$2" outfile="$7" rc=0 lines line
+    local root="$1" script="$1/$2" outfile="$7" rc=0 lines line here="$PWD"
     SPEC_COVER_REASON=""
     [[ -f "$script" && -x "$script" ]] || return 1
+    # In this shell, not a subshell: only gates_run_watched's own
+    # GATES_WATCH_DETAIL tells its timeout from a script that exits 124.
+    cd "$root" || return 1
     # shellcheck disable=SC2016  # expanded by the inner sh
-    (cd "$root" && GATES_GATE_ROOT="$root" gates_run_watched "$3" "$outfile" \
-        sh -c '"$0" "$@" 2>/dev/null' "$script" "$4" "$5" "$6") || rc=$?
+    GATES_GATE_ROOT="$root" gates_run_watched "$3" "$outfile" \
+        sh -c '"$0" "$@" 2>/dev/null' "$script" "$4" "$5" "$6" || rc=$?
+    cd "$here" 2>/dev/null || cd "$root" || :
+    [[ "$rc" -eq 124 && -n "$GATES_WATCH_DETAIL" ]] && return 124
     [[ "$rc" -eq 0 && -s "$outfile" ]] || return 1
     lines="$(awk 'END { print NR }' "$outfile")"
     [[ "$lines" == "1" ]] || return 1
@@ -1111,11 +1118,16 @@ $(gates_policy_section_list spec snapshot_exclude)"
                 [[ "$tl_fresh" == "1" ]] && SPEC_SNAP_PREV=""
                 gates_progress_start "$bname"
                 estart="$(date +%s)"
+                # Why a block under covering ran anyway, when the script
+                # ran out of time (#295): part of the block's reason.
+                local cnote=""
                 if [[ -n "$cover_b" ]]; then
-                    local cstart cend covered=0
+                    local cstart cend covered=0 crc=0
                     cstart="$estart"
                     gates_spec_cover_ask "$root" "$cover_script" "$cover_s" "$f" "$tid" \
-                        "${bfiles[$i]}" "$tmp/$f/cover-$i" && covered=1
+                        "${bfiles[$i]}" "$tmp/$f/cover-$i" || crc=$?
+                    [[ "$crc" -eq 0 ]] && covered=1
+                    [[ "$crc" -eq 124 ]] && cnote="covering timed out after ${cover_s}s; block ran"
                     cend="$(date +%s)"
                     # The script may write to the tree: the next block takes
                     # a fresh before-snapshot instead of the last after-one.
@@ -1155,6 +1167,10 @@ $(gates_policy_section_list spec snapshot_exclude)"
                     3) bres="mutation"; breason="read-only check failed" ;;
                     *) bres="fail"; breason="check failed" ;;
                 esac
+                if [[ -n "$cnote" ]]; then
+                    breason="$cnote${breason:+; $breason}"
+                    SPEC_BLOCK_DETAIL="$cnote${SPEC_BLOCK_DETAIL:+; $SPEC_BLOCK_DETAIL}"
+                fi
                 fblocks="$fblocks$(gates_spec_block_entry "$tid" "$ord" "${bverifies[$i]}" \
                     "$bres" "$breason" "" "$bdur"),"
                 gates_timeline_line "$bname" "$estart" "$bend" "$bres" "$breason"
@@ -1162,7 +1178,9 @@ $(gates_policy_section_list spec snapshot_exclude)"
                 if [[ "$brc" -eq 0 ]]; then
                     fpassed=$((fpassed + 1))
                     if [[ "$enforced" == "0" && "$json" == "0" ]]; then
-                        echo "spec: $f: \"$label\" -- pass"
+                        echo "spec: $f: \"$label\" -- pass${cnote:+ ($cnote)}"
+                    elif [[ -n "$cnote" && "$json" == "0" ]]; then
+                        echo "spec: $f: \"$label\" -- pass ($cnote)"
                     fi
                 else
                     ffailed=$((ffailed + 1))

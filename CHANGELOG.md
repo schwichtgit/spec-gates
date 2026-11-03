@@ -41,6 +41,13 @@ init` set the main repository's `core.bare = true` and `git add -A`
   at the limit fails the block or refuses the rule, as before; it is
   reported at the limit rather than half a second after the exit, and a
   detached child that finishes within the limit now passes.
+- **A covering timeout is named** (#295). When a `spec.cover` script ran
+  past its limit, the block ran and its reason showed only the block's
+  own outcome. The block's reason in the report, the attestation and the
+  timeline now begins with "covering timed out after Ns; block ran". A
+  script that exits 124 by itself is not taken for a timeout. How it
+  works documents `spec.cover.timeout_s` and its default next to
+  `spec.timeout_s`.
 
 ### Changed
 
