@@ -187,6 +187,43 @@ install_checks() {
             esac
         done < <(jq -r '(.extensions.gates.registered_commands.claude // [])[]' "$REG" 2>/dev/null)
         [[ "$reg_ok" -gt 0 ]] && echo "${OK}$reg_ok registered gates command(s) installed as regular files"
+        # A registry entry whose registered_commands lists no command for
+        # any agent (#311): Spec Kit registered nothing, so no
+        # /speckit.gates.* command loads, and the loop above had nothing to
+        # check. registered_skills says nothing here: Spec Kit 1.2.x leaves
+        # it empty on a healthy install. An entry without the key at all
+        # (older Spec Kit) is not judged.
+        REG_FIX="run \`specify integration upgrade --force\` (or reinstall the extension, README \"Upgrade\")"
+        if jq -e '.extensions.gates | has("registered_commands")' "$REG" >/dev/null 2>&1 \
+            && ! jq -e '[.extensions.gates.registered_commands[]? | arrays | .[]] | length > 0' "$REG" >/dev/null 2>&1; then
+            echo "${BAD}the extension registry lists no gates command for any agent, so no /speckit.gates.* command loads — $REG_FIX"
+            MISSING=$((MISSING + 1))
+        fi
+        # A partial registration: every command extension.yml provides must
+        # be registered for claude, the agent whose files are checked above.
+        reg_claude="$(jq -r '(.extensions.gates.registered_commands.claude // [])[]' "$REG" 2>/dev/null)"
+        EXT_YML="$PROJECT_ROOT/.specify/extensions/gates/extension.yml"
+        if [[ -n "$reg_claude" && -f "$EXT_YML" ]]; then
+            while IFS= read -r rcmd; do
+                [[ -n "$rcmd" ]] || continue
+                grep -qxF "$rcmd" <<<"$reg_claude" && continue
+                echo "${BAD}$rcmd is provided by the extension but not registered for claude, so it does not load — $REG_FIX"
+                MISSING=$((MISSING + 1))
+            done < <(awk '/^provides:/ { p = 1; next } p && /^[^ #]/ { p = 0 }
+                p && /^    - name:[ \t]*["\047]?speckit\.gates\./ {
+                    sub(/^    - name:[ \t]*/, ""); gsub(/["\047]/, ""); sub(/[ \t]+$/, ""); print }' "$EXT_YML")
+        fi
+    fi
+    # Gates skills rendered by an older Spec Kit (#311) record their
+    # origin as `source: gates:commands/...`. Spec Kit now claims an
+    # extension's skills by `source: extension:gates` and leaves any other
+    # skill alone on remove and upgrade, so these are never updated.
+    REG_OLD=0
+    for rf in "$PROJECT_ROOT"/.claude/skills/speckit-gates-*/SKILL.md; do
+        [[ -f "$rf" ]] && grep -qE '^[[:space:]]*source:[[:space:]]*["'"'"']?gates:' "$rf" && REG_OLD=$((REG_OLD + 1))
+    done
+    if [[ "$REG_OLD" -gt 0 ]]; then
+        echo "${REC}$REG_OLD gates skill(s) carry the old registration (source: gates:commands/...), which Spec Kit no longer updates or removes — run \`specify integration upgrade --force\` (or reinstall the extension, README \"Upgrade\")"
     fi
     if [[ -d "$PROJECT_ROOT/.specify/extensions/gates/.specify-dev" ]]; then
         echo "${REC}this is a --dev install (for developing spec-gates itself); other clones will not have its files — install from a release zip"

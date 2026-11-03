@@ -55,8 +55,12 @@ nothing is checked.
      match the installed extension; a mismatch **fails** (run
      `/speckit.gates.upgrade`). Also the install itself: registered gates
      commands must be regular skill or command files (a `--dev` install's
-     symlinks fail), a `--dev` install is flagged, and installed scripts
-     without the execute bit are flagged.
+     symlinks fail), a registry entry that registers no gates command for
+     any agent, or leaves one the extension provides unregistered for
+     claude, fails (fix: `specify integration upgrade --force`), gates
+     skills with the old `source: gates:commands/...` registration are
+     flagged, a `--dev` install is flagged, and installed scripts without
+     the execute bit are flagged.
    - **Install state**: a projected runtime whose extension was removed and
      not added back (a half-done upgrade), or a registry that disagrees
      with the installed copy, fails. Without jq the registry cannot be

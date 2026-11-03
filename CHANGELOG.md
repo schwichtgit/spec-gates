@@ -53,6 +53,14 @@ init` set the main repository's `core.bare = true` and `git add -A`
   when the tool generated a hook or no gates hook is installed. Older gates
   hooks become the stub whatever the config says, and the summary names
   what git runs.
+- **doctor fails when no gates command is registered** (#311). A registry
+  entry with an empty `registered_commands` loaded no `/speckit.gates.*`
+  command, and doctor stayed healthy. It now fails on an entry that
+  registers no command for any agent, and on a command the extension
+  provides that is not registered for claude, naming the fix
+  (`specify integration upgrade --force`). Gates skills with the old
+  `source: gates:commands/...` registration, which Spec Kit no longer
+  updates or removes, get a recommendation with the same fix.
 
 ### Added
 

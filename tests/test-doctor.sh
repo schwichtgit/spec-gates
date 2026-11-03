@@ -1011,6 +1011,26 @@ jq '.extensions.gates.registered_commands.claude += ["speckit.gates.sync"]' \
     "$IH/.specify/extensions/.registry" >"$IH/reg.tmp" && mv "$IH/reg.tmp" "$IH/.specify/extensions/.registry"
 run_doctor "$IH" >/dev/null
 has "a registered command with no file fails" "$IH" "[MISSING] speckit.gates.sync is registered but has no skill or command file"
+# A partial registration (#311): a command extension.yml provides that is
+# not registered for claude does not load.
+has "an unregistered command fails" "$IH" "[MISSING] speckit.gates.upgrade is provided by the extension but not registered for claude"
+lacks "a registered command is not called unregistered" "$IH" "speckit.gates.doctor is provided by the extension but not registered"
+# No command registered for any agent (#311): nothing loads, and the loop
+# over registered commands has nothing to flag.
+jq '.extensions.gates.registered_commands = {} | .extensions.gates.registered_skills = []' \
+    "$IH/.specify/extensions/.registry" >"$IH/reg.tmp" && mv "$IH/reg.tmp" "$IH/.specify/extensions/.registry"
+run_doctor "$IH" >/dev/null
+has "an empty registration fails" "$IH" "[MISSING] the extension registry lists no gates command for any agent, so no /speckit.gates.* command loads — run \`specify integration upgrade --force\`"
+# Skills rendered with the old registration (#311): Spec Kit no longer
+# claims them.
+printf -- '---\nname: "speckit-gates-doctor"\nmetadata:\n  source: "gates:commands/speckit.gates.doctor.md"\n---\n' \
+    >"$IH/.claude/skills/speckit-gates-doctor/SKILL.md"
+run_doctor "$IH" >/dev/null
+has "an old-format gates skill is flagged" "$IH" "[rec] 1 gates skill(s) carry the old registration (source: gates:commands/...)"
+printf -- '---\nname: "speckit-gates-doctor"\nmetadata:\n  source: "extension:gates"\n---\n' \
+    >"$IH/.claude/skills/speckit-gates-doctor/SKILL.md"
+run_doctor "$IH" >/dev/null
+lacks "a current gates skill is not flagged" "$IH" "carry the old registration"
 mkdir -p "$IH/.specify/extensions/gates/.specify-dev"
 chmod 644 "$IH/.specify/extensions/gates/runtime/hooks/git/pre-commit"
 run_doctor "$IH" >/dev/null
