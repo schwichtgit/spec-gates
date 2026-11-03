@@ -1074,15 +1074,20 @@ for co in "$WM" "$WT"; do
             echo "$form" >>"$co/pa.txt"
             echo "$form" >>"$co/pb.txt"
             git -C "$co" add pa.txt
+            # The tree differs from the commit (#305) unless `commit -a`
+            # takes every change: the hook reads the index git hands it.
             case "$form" in
-                plain) args=() want="pa.txt " ;;
-                all) args=(-a) want="pa.txt pb.txt " ;;
-                path) args=(pb.txt) want="pb.txt " ;;
+                plain) args=() want="pa.txt " differs=1 ;;
+                all) args=(-a) want="pa.txt pb.txt " differs=0 ;;
+                path) args=(pb.txt) want="pb.txt " differs=1 ;;
             esac
             rm -f "$PROBE_OUT"
             rc=0
-            (cd "$co" && PROBE_OUT="$PROBE_OUT" git commit -q ${args[@]+"${args[@]}"} -m "docs: probe $form") >/dev/null 2>&1 || rc=$?
+            (cd "$co" && PROBE_OUT="$PROBE_OUT" git commit -q ${args[@]+"${args[@]}"} -m "docs: probe $form") \
+                >/dev/null 2>"$WORKDIR/probe.err" || rc=$?
             check "$where $mode commit ($form): the commit passes the gate" 0 test "$rc" -eq 0
+            check "$where $mode commit ($form): the tree warning appears iff the tree is not the commit (#305)" 0 \
+                test "$(grep -c 'judges the working tree, not this commit: 1 file(s) with changes outside the commit,' "$WORKDIR/probe.err")" == "$differs"
             check "$where $mode commit ($form): the gate sees the commit's files" 0 \
                 test "$(cat "$PROBE_OUT" 2>/dev/null)" == "$want"
             check "$where $mode commit ($form): the commit holds those files" 0 \
@@ -1093,6 +1098,27 @@ for co in "$WM" "$WT"; do
         done
     done
 done
+# An untracked file the walk would lint is named too (#305); an ignored
+# one is not.
+WT_EXCLUDE="$(git -C "$WT" rev-parse --git-path info/exclude)"
+[[ "$WT_EXCLUDE" == /* ]] || WT_EXCLUDE="$WT/$WT_EXCLUDE"
+mkdir -p "$(dirname "$WT_EXCLUDE")"
+printf 'ignored-305.md\n' >"$WT_EXCLUDE"
+printf 'stray\n' >"$WT/stray-305.md"
+printf 'ignored\n' >"$WT/ignored-305.md"
+echo untracked >>"$WT/pa.txt"
+git -C "$WT" add pa.txt
+(cd "$WT" && PROBE_OUT="$PROBE_OUT" git commit -q -m "docs: probe untracked") >/dev/null 2>"$WORKDIR/probe.err" || true
+check "an untracked file outside the commit is named (#305)" 0 \
+    test "$(grep -c 'judges the working tree, not this commit: 0 file(s) with changes outside the commit, 1 untracked' "$WORKDIR/probe.err")" == 1
+rm -f "$WT/stray-305.md" "$WT/ignored-305.md"
+: >"$WT_EXCLUDE"
+echo clean >>"$WT/pa.txt"
+git -C "$WT" add pa.txt
+(cd "$WT" && PROBE_OUT="$PROBE_OUT" git commit -q -m "docs: probe clean") >/dev/null 2>"$WORKDIR/probe.err" || true
+check "a commit equal to the working tree prints no tree warning (#305)" 0 \
+    test "$(grep -c 'judges the working tree' "$WORKDIR/probe.err")" == 0
+
 # Outside a hook (the agent boundary) it names the repository's own index.
 echo agent >>"$WT/pa.txt"
 git -C "$WT" add pa.txt
