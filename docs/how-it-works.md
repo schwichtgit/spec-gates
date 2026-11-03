@@ -702,8 +702,11 @@ The file-linter gates mark their first finding that way (a prettier
 `[warn] <file>` line, a markdownlint `<file>:<line>` finding, shellcheck's
 `<file> line N: SC<code> ...`), since their output opens with banners and
 ends with a footer; without a marked line they show their first
-non-empty line. A task or custom step without one shows its last
-non-empty line, where such steps print their verdict.
+non-empty line. A task, custom or project gate step without one shows
+its last non-empty line, where such steps print their verdict, preceded
+by its first non-empty line when the two differ (`<first> | <last>`), so
+a tool that names the file and line first and the message last keeps
+both.
 
 **One gate run per working tree.** Two runs in one tree see each
 other's writes (build output, test files) and fail each other, so a run

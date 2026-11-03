@@ -45,6 +45,12 @@ init` set the main repository's `core.bare = true` and `git add -A`
   index): `GIT_INDEX_FILE="$GATES_GIT_INDEX_FILE" git diff --cached
 --name-only` lists exactly what the commit holds. A command that read
   the staged files through the inherited variable switches to it.
+- **A failing step's summary keeps its first line too** (#296). Without
+  a `##gates-fail##` line, a task, custom or project gate step showed only
+  its last non-empty line, so a tool that names the file and line first
+  (uv's "TOML parse error at line 1 ...") lost them. The summary is now
+  `<first> | <last>` when the two differ; a `##gates-fail##` line still
+  wins.
 
 ## 0.5.0 — 2026-10-27
 

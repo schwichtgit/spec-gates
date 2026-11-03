@@ -268,8 +268,8 @@ summary_line() { # <dir>: the report line of the custom gate
     (cd "$1" && CLAUDE_PROJECT_DIR="$1" bash "$1/.specify/gates/verify.sh" --boundary ci 2>&1) \
         | grep '^  \[fail\] custom' || true
 }
-expect "output over 2000 bytes: the summary is its last non-empty line" \
-    "$(summary_line "$DS")" "  [fail] custom -- LAST-LINE-262 the real error"
+expect "output over 2000 bytes: the summary is its first and last non-empty line" \
+    "$(summary_line "$DS")" "  [fail] custom -- noise line 0 padding padding padding | LAST-LINE-262 the real error"
 {
     echo '#!/bin/sh'
     echo 'echo "##gates-fail## FIRST-MARK-262"'
@@ -795,6 +795,16 @@ expect "attestation: results and fixed reasons" \
 project "$PG" '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error",
     "gates": { "soft": { "command": "exit 1", "severity": "warning" } } } } }'
 expect_has "warnings alone pass (exit 0)" "$(pg_run "$PG" --boundary ci)" "EXIT=0"
+# A tool that prints the location first and the message last keeps both
+# (#296); a one-line output is shown once.
+project "$PG" '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error",
+    "gates": { "loc": { "command": "echo; echo \"TOML parse error at line 1, column 4\"; echo noise; echo \"key with no value\"; echo; exit 1" },
+               "one": { "command": "echo only-line-296; exit 1" } } } } }'
+OUT="$(pg_run "$PG" --boundary ci)"
+expect "the summary joins the first and the last non-empty line (#296)" \
+    "$(grep -c '^  \[fail\] loc -- TOML parse error at line 1, column 4 | key with no value$' <<<"$OUT" || true)" 1
+expect "a single output line is not repeated (#296)" \
+    "$(grep -c '^  \[fail\] one -- only-line-296$' <<<"$OUT" || true)" 1
 
 PG="$WORKDIR/pg-timeout"
 project "$PG" '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error",

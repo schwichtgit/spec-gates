@@ -543,15 +543,16 @@ run_gate() { # name severity cmd...
     # wherever the cut fell (#262). The summary is read from the whole
     # output instead: its last "##gates-fail## <text>" line (the file
     # linters' dispatch marks their first finding so), else, for a file
-    # linter, the first non-empty line, and for a task or custom step,
-    # which ends on its verdict, the last one. The marker is machinery
-    # too and never shows in the detail. A marked line whose text another
-    # line of the output already holds (ANSI colors aside) is dropped from
-    # the detail, so the failure is not named twice (#279): the file
-    # linters' marks and a nested `verify.sh --walk`'s repeat a line they
-    # printed. A marked text found nowhere else stays, without the marker:
-    # it may be a step's only statement of what failed. A file linter's
-    # marks are always dropped, since shellcheck's joins two of its lines.
+    # linter, the first non-empty line, and for a task, custom or project
+    # step, which ends on its verdict, the last one (with the first, #296).
+    # The marker is machinery too and never shows in the detail. A marked
+    # line whose text another line of the output already holds (ANSI colors
+    # aside) is dropped from the detail, so the failure is not named twice
+    # (#279): the file linters' marks and a nested `verify.sh --walk`'s
+    # repeat a line they printed. A marked text found nowhere else stays,
+    # without the marker: it may be a step's only statement of what
+    # failed. A file linter's marks are always dropped, since shellcheck's
+    # joins two of its lines.
     # Three passes over the file: collect the marked texts (the first 20
     # distinct ones, so the search stays linear), find which appear in
     # another line, print.
@@ -585,11 +586,21 @@ run_gate() { # name severity cmd...
         | tail -c 2000 || true)"
     summary="$(grep '##gates-fail##' /tmp/gates-out.$$ 2>/dev/null | tail -n 1 \
         | sed 's/.*##gates-fail##[[:space:]]*//' || true)"
+    # Without a marked line, a file linter shows its first non-empty line.
+    # Any other step shows its last one, preceded by its first when they
+    # differ, "<first> | <last>" (#296): tools that print the location
+    # first and the message last (uv's "TOML parse error at line 1 ...")
+    # keep both in the one line.
     if [[ -z "$summary" ]]; then
-        local pick='$'
-        [[ -n "$meta" ]] && pick=1
-        summary="$(grep -v '##gates-meta##' /tmp/gates-out.$$ \
-            | grep -v '^[[:space:]]*$' | sed -n "${pick}p" || true)"
+        summary="$(awk -v linter="${meta:+1}" '
+            /##gates-meta##/ || /^[ \t\r\f\v]*$/ { next }
+            !n++ { first = $0 }
+            { last = $0 }
+            END {
+                if (!n) exit
+                if (linter || first == last) print first
+                else print first " | " last
+            }' /tmp/gates-out.$$ 2>/dev/null || true)"
     fi
     rm -f /tmp/gates-out.$$
 
