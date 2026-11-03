@@ -8,7 +8,21 @@ never touches `.specify/gates/policy.json`. New policy keys take the
 defaults stated here until you set them. Releases before 0.3.3 are
 described in their [GitHub release notes](https://github.com/schwichtgit/spec-gates/releases).
 
-## [Unreleased]
+## 0.5.1 — 2026-11-03
+
+### Upgrading
+
+- Upgrade as for 0.5.0 (README "Upgrade"): one `project.sh` run, then
+  commit `.specify/gates/.projected.sha256` with the upgrade. No policy
+  change is needed, and no new policy key exists.
+- A custom command or project gate that reads the files being committed
+  (`git diff --cached`) must read them through `GATES_GIT_INDEX_FILE`:
+  `GIT_INDEX_FILE="$GATES_GIT_INDEX_FILE" git diff --cached --name-only`.
+  Gate commands no longer inherit `GIT_INDEX_FILE`, so without it they
+  read the repository's index, not the commit's (`git commit -a`,
+  `git commit <paths>`).
+- `hooks.local.d` rules and the time limits of accept blocks and project
+  gates now need `mkfifo` (POSIX; the accept-block lease already did).
 
 ### Fixed
 
