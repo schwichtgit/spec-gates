@@ -74,28 +74,18 @@ npm ci`. The gate still fails until the install matches.
   the same snapshot (the index, or the commit), or one a released version
   shipped. An edited copy is scanned as before, and the exact key rules
   (AWS, OpenAI, GitHub, GitLab, Slack) scan every file.
-
-### Fixed
-
-- **No false timeouts** (#292). An accept block or project gate that
-  finished in seconds could fail as "timeout after Ns", more often the
-  higher the load (in 0.4.1 for accept blocks, in 0.5.0 also for project
-  gates); raising the limit did not help. A timer process slept for the
-  limit and then wrote a timeout marker, and stopping it after the command
-  had ended could still let that write happen. Now the command reports its
-  exit status on a FIFO and the gate decides with one wait of at most the
-  limit: there is no timer process, and no sleep decides the outcome. The
-  `hooks.local.d` rule limit works the same way.
-- **Gate commands no longer reach the caller's repository from a linked
-  worktree** (#293). In a linked worktree git runs its hooks with an
-  absolute `GIT_DIR` and `GIT_INDEX_FILE`. The custom command, project
-  gates and the `task` orchestrator's commands inherited them, so a
-  command that built a throwaway repository acted on the real one: `git
-init` set the main repository's `core.bare = true` and `git add -A`
-  staged every tracked file as deleted. 0.4.0 cleared these variables for
-  accept blocks and the canary only (#173). Every command the gates run,
-  and the `contract.sh sync` fetch, now starts without git's
-  per-repository variables; one list serves all of them.
+- **One line counts the features that are not enforced** (#300). The
+  spec gate printed a "not enforced" line for every feature whose Status
+  is not `Complete`, which buried the summary in a repository with many
+  specs. It now prints one line ("88 informational, 2 enforced") that
+  restates that only `**Status**: Complete` enforces; `GATES_SPEC_VERBOSE=1`
+  lists each feature as before, and `--json` carries them all. `Complete`
+  stays the only completion token.
+- **doctor's nudge to set `Complete` names the cost** (#304). Once a
+  feature is `Complete`, its accept blocks run at the agent, git and ci
+  boundaries, on every agent Stop and every commit. The recommendation,
+  the README and How it works now say so, so a project checks the
+  blocks' runtime and network needs before it turns enforcement on.
 - **protect-files asks on `credential` and `passwd` in a file name**
   (#317). The name check listed `credentials` and `password` only, so
   `assert_no_credential_values.sh` or `passwd.txt` was edited without a
@@ -142,6 +132,56 @@ init` set the main repository's `core.bare = true` and `git add -A`
   not (tracked changes the commit leaves out, including for
   `git commit -a` and `git commit <paths>`, or untracked files that are
   not ignored), the hook prints one warning line with the counts.
+
+### Fixed
+
+- **No false timeouts** (#292). An accept block or project gate that
+  finished in seconds could fail as "timeout after Ns", more often the
+  higher the load (in 0.4.1 for accept blocks, in 0.5.0 also for project
+  gates); raising the limit did not help. A timer process slept for the
+  limit and then wrote a timeout marker, and stopping it after the command
+  had ended could still let that write happen. Now the command reports its
+  exit status on a FIFO and the gate decides with one wait of at most the
+  limit: there is no timer process, and no sleep decides the outcome. The
+  `hooks.local.d` rule limit works the same way.
+- **Gate commands no longer reach the caller's repository from a linked
+  worktree** (#293). In a linked worktree git runs its hooks with an
+  absolute `GIT_DIR` and `GIT_INDEX_FILE`. The custom command, project
+  gates and the `task` orchestrator's commands inherited them, so a
+  command that built a throwaway repository acted on the real one: `git
+init` set the main repository's `core.bare = true` and `git add -A`
+  staged every tracked file as deleted. 0.4.0 cleared these variables for
+  accept blocks and the canary only (#173). Every command the gates run,
+  and the `contract.sh sync` fetch, now starts without git's
+  per-repository variables; one list serves all of them.
+- **A child on its way out no longer fails a passing block** (#294). An
+  accept block or `hooks.local.d` rule that killed a child without
+  waiting for it failed with "left a process running" when the child was
+  still exiting half a second later, which a loaded machine can make
+  happen. Every process a block or rule starts now holds a lease
+  descriptor, and the end of the lease (its last holder exiting) decides,
+  awaited for the rest of the time limit. A process that is still running
+  at the limit fails the block or refuses the rule, as before; it is
+  reported at the limit rather than half a second after the exit, and a
+  detached child that finishes within the limit now passes.
+- **A covering timeout is named** (#295). When a `spec.cover` script ran
+  past its limit, the block ran and its reason showed only the block's
+  own outcome. The block's reason in the report, the attestation and the
+  timeline now begins with "covering timed out after Ns; block ran". A
+  script that exits 124 by itself is not taken for a timeout. How it
+  works documents `spec.cover.timeout_s` and its default next to
+  `spec.timeout_s`.
+- **Exit 141 names SIGPIPE** (#302). An accept block piping into
+  `grep -q` or `head` failed with a bare `exit 141` when the writer kept
+  printing after the reader had exited. The failure now reads "exit 141
+  (SIGPIPE: a pipe reader exited early under pipefail)", doctor
+  recommends the capture-first form for each such pipe in an accept
+  block, and the README documents it.
+- **Editor temporary files no longer fail an accept block** (#303). A vim
+  swap file written while a block ran failed its read-only check, and a
+  `.gitignore` entry did not help, since ignored files are checked too.
+  `*.swp`, `*.swo`, `*~`, `.#*`, `#*#` and `4913` are now exempt at any
+  depth; `spec.snapshot_exclude` covers other processes' files.
 
 ## 0.5.0 — 2026-10-27
 

@@ -980,7 +980,11 @@ tool gates and before `parity`:
    parser refuses one that is followed by another command line (the
    body and terminator of a heredoc it feeds are not command lines);
    `test -z "$(...)"`, `if ...; then exit 1; fi` and `! cmd || exit 1`
-   fail the block wherever they stand. Output is captured (shown only on
+   fail the block wherever they stand. A pipe into `grep -q` or `head`
+   fails a block that holds when the writer prints on after the reader
+   has exited: SIGPIPE, which the failure names next to `exit 141`.
+   `out="$(cmd 2>&1)"; grep -q pat <<<"$out"` avoids it, and doctor
+   recommends that form for each such pipe. Output is captured (shown only on
    failure), with a per-block watchdog (`spec.timeout_s`, default 30s) that stops the
    block's whole process group (the failure reads
    `timeout after <N>s at load <1-minute load average>`, the load from
@@ -1014,13 +1018,18 @@ tool gates and before `parity`:
    project, or commits in another worktree, is not caught either (one
    inside the project shows up as an untracked directory).
 
-   No process may outlive its block. The process group is stopped after
-   every block, and a block that leaves a process running fails. A child
+   No process may outlive its block. Every process the block starts
+   inherits the write end of a FIFO on descriptor 7, which the gate reads
+   to EOF: the block ends when the last holder has exited. That EOF is
+   awaited for the rest of the block's time limit, so a child the block
+   killed without waiting passes however long its exit takes on a loaded
+   machine, and no fixed grace decides. A process still holding the
+   descriptor at the limit, or left in the block's process group after
+   the EOF (one that closed the descriptor), is stopped and fails the
+   block with `left a process running after it exited (stopped)`. A child
    that leaves the group or the session (`set -m`, `setsid`, a double
-   fork) is found two ways: every process the block starts inherits the
-   write end of a FIFO on descriptor 7, which the gate reads to EOF (no
-   EOF half a second after the block exits means a holder is alive), and
-   carries `GATES_SPEC_BLOCK=<id>` in its environment, which the gate
+   fork) is found by the same descriptor, or by
+   `GATES_SPEC_BLOCK=<id>` in its environment, which the gate
    looks for in `/proc/<pid>/environ` on Linux and in `ps -E` elsewhere.
    What is found is killed, and the block fails with
    `left a detached process running (stopped)`. Not found: a process that
@@ -1030,13 +1039,21 @@ tool gates and before `parity`:
    (`/bin/sh`, `/bin/sleep`, `/usr/bin/git`, `/usr/bin/perl`), so there
    only the descriptor finds them: a `/bin/sh` child started through
    Node's `child_process` or Python's `subprocess`, which pass no extra
-   descriptors, is not seen on macOS. The process table is read after a
-   short settle and before the after-snapshot, so a write such a process
-   makes right away is still caught as a mutation; a later one is not.
+   descriptors, is not seen on macOS. The process table is read once,
+   before the after-snapshot, so a write such a process makes before
+   then is still caught as a mutation; a later one is not.
    `spec.snapshot_exclude` exempts untracked or ignored paths another
    process writes during the run; `cache/` names the directory and
    everything under it, like `cache/**`, and a pattern of only `*`, `?`
    and `/` (which would exempt everything) makes the policy invalid.
+   Editor temporary files are exempt without it, at any depth: `*.swp`,
+   `*.swo`, `*~`, `.#*`, `#*#` and vim's `4913` write probe, which an
+   editor holding a file open writes while a block runs. A `.gitignore`
+   entry is no substitute, since ignored files are checked too. One
+   limit: inside a directory that is ignored as a whole, a new or deleted
+   entry also changes the directory, and that change still counts, since
+   it may be a deleted file; exempt such a directory through
+   `spec.snapshot_exclude` if an editor works in it.
    Writes inside a nested repository or worktree (a directory below the
    root with its own `.git`, such as an agent's worktree under an ignored
    `.claude/worktrees/`) are left out of the ignored-files check by
@@ -1047,10 +1064,18 @@ tool gates and before `parity`:
 
 4. **Enforce**: a Complete feature fails the `spec` gate on any unchecked
    task or failing block, naming the feature, the task or criterion, and
-   the cause. Incomplete features are informational
-   (`spec: <feature> -- N criteria parsed, not enforced`); a Complete
+   the cause. Incomplete features are informational, counted on one line
+   (`spec: <n> informational, <m> enforced -- ...`);
+   `GATES_SPEC_VERBOSE=1` lists each instead
+   (`spec: <feature> -- N criteria parsed, not enforced (Status: ...)`),
+   and `--json` carries every feature's outcome. `Complete` is the only
+   token that enforces: `Done`, `Implemented` or `Complete (merged)` do
+   not, and there is no setting to add one. A Complete
    feature with zero blocks is flagged as having nothing executable to hold
-   it to, but does not block.
+   it to, but does not block. An enforced feature's blocks run at every
+   boundary, each agent Stop, each commit and CI, so a block that takes
+   seconds or reaches the network costs that on every turn; doctor's
+   nudge to set `Complete` says so.
 
 **Covered accept blocks.** A project's own test gate often proves what
 an accept block would re-run seconds later. `spec.cover` lets a project
@@ -1075,7 +1100,12 @@ with exactly one non-empty line covers the block: it does not run, and
 the line (control characters removed, cut to 200 characters) is its
 reason. Anything else (another exit code, no line, several lines, the
 time limit, a script that is not executable) runs the block as before,
-so the script can never fail a block. The guards:
+so the script can never fail a block. The script's own limit is
+`spec.cover.timeout_s` (default 30 s), separate from the block's
+`spec.timeout_s` (default 30 s): a script that runs out of it costs its
+limit and then the block's full run. Such a block's reason, in the
+report, the attestation and the timeline, begins with
+`covering timed out after <N>s; block ran`. The guards:
 
 - **Never at CI.** `at` takes `agent` and `git` only; `"ci"` is refused
   like any invalid policy (exit `1`), and a run without `--boundary`
