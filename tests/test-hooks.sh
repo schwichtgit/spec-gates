@@ -1527,11 +1527,18 @@ check "a timed-out rule is stopped with the child it started" 0 bash -c "SECONDS
 rm -f "$LR/.specify/gates/hooks.local.d/validate-bash/30-hangs-with-child.sh" "$BGPID"
 # A child that leaves the process group is out of reach, but it must not
 # hold the hook either: the rule's stderr is a file, not the hook's pipe.
+# The rule exits only once the child has left the group (it writes the
+# ready file after setpgrp), so the case does not depend on how fast perl
+# starts: a slow start used to leave the child in the group for a few
+# rounds, and the hook rightly waited, past a 4 s bound on a busy runner.
+# The hook must return while the child still runs, well inside the limit.
 if command -v perl >/dev/null 2>&1; then
-    rule validate-bash 30-escapes.sh "perl -e 'setpgrp(0, 0); sleep 20' & echo \$! >'$BGPID'; exit 0"
-    check "a child that leaves the rule's group does not hold the hook" 0 bash -c "SECONDS=0; printf '%s' '{\"tool_input\":{\"command\":\"ls\"}}' | GATES_LOCAL_TIMEOUT=5 CLAUDE_PROJECT_DIR='$LR' '$HOOKS/validate-bash.sh' >/dev/null 2>&1; rc=\$?; [[ \$rc -eq 0 && \$SECONDS -lt 4 ]]"
+    rule validate-bash 30-escapes.sh "perl -e 'setpgrp(0, 0); open(my \$f, \">\", \"$RREADY\"); print \$f \"x\"; close(\$f); sleep 120' & echo \$! >'$BGPID'
+until [ -s '$RREADY' ]; do :; done
+exit 0"
+    check "a child that leaves the rule's group does not hold the hook" 0 bash -c "SECONDS=0; printf '%s' '{\"tool_input\":{\"command\":\"ls\"}}' | GATES_LOCAL_TIMEOUT=30 CLAUDE_PROJECT_DIR='$LR' '$HOOKS/validate-bash.sh' >/dev/null 2>&1; rc=\$?; [[ \$rc -eq 0 && \$SECONDS -lt 20 ]] && kill -0 \$(cat '$BGPID') 2>/dev/null"
     [[ -s "$BGPID" ]] && kill "$(cat "$BGPID")" 2>/dev/null
-    rm -f "$LR/.specify/gates/hooks.local.d/validate-bash/30-escapes.sh" "$BGPID"
+    rm -f "$LR/.specify/gates/hooks.local.d/validate-bash/30-escapes.sh" "$BGPID" "$RREADY"
 fi
 rule validate-bash 30-exits-124.sh 'echo "rule says no" >&2; exit 124'
 check "a rule's own exit 124 is its refusal, not a timeout" 0 bash -c "out=\$(printf '%s' '{\"tool_input\":{\"command\":\"ls\"}}' | CLAUDE_PROJECT_DIR='$LR' '$HOOKS/validate-bash.sh' 2>&1); rc=\$?; [[ \$rc -eq 2 ]] && grep -q 'validate-bash/30-exits-124.sh): rule says no' <<<\"\$out\""
