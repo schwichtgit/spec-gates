@@ -905,7 +905,7 @@ elif [[ "$DRY_RUN" != "1" &&"$ATT_ENABLED" != "false" && "$PARITY_SEV" != "off" 
     if [[ ${#ATT_GATES[@]} -gt 0 ]]; then
         parity_input="[$(IFS=,; printf '%s' "${ATT_GATES[*]}")]"
     fi
-    PARITY_DRIFT="$(gates_pin_mismatches "$parity_input")"
+    PARITY_DRIFT="$(gates_pin_mismatches "$parity_input" "$PROJECT_ROOT")"
     # A pin the sources disagree on, or a mise file that cannot be read,
     # fails like drift: the comparison above would rest on a guess.
     # Each problem is named once, however many tools or configs repeat it.

@@ -111,7 +111,9 @@ self-evidencing:
 - **Verified parity** — a synthetic `parity` gate compares each tool's
   resolved version against its lockfile pin on every run, at every
   boundary. Drift fails the boundary with
-  `parity -- prettier: resolved 3.5.3, pinned 3.9.4 (run npm ci)`;
+  `parity -- prettier: resolved 3.5.3, pinned 3.9.4 (run npm ci)`, or,
+  when `node_modules` was installed from another lockfile (after a branch
+  switch), `(node_modules was installed from another lockfile; run npm ci)`;
   tune it with `attestation.parity` (`error | warning | off`). `doctor`
   additionally fails on the no-op signature: a gate that passed while
   checking zero of its candidate files.

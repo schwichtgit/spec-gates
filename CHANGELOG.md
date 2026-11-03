@@ -51,6 +51,12 @@ init` set the main repository's `core.bare = true` and `git add -A`
   (uv's "TOML parse error at line 1 ...") lost them. The summary is now
   `<first> | <last>` when the two differ; a `##gates-fail##` line still
   wins.
+- **Parity names a stale install** (#299). After a branch switch whose
+  `package-lock.json` pins other linter versions, parity failed with only
+  the version pair. When a linter's entry in
+  `node_modules/.package-lock.json` differs from `package-lock.json`, the
+  failure now says `node_modules was installed from another lockfile; run
+npm ci`. The gate still fails until the install matches.
 
 ## 0.5.0 — 2026-10-27
 

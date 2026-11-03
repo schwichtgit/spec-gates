@@ -866,7 +866,12 @@ lockfile pin, and the record's policy hash captures policy identity, so
 agent, git and CI runs are proven equivalent transitively. The lockfile is
 the shared source of truth; no attestation has to travel between
 boundaries. Drift fails the run by default (`attestation.parity: error`);
-tools with no pin source are attested but exempt.
+tools with no pin source are attested but exempt. When a node linter's
+entry in `node_modules/.package-lock.json` (what npm last installed)
+differs from `package-lock.json`, the failure says `node_modules was
+installed from another lockfile; run npm ci`: the usual cause is a branch
+switch since the last `npm ci`. The gate still fails until the install
+matches.
 
 ## Spec conformance: acceptance criteria as executable gates
 
