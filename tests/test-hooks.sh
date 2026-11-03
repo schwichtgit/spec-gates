@@ -951,6 +951,102 @@ check "worktree: the worktree's policy applies, not the inherited session's" 0 \
     bash -c "cd '$WT' && CLAUDE_PROJECT_DIR='$WM' git commit -q --allow-empty -m 'any subject'"
 check "worktree: the main checkout still enforces its own policy" 1 \
     bash -c "cd '$WM' && git commit -q --allow-empty -m 'any subject'"
+# #293: in a linked worktree git runs the hook with an absolute GIT_DIR and
+# GIT_INDEX_FILE. A custom command or project gate that builds a throwaway
+# repository must not reach the caller's: before the fix `git init` set the
+# main repository's core.bare and `git add -A` staged every file deleted.
+cat >"$WT/sandbox.sh" <<'SH'
+#!/bin/bash
+set -e
+t="$(mktemp -d)"
+cd "$t" || exit 1
+git init -q
+echo x >f
+git add -A
+git -c user.email=a@b -c user.name=n commit -q --no-verify -m sandbox
+SH
+for mode in custom gate; do
+    if [[ "$mode" == custom ]]; then
+        vq='"orchestrator": "custom", "severity": "error", "custom_command": "bash sandbox.sh"'
+    else
+        vq='"orchestrator": "none", "severity": "error", "gates": { "sandbox": { "command": "bash sandbox.sh", "timeout_s": 60 } }'
+    fi
+    printf '{ "hooks": { "verify-quality": { %s } }, "git": { "block_main_commits": false, "conventional_commits": false }, "protected_files": { "extra": ["c.md"] } }' \
+        "$vq" >"$WT/.specify/gates/policy.json"
+    ( cd "$WT" && git add -A && git commit -q --no-verify -m "chore: sandbox $mode" ) >/dev/null 2>&1
+    check "worktree: a $mode command's sandbox repository is its own (#293)" 0 \
+        bash -c "cd '$WT' && echo '$mode' >>notes.md && git add notes.md && git commit -q -m 'docs: notes $mode'"
+    check "worktree: the main repository is not bare after the $mode run" 0 \
+        bash -c "[[ \"\$(git -C '$WM' config --get core.bare)\" == false ]]"
+    check "worktree: the worktree index is untouched after the $mode run" 0 \
+        bash -c "[[ -z \"\$(git -C '$WT' status --porcelain --untracked-files=no)\" ]]"
+done
+# GATES_GIT_INDEX_FILE (#293): gate commands run without git's variables,
+# so verify.sh names the index of the commit being made. git hands the hook
+# a temporary index for `commit -a` and `commit <paths>`; with the variables
+# cleared, `git diff --cached` alone would read the real index and, for
+# `commit <paths>`, name files the commit does not hold. The probe lists
+# what it sees through GATES_GIT_INDEX_FILE and builds a throwaway
+# repository too, as a custom command and as a project gate, in the main
+# checkout and in the linked worktree, for each commit form.
+cat >"$WORKDIR/probe.sh" <<'SH'
+#!/bin/bash
+set -e
+GIT_INDEX_FILE="$GATES_GIT_INDEX_FILE" git diff --cached --name-only | sort | tr '\n' ' ' >"$PROBE_OUT"
+t="$(mktemp -d)"
+cd "$t" || exit 1
+git init -q
+echo x >f
+git add -A
+git -c user.email=a@b -c user.name=n commit -q --no-verify -m sandbox
+SH
+PROBE_OUT="$WORKDIR/probe.out"
+for co in "$WM" "$WT"; do
+    where=worktree
+    [[ "$co" == "$WM" ]] && where=main
+    cp "$WORKDIR/probe.sh" "$co/probe.sh"
+    echo a >"$co/pa.txt"
+    echo b >"$co/pb.txt"
+    for mode in custom gate; do
+        if [[ "$mode" == custom ]]; then
+            vq='"orchestrator": "custom", "severity": "error", "custom_command": "bash probe.sh"'
+        else
+            vq='"orchestrator": "none", "severity": "error", "gates": { "probe": { "command": "bash probe.sh", "timeout_s": 60 } }'
+        fi
+        printf '{ "hooks": { "verify-quality": { %s } }, "git": { "block_main_commits": false, "conventional_commits": false }, "protected_files": { "extra": ["c.md"] } }' \
+            "$vq" >"$co/.specify/gates/policy.json"
+        ( cd "$co" && git add -A && git commit -q --no-verify -m "chore: probe $mode" ) >/dev/null 2>&1
+        for form in plain all path; do
+            echo "$form" >>"$co/pa.txt"
+            echo "$form" >>"$co/pb.txt"
+            git -C "$co" add pa.txt
+            case "$form" in
+                plain) args=() want="pa.txt " ;;
+                all) args=(-a) want="pa.txt pb.txt " ;;
+                path) args=(pb.txt) want="pb.txt " ;;
+            esac
+            rm -f "$PROBE_OUT"
+            rc=0
+            (cd "$co" && PROBE_OUT="$PROBE_OUT" git commit -q ${args[@]+"${args[@]}"} -m "docs: probe $form") >/dev/null 2>&1 || rc=$?
+            check "$where $mode commit ($form): the commit passes the gate" 0 test "$rc" -eq 0
+            check "$where $mode commit ($form): the gate sees the commit's files" 0 \
+                test "$(cat "$PROBE_OUT" 2>/dev/null)" == "$want"
+            check "$where $mode commit ($form): the commit holds those files" 0 \
+                test "$(git -C "$co" show --name-only --format= HEAD | sort | tr '\n' ' ')" == "$want"
+            check "$where $mode commit ($form): the main repository is not bare" 0 \
+                test "$(git -C "$WM" config --get core.bare)" == false
+            git -C "$co" reset -q --hard
+        done
+    done
+done
+# Outside a hook (the agent boundary) it names the repository's own index.
+echo agent >>"$WT/pa.txt"
+git -C "$WT" add pa.txt
+rm -f "$PROBE_OUT"
+(cd "$WT" && PROBE_OUT="$PROBE_OUT" bash .specify/gates/verify.sh --boundary agent) >/dev/null 2>&1
+check "agent boundary: the gate sees the staged files of the worktree's index" 0 \
+    test "$(cat "$PROBE_OUT" 2>/dev/null)" == "pa.txt "
+git -C "$WT" reset -q --hard
 
 # ===========================================================================
 # Part E3: configurable AI branding (git.ai_branding, issue #52)
@@ -1502,7 +1598,7 @@ mv "$LR/.specify/gates/lib/local-hooks.sh.off" "$LR/.specify/gates/lib/local-hoo
 # not the one on PATH: under a PATH without bash a passing rule passes.
 NOBASH="$WORKDIR/path-nobash"
 toolpath "$NOBASH"
-for t in mktemp sleep rm kill mkdir sort cut ls env ps; do
+for t in mktemp mkfifo sleep rm kill mkdir sort cut ls env ps; do
     command -v "$t" >/dev/null 2>&1 && ln -sf "$(command -v "$t")" "$NOBASH/$t"
 done
 NB="$WORKDIR/nobash-rules"

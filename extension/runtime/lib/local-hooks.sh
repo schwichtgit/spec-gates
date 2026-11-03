@@ -71,42 +71,54 @@ _gates_local_group_stop() { # <pgid>
 # caller's $() pipe: a child the rule leaves behind would hold the pipe
 # open, and the hook would wait for it past any timeout (#189). The exit
 # is the rule's; the state file GATES_LOCAL_STATE gets "timeout" when the
-# watchdog stopped it, or "leftover" when it exited but left a process
+# limit stopped it, or "leftover" when it exited but left a process
 # running (a file, so no exit code of the rule's own can pose as either).
 _gates_local_exec() {
-    local f="$1" limit="$GATES_LOCAL_LIMIT" flag="$GATES_LOCAL_STATE" pid wd rc=0 errf n=0
+    local f="$1" limit="$GATES_LOCAL_LIMIT" flag="$GATES_LOCAL_STATE" rc=0 errf fifo
     shift
     errf="$(mktemp 2>/dev/null || mktemp -t gates-local)" || return 1
-    # set -m gives the rule its own process group, so the watchdog can kill
-    # whatever the rule started, not just the rule's shell. A child that
-    # calls setsid leaves the group and is out of reach.
-    set -m
-    GATES_HOOK="$GATES_LOCAL_HOOK" GATES_PROJECT_ROOT="$GATES_LOCAL_ROOT" \
-        "$BASH" "$f" "$@" <<<"$GATES_LOCAL_STDIN" >/dev/null 2>"$errf" &
-    pid=$!
-    set +m
+    # The rule's exit status comes back on a FIFO, and one `read -t` with
+    # the limit decides: a status in time is the result, none means the
+    # limit passed. There is no timer process, so a rule that has finished
+    # is never reported as timed out, and no sleep paces the decision. As
+    # in lib/watch.sh, which this file does not source: the canary copies
+    # it alone.
+    fifo="$errf.status"
+    if ! mkfifo "$fifo" 2>/dev/null; then
+        rm -f "$errf"
+        echo "cannot watch the rule: mkfifo failed"
+        return 1
+    fi
     (
-        i=0
-        while [[ "$i" -lt "$limit" ]]; do
-            sleep 1
-            kill -0 "$pid" 2>/dev/null || exit 0
-            i=$((i + 1))
-        done
-        echo timeout >"$flag"
-        _gates_local_group_stop "$pid"
-    ) </dev/null >/dev/null 2>&1 &
-    wd=$!
-    wait "$pid" || rc=$?
-    if [[ -s "$flag" ]]; then
-        # Timed out: let the watchdog finish its KILL of the whole group.
-        wait "$wd" 2>/dev/null
-    else
-        kill "$wd" 2>/dev/null
-        wait "$wd" 2>/dev/null
+        # set -m gives the rule its own process group, so a timeout stops
+        # whatever the rule started, not just the rule's shell. A child that
+        # calls setsid leaves the group and is out of reach. The job around
+        # the rule outlives a TERM to that group (a handler, not an ignore,
+        # so the rule still gets the signal) and reports its status.
+        set -m
+        exec 6<>"$fifo"
+        {
+            trap : HUP INT TERM
+            GATES_HOOK="$GATES_LOCAL_HOOK" GATES_PROJECT_ROOT="$GATES_LOCAL_ROOT" \
+                "$BASH" "$f" "$@" <<<"$GATES_LOCAL_STDIN" >/dev/null 2>"$errf" 6>&-
+            echo "$?" >&6
+        } </dev/null >/dev/null 2>&1 &
+        pid=$!
+        rrc=""
+        read -r -t "$limit" -u 6 rrc 2>/dev/null || :
+        if [[ -z "$rrc" ]]; then
+            echo timeout >"$flag"
+            _gates_local_group_stop "$pid"
+            crc=0
+            wait "$pid" 2>/dev/null || crc=$?
+            exit "$crc"
+        fi
+        wait "$pid" 2>/dev/null
         # The rule exited, and whatever it started goes with it. A child
         # already on its way out gets half a second before it counts. A rule
         # that leaves a process running refuses, as an accept block does:
         # the process would outlive the check it was part of.
+        n=0
         while [[ $n -lt 5 ]] && _gates_local_group_alive "$pid"; do
             sleep 0.1
             n=$((n + 1))
@@ -115,7 +127,9 @@ _gates_local_exec() {
             _gates_local_group_stop "$pid"
             echo leftover >"$flag"
         fi
-    fi
+        exit "$rrc"
+    ) || rc=$?
+    rm -f "$fifo"
     cat "$errf" 2>/dev/null
     rm -f "$errf"
     return "$rc"

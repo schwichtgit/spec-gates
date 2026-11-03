@@ -151,6 +151,28 @@ PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null 
 GATES_DIR="$PROJECT_ROOT/.specify/gates"
 POLICY_FILE="$GATES_DIR/policy.json"
 
+# The index of the commit being made, as an absolute path, for the gate
+# commands (#293). They run without git's per-repository variables
+# (gates_git_env_clear, lib/watch.sh), and `git commit -a` or
+# `git commit <paths>` hands the hook a temporary index, so without this
+# a command reading the staged files would see the real index instead.
+# GIT_INDEX_FILE="$GATES_GIT_INDEX_FILE" git diff --cached --name-only
+# lists exactly what the commit holds. A relative GIT_INDEX_FILE is
+# relative to the directory git started the hook in; outside a hook this
+# is the repository's own index. Never inherited: a run on another
+# project (a fixture an accept block checks) names that project's index.
+if [[ -n "${GIT_INDEX_FILE:-}" ]]; then
+    case "$GIT_INDEX_FILE" in
+        /*) GATES_GIT_INDEX_FILE="$GIT_INDEX_FILE" ;;
+        *) GATES_GIT_INDEX_FILE="$PWD/$GIT_INDEX_FILE" ;;
+    esac
+elif GATES_GIT_INDEX_FILE="$(git -C "$PROJECT_ROOT" rev-parse --git-path index 2>/dev/null)"; then
+    [[ "$GATES_GIT_INDEX_FILE" == /* ]] || GATES_GIT_INDEX_FILE="$PROJECT_ROOT/$GATES_GIT_INDEX_FILE"
+else
+    GATES_GIT_INDEX_FILE=""
+fi
+export GATES_GIT_INDEX_FILE
+
 # A gate command runs with GATES_GATE_ROOT set to its project's root
 # (run_gate). A full run started from it on the same root would run that
 # gate again, and so on without end: every boundary would hang instead of
@@ -493,9 +515,11 @@ run_gate() { # name severity cmd...
     elif [[ "$name" == "custom" ]]; then
         # The custom command runs from the project root, as project gates
         # do, wherever verify.sh was started (#276).
-        (cd "$PROJECT_ROOT" && GATES_GATE_ROOT="$PROJECT_ROOT" "$@") >/tmp/gates-out.$$ 2>&1 || rc=$?
+        # Without git's per-repository variables (#293, lib/watch.sh).
+        (cd "$PROJECT_ROOT" && gates_git_env_clear && GATES_GATE_ROOT="$PROJECT_ROOT" "$@") \
+            >/tmp/gates-out.$$ 2>&1 || rc=$?
     else
-        GATES_GATE_ROOT="$PROJECT_ROOT" "$@" >/tmp/gates-out.$$ 2>&1 || rc=$?
+        (gates_git_env_clear && GATES_GATE_ROOT="$PROJECT_ROOT" "$@") >/tmp/gates-out.$$ 2>&1 || rc=$?
     fi
     end="$(date +%s)"
 

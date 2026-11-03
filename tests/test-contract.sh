@@ -279,6 +279,30 @@ OUT="$(contract "$DU" sync)"
 expect_contains "unreachable source refused" "$OUT" "EXIT=2"
 expect_contains "unreachable source named" "$OUT" "could not fetch"
 
+# #293: a fetch run with a git hook's GIT_DIR and GIT_INDEX_FILE exported (a
+# commit from a linked worktree) checks a commit pin out in its own clone,
+# not in the caller's repository. Before the fix that checkout ran in the
+# caller's: the pin was not found there and the fetch failed.
+BENV="$WORKDIR/base-env"
+mkbaseline "$BENV" v1.0.0 "$BASE_POLICY"
+VENV="$WORKDIR/caller-env"
+git init -q -b main "$VENV"
+echo caller >"$VENV/c.txt"
+git -C "$VENV" add -A
+git -C "$VENV" -c user.email=t@t -c user.name=t commit -q -m caller
+VHEAD="$(git -C "$VENV" rev-parse HEAD)"
+PIN="$(git -C "$BENV" rev-parse v1.0.0)"
+rc=0
+# shellcheck disable=SC2016  # expanded by the inner bash
+(cd "$VENV" && GIT_DIR="$VENV/.git" GIT_INDEX_FILE="$VENV/.git/index" bash -c '
+    source "$1/extension/runtime/lib/contract.sh"
+    gates_contract_fetch "$2" "$3" policy.json "$4"' _ "$REPO_ROOT" "$BENV" "$PIN" "$WORKDIR/env-fetch.json") \
+    >/dev/null 2>&1 || rc=$?
+expect "a commit pin fetches with a hook's GIT_DIR exported" "$rc" 0
+expect "the fetched document is the pinned one" "$(jq -S -c . "$WORKDIR/env-fetch.json" 2>/dev/null)" "$(printf '%s' "$BASE_POLICY" | jq -S -c .)"
+expect "the caller's HEAD is untouched" "$(git -C "$VENV" rev-parse HEAD)" "$VHEAD"
+expect "the caller's tree is untouched" "$(git -C "$VENV" status --porcelain | wc -l | tr -d ' ')" 0
+
 # Prior state survives a later failed sync.
 jq '.extends.version = "v9.9.9"' "$D/.specify/gates/policy.json" >"$D/p.tmp" && mv "$D/p.tmp" "$D/.specify/gates/policy.json"
 OUT="$(contract "$D" sync)"
