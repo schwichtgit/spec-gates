@@ -87,15 +87,22 @@ ok "manifest verifies against the tree" bash -c "cd '$D' && tail -n +2 .specify/
 ok ".runtime-version recorded" test -s "$D/.specify/gates/.runtime-version"
 ok "attestations ignored" grep -qxF attestations.jsonl "$D/.specify/gates/.gitignore"
 ok "the gate lock ignored (#263)" grep -qxF .lock/ "$D/.specify/gates/.gitignore"
-# An upgrade from a release that listed only the log adds the lock on a
-# line of its own, also after a last line without its newline.
+ok "the per-gate failure output ignored" grep -qxF output/ "$D/.specify/gates/.gitignore"
+# An upgrade from a release that listed only the log adds the lock and the
+# output directory on lines of their own, also after a last line without
+# its newline.
 GI_SAVED="$(cat "$D/.specify/gates/.gitignore")"
 printf 'attestations.jsonl' >"$D/.specify/gates/.gitignore"
-rc_is "an upgrade adds the missing ignore line" 0 "$D" --skip-canary
-ok "the plan names the added line" grep -qF 'add .lock/ to .specify/gates/.gitignore' <<<"$OUT"
-ok "both ignore lines are whole lines" \
+rc_is "an upgrade adds the missing ignore lines" 0 "$D" --skip-canary
+ok "the plan names the added lines" grep -qF 'add .lock/ output/ to .specify/gates/.gitignore' <<<"$OUT"
+ok "every ignore line is a whole line" \
     test "$(cat "$D/.specify/gates/.gitignore")" == "attestations.jsonl
-.lock/"
+.lock/
+output/"
+# A 0.5.0 projection (log and lock) is pending until re-projected.
+printf 'attestations.jsonl\n.lock/\n' >"$D/.specify/gates/.gitignore"
+rc_is "--check: a missing output/ line is pending work" 1 "$D" --check
+ok "--check names the output/ line" grep -qF 'add output/ to .specify/gates/.gitignore' <<<"$OUT"
 printf '%s\n' "$GI_SAVED" >"$D/.specify/gates/.gitignore"
 ok "settings carry the protect-files hook" jq -e '[.hooks.PreToolUse[].hooks[].command] | any(test("protect-files"))' "$D/.claude/settings.json"
 ok "policy.json untouched" grep -qx '{ "hooks": {} }' "$D/.specify/gates/policy.json"

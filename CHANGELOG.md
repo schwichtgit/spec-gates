@@ -72,6 +72,9 @@ init` set the main repository's `core.bare = true` and `git add -A`
 
 ### Changed
 
+- `project.sh` adds `output/` (the per-gate failure output,
+  `.specify/gates/output/<gate>.log`) to `.specify/gates/.gitignore`, so
+  `project.sh --check` reports pending work until you re-project.
 - **Gate commands read the commit's index through
   `GATES_GIT_INDEX_FILE`** (#293). They no longer inherit
   `GIT_INDEX_FILE`, and `git commit -a` or `git commit <paths>` hands the

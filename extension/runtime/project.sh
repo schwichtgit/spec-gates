@@ -257,11 +257,12 @@ fi
 NEED_RTV=0
 [[ "$(head -n 1 "$RTV_FILE" 2>/dev/null || true)" == "$VERSION" ]] || NEED_RTV=1
 GI="$ROOT/.specify/gates/.gitignore"
-# The attestation log and the gate lock (#263) are run-time files, never
-# source: one line each, added when missing.
+# The attestation log, the gate lock (#263) and the per-gate failure
+# output (output/<gate>.log) are run-time files, never source: one line
+# each, added when missing.
 NEED_GI=0
 GI_ADD=""
-for gi_line in attestations.jsonl .lock/; do
+for gi_line in attestations.jsonl .lock/ output/; do
     grep -qxF "$gi_line" "$GI" 2>/dev/null && continue
     NEED_GI=1
     GI_ADD="$(addline "$GI_ADD" "$gi_line")"
