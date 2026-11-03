@@ -35,6 +35,14 @@ init` set the main repository's `core.bare = true` and `git add -A`
   (#317). The name check listed `credentials` and `password` only, so
   `assert_no_credential_values.sh` or `passwd.txt` was edited without a
   prompt. It asks, never blocks, so the wider list adds prompts only.
+- **The credential rule no longer flags variable references and secret
+  names** (#310). `password="${REGISTRY_PASSWORD}"`,
+  `token="$(tool create token)"` and a camel-case name such as
+  `identitySecret = "hub-identity"` were refused as possible credential
+  assignments. A value starting with `$(`, `${` or `$NAME` no longer
+  counts, and the keyword must start a name or follow a character that is
+  not a letter or digit (`DB_PASSWORD`, `--password`). A quoted literal
+  value after such a keyword is still refused.
 
 ### Changed
 

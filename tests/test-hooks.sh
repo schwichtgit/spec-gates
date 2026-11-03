@@ -460,6 +460,34 @@ check "secret scan: api_key = \"AKIA...\" blocked" 1 \
 check "secret scan: token: '<10 chars>' blocked as a credential assignment" 0 \
     bash -c "cd '$GF' && printf \"token: '%s'\\n\" abcdefgh12 >k2.txt && git add k2.txt && ! git commit -q -m 'chore: k2' 2>'$WORKDIR/k2.err' && grep -q 'SECRET: Possible credential assignment in k2.txt' '$WORKDIR/k2.err'"
 ( cd "$GF" && git reset -q -- . >/dev/null 2>&1; rm -f k2.txt )
+# #310: a variable reference or command substitution is no literal secret,
+# and a camel-case name ending in a keyword is no keyword. Literal values
+# after a keyword that starts a name (or follows _ or -) are still refused.
+# shellcheck source=/dev/null disable=SC1091
+CRED_RE="$(source "$REPO_ROOT/extension/runtime/lib/secrets.sh" && printf '%s' "${GATES_SECRET_PATTERNS[5]}")"
+while IFS= read -r line; do
+    check "credential rule passes: $line" 1 grep -qiE -e "$CRED_RE" <<<"$line"
+done <<'EOF'
+COSIGN_PASSWORD="$(printf '%s' "$COSIGN_PASSWORD_B64" | base64 -d)"
+  --password="${REGISTRY_PASSWORD}"
+token="$(tool create token)"
+token="$GITLAB_TOKEN_VALUE"
+identitySecret = "hub-identity"
+EOF
+# The @ keeps this file clean for the repository's own scan; it is dropped
+# before the check.
+while IFS= read -r line; do
+    check "credential rule refuses: $line" 0 grep -qiE -e "$CRED_RE" <<<"$line"
+done < <(tr -d @ <<'EOF'
+password@: "hunter22x"
+API_TOKEN@="abcd1234efgh"
+DB_PASSWORD@="$3cr3tPa55"
+  --password@='abcdefgh12'
+secret@ = "abcdefghij"
+EOF
+)
+check "secret scan: a quoted variable reference commits clean (#310)" 0 \
+    bash -c "cd '$GF' && printf '%s\n' 'password=\"\${REGISTRY_PASSWORD}\"' >k3.sh && git add k3.sh && git commit -q -m 'chore: k3'"
 
 # The scan reads the staged blobs in one batch per rule (issue #133): a name
 # with a space is one file, binary content is scanned, the staged copy is

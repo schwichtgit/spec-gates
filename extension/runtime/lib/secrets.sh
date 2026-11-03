@@ -70,13 +70,17 @@ gates_forbidden_path() { # <path>
 # generic password/secret/token assignment. POSIX classes only: inside a
 # bracket expression `\s` and `\x27` are literal characters, so the old
 # `[^\s"']` matched spaces and flagged prose such as the runtime's own
-# `"unparseable token: " kv` (issue #50).
+# `"unparseable token: " kv` (issue #50). The keyword starts a name or
+# follows a character that is not a letter or digit (`DB_PASSWORD`,
+# `--password`), so a camel-case name such as `identitySecret` is no
+# keyword; a value starting with `$(`, `${` or `$NAME` is a command
+# substitution or a variable reference, not a literal secret (issue #310).
 GATES_SECRET_LABELS=("AWS key pattern" "OpenAI key pattern" "GitHub token pattern"
     "GitLab token pattern" "Slack token pattern" "Possible credential assignment")
 GATES_SECRET_FLAGS=(-E -E -E -E -E -i)
 GATES_SECRET_PATTERNS=('AKIA[0-9A-Z]{16}' 'sk-[a-zA-Z0-9]{48}' '(ghp_|gho_)[a-zA-Z0-9]{36}'
     'glpat-[a-zA-Z0-9_-]{20}' 'xoxb-[0-9]{10,}'
-    '(password|secret|api_key|token)[[:space:]]*[=:][[:space:]]*["'\''][^[:space:]"'\'']{8,}')
+    '(^|[^A-Za-z0-9])(password|secret|api_key|token)[[:space:]]*[=:][[:space:]]*["'\'']([^$[:space:]"'\''][^[:space:]"'\'']{7,}|\$[^({A-Za-z_[:space:]"'\''][^[:space:]"'\'']{6,})')
 
 # Paths (of the NUL-separated list on stdin) whose content matches rule <i>
 # in the index (--cached) or in any of the given commits, NUL-separated on

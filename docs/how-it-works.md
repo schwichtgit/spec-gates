@@ -197,7 +197,11 @@ and anything in or named `.ssh`, `.gnupg`, `.aws` or `.gcloud`, with or
 without a trailing slash. Names ending in `.example`, `.sample` or
 `.template` are exempt. The content scan looks for AWS, OpenAI, GitHub,
 GitLab and Slack key shapes and for a `password`, `secret`, `api_key` or
-`token` assignment of a quoted value of 8 or more characters.
+`token` assignment of a quoted value of 8 or more characters. The keyword
+must start a name or follow a character that is not a letter or digit
+(`DB_PASSWORD`, `--password`; not `identitySecret`), and a value that
+starts with `$(`, `${` or `$NAME` is a variable reference or command
+substitution, not a literal, so it passes.
 
 Subjects git writes itself are exempt from the Conventional Commits rule
 only: a merge commit (recognized by `MERGE_HEAD`, not by its subject) and
