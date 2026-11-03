@@ -834,7 +834,7 @@ snapshot and the lines never count as a block's writes.
 
 **Canaries.** `canary.sh` (projected next to `verify.sh`) plants known
 violations in `mktemp` sandboxes and requires the real entrypoints to
-reject them, 18 probes in all:
+reject them, 19 probes in all:
 
 - the format, markdown and shell probes run through `verify.sh` itself;
   when the tool is missing but the policy enables it, the probe fails as
@@ -859,6 +859,11 @@ reject them, 18 probes in all:
   block at agent and git: `verify.sh --boundary ci` must fail the spec gate
   on that block, since CI never asks the script, and the git run must
   report the block covered;
+- `worktree` commits in a linked worktree of a sandbox through a project
+  gate that builds a throwaway repository (`git init`, `add`, `commit` in
+  a temp directory): the sandbox's main repository must stay non-bare and
+  the worktree's index unchanged, so gate commands cannot reach the
+  caller's repository through git's hook variables (#293);
 - `spec`, `errexit` and `contract` are described with their gates below.
 
 Hooks run by path, as Claude Code runs them, so their shebang picks the

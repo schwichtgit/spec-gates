@@ -30,7 +30,11 @@ init` set the main repository's `core.bare = true` and `git add -A`
   staged every tracked file as deleted. 0.4.0 cleared these variables for
   accept blocks and the canary only (#173). Every command the gates run,
   and the `contract.sh sync` fetch, now starts without git's
-  per-repository variables; one list serves all of them.
+  per-repository variables; one list serves all of them. A new `worktree`
+  canary proves it in every install (the suite now has 19): a real commit
+  in a linked worktree of a sandbox runs a project gate that builds a
+  throwaway repository, and the sandbox's main repository must stay
+  non-bare and the worktree's index unchanged.
 - **The projected `project.sh` takes every option** (#315).
   `.specify/gates/project.sh --keep-local <path>` or
   `--add-lint-ignores` exited 2 with "run the installed copy", and the

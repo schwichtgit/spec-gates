@@ -325,6 +325,23 @@ cp "$REPO_ROOT/extension/runtime/lib/spec-gate.sh" "$FIX/.specify/gates/lib/"
 expect "restored spec gate -> covered canary green again (exit 0)" \
     "$(canary "$FIX" --only covered)" 0
 
+# --- #293: gate commands in a linked worktree build their own repository ---
+echo ""
+echo "=== worktree canary (#293) ==="
+expect "healthy fixture: worktree canary blocked (exit 0)" \
+    "$(canary "$FIX" --only worktree)" 0
+WTJSON="$(CLAUDE_PROJECT_DIR="$FIX" bash "$FIX/.specify/gates/canary.sh" --json --only worktree)"
+expect "worktree canary reports status=blocked" \
+    "$(printf '%s' "$WTJSON" | jq -r '.canaries[0].status')" blocked
+# Gate commands that keep git's hook variables (0.5.0): the sandbox's
+# throwaway repository lands in the canary's own sandbox repository.
+printf '\ngates_git_env_clear() { :; }\n' >>"$FIX/.specify/gates/lib/watch.sh"
+RC_WT=0
+OUT_WT="$(CLAUDE_PROJECT_DIR="$FIX" bash "$FIX/.specify/gates/canary.sh" --only worktree 2>&1)" || RC_WT=$?
+expect "inherited hook variables -> suite fails naming core.bare" \
+    "$RC_WT:$(grep -c "^canary: worktree -- ACCEPTED.*core.bare to 'true'" <<<"$OUT_WT" || true)" "1:1"
+cp "$REPO_ROOT/extension/runtime/lib/watch.sh" "$FIX/.specify/gates/lib/"
+
 # --- skipped semantics: absent tool, and the policy-enabled gap rule ---
 echo ""
 echo "=== skipped vs enforcement-gap semantics ==="
