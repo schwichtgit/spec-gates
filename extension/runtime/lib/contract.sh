@@ -472,10 +472,18 @@ gates_contract_fetch() { # <source> <version> <file> <out>
         return 2
     }
     local clone_ok=0
-    if git clone -q --depth 1 --branch "$version" "$source" "$tmp/src" 2>/dev/null; then
-        clone_ok=1
-    elif git clone -q "$source" "$tmp/src" 2>/dev/null \
-        && git -C "$tmp/src" checkout -q "$version" 2>/dev/null; then
+    # Without git's per-repository variables (#293): run from a hook or a
+    # script that exports GIT_DIR, `git -C "$tmp/src" checkout` would check
+    # the version out in the caller's repository instead of the clone.
+    if (
+        # shellcheck source=watch.sh disable=SC1091
+        declare -F gates_git_env_clear >/dev/null \
+            || source "$(dirname "${BASH_SOURCE[0]}")/watch.sh" || exit 1
+        gates_git_env_clear
+        git clone -q --depth 1 --branch "$version" "$source" "$tmp/src" 2>/dev/null \
+            || { git clone -q "$source" "$tmp/src" 2>/dev/null \
+                && git -C "$tmp/src" checkout -q "$version" 2>/dev/null; }
+    ); then
         clone_ok=1
     fi
     if [[ "$clone_ok" != "1" ]]; then
