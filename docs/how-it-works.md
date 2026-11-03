@@ -56,7 +56,15 @@ spec-gates uses four of them:
   discarding the whole working tree with `git checkout`, `git restore` or
   `git rm` of `.`, `:/` or other pathspec magic in any option order,
   `git checkout -f`, `git switch -f` or `--discard-changes`,
-  `git stash clear`, `git clean` with `-f` or `--force` anywhere, …). With
+  `git stash clear`, `git clean` with `-f` or `--force` anywhere, …). A
+  force-push refusal names the alternatives: a normal push, a new branch,
+  or the forge's rebase (GitLab's
+  `PUT /projects/:id/merge_requests/:iid/rebase`). With
+  `git.allow_force_with_lease_on_branches` the bare
+  `git push --force-with-lease <remote> <branch>...` passes when every
+  branch it names is none of `main`, `master` and the remote's default
+  branch (`refs/remotes/<remote>/HEAD`; unknown refuses); no named branch,
+  a refspec it cannot read, or a cd it cannot follow refuses. With
   `git.block_bulk_staging` it also refuses bulk staging: `git add` or
   `git stage` with `-A` (also in a cluster such as `-vA`), `--all`,
   `--no-ignore-removal`, `--pathspec-from-file`, `.`, `:/` and other
@@ -78,7 +86,11 @@ spec-gates uses four of them:
   command inside `sh -c`, behind `eval` or behind `xargs`. A PR command
   after a shell keyword (`if …; then gh pr create …`) or a wrapper and
   its options (`env -i`, `sudo -u bob`) is checked; `gh api "$EP"`, whose
-  endpoint only the shell knows, asks.
+  endpoint only the shell knows, asks. A body file is read and its text
+  checked: gh's `--body-file <path>`, and for glab, which has no
+  description-file flag, `--description "$(cat <path>)"` or
+  `--description "$(<path)"` with a literal path. A file it cannot read
+  is refused.
 - `PostToolUse(Write|Edit)` → `post-edit.sh`: formats the touched file per
   policy.
 - `Stop` → `format-changed.sh` + `verify-quality.sh`: a stop while
@@ -99,8 +111,9 @@ ask the human when they cannot judge, and allow everything else. "Ask" is
 the PreToolUse `permissionDecision: ask` answer, which prompts in every
 permission mode. The hooks ask:
 
-- when a file name merely contains a word such as `secret` or `token` (a
-  test like `test_no_secret_leak.py` is not a credential), and on a Write
+- when a file name merely contains `credential`, `secret`, `password`,
+  `passwd`, `token` or `keystore`, in any case (a test like
+  `test_no_secret_leak.py` is not a credential), and on a Write
   or Edit to the constitution;
 - when a Bash command appears to modify a protected path: `rm`, `mv`,
   `sed -i` or `--in-place`, a redirect (also `>|`), an `--out`/`--output`
@@ -202,7 +215,19 @@ and anything in or named `.ssh`, `.gnupg`, `.aws` or `.gcloud`, with or
 without a trailing slash. Names ending in `.example`, `.sample` or
 `.template` are exempt. The content scan looks for AWS, OpenAI, GitHub,
 GitLab and Slack key shapes and for a `password`, `secret`, `api_key` or
-`token` assignment of a quoted value of 8 or more characters.
+`token` assignment of a quoted value of 8 or more characters. The keyword
+must start a name or follow a character that is not a letter or digit
+(`DB_PASSWORD`, `--password`; not `identitySecret`), and a value that
+starts with `$(`, `${` or `$NAME` is a variable reference or command
+substitution, not a literal, so it passes. The gates' own files, the
+vendored `.specify/extensions/gates/**` and the projected
+`.specify/gates/**`, skip that assignment rule while their content is
+what was projected: the hash `.specify/gates/.projected.sha256` records
+for the file in the same snapshot (the staged index, or the commit
+`pr-check.sh` scans), or the hash a released version shipped. Upgrades
+overwrite these files, so a match there cannot be fixed by editing them;
+an edited copy is scanned as before, and the key-shape rules scan every
+file.
 
 Subjects git writes itself are exempt from the Conventional Commits rule
 only: a merge commit (recognized by `MERGE_HEAD`, not by its subject) and
@@ -511,6 +536,14 @@ other bots' logins to the list in `GATES_PR_BODY`.
 GitLab: a job of its own, with full history (`GIT_DEPTH: "0"`) and the
 tools `pr-check.sh` needs, in merge request pipelines. With "Pipelines
 must succeed" set, a failure blocks the merge.
+In the GitLab template (`extension/ci/gitlab/gates.gitlab-ci.yml`), an
+MR pipeline that a Renovate or Dependabot bot user started is checked
+without its description, as on GitHub; the title, protected changes and
+secrets are still checked. GitLab names no MR author, so the template
+compares `GITLAB_USER_LOGIN`, the user who started the pipeline, with the
+user names in its `bots` list (`renovate-bot dependabot` by default; put
+your bots' user names there). A pipeline a person starts or retries
+checks the description.
 
 ```yaml
 # spec-gates pr step (GitLab): add as a job to the pipeline file that

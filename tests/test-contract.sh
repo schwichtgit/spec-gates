@@ -560,6 +560,19 @@ expect "_-prefixed keys are no delta" "$(grep -c '_comment\|_note' <<<"$OUT" || 
 cp "$CL/new.json" "$CL/old.json"
 printf '%s' '{"git":{"ai_branding":{"terms":["x"]}}}' >"$CL/new.json"
 expect_contains "dropped branding terms are a weakening" "$(devs delta)" "- weakened: git.ai_branding.terms"
+# git.allow_force_with_lease_on_branches relaxes the force-push refusal
+# (#313): on is the weaker side, also when the baseline leaves it unset.
+FWL=allow_force_with_lease_on_branches
+printf '%s' '{"hooks":{}}' >"$CL/old.json"
+printf '%s' "{\"hooks\":{},\"git\":{\"$FWL\":true}}" >"$CL/new.json"
+expect_contains "git.$FWL unset->true is a weakening" "$(devs "")" "- weakened: git.$FWL"
+expect_contains "git.$FWL unset->true is a weakening (delta)" "$(devs delta)" "- weakened: git.$FWL"
+printf '%s' "{\"hooks\":{},\"git\":{\"$FWL\":false}}" >"$CL/old.json"
+expect_contains "git.$FWL false->true is a weakening" "$(devs "")" "- weakened: git.$FWL"
+cp "$CL/new.json" "$CL/old.json"
+printf '%s' "{\"hooks\":{},\"git\":{\"$FWL\":false}}" >"$CL/new.json"
+expect_contains "git.$FWL true->false is a strengthening" "$(devs delta)" "- strengthened: git.$FWL"
+expect "git.$FWL true->false is no overlay deviation" "$(devs "" | grep -c "$FWL" || true)" 0
 
 echo ""
 echo "=== project gate classification (feature 006, contracts/policy-gates.md) ==="
@@ -771,7 +784,7 @@ echo "=== sync --update: no policy text in the commit message (#154) ==="
 BW="$WORKDIR/base-words"
 mkbaseline "$BW" v1.0.0 "$(printf '%s' "$BASE_POLICY" | jq -c '.git = {"ai_branding": {"terms": ["Anthropic", "GPT", "Gemini"]}} | ._comment = "the baseline"')"
 mkbaseline "$BW" v2.0.0 "$(printf '%s' "$BASE_POLICY" | jq -c '.git = {"ai_branding": {"terms": ["Anthropic", "GPT", "Copilot", "OpenAI"]}} | ._comment = "a seamless baseline, Co-Authored-By: nobody"')"
-mkbaseline "$BW" v3.0.0 "$(printf '%s' "$BASE_POLICY" | jq -c '.git = {"ai_branding": {"terms": ["Anthropic", "GPT", "Copilot"]}} | .hooks."copilot-review" = {"include": ["**/*.none"], "orchestrator": "none", "severity": "error"}')"
+mkbaseline "$BW" v3.0.0 "$(printf '%s' "$BASE_POLICY" | jq -c '.git = {"ai_branding": {"terms": ["Anthropic", "GPT", "Copilot"]}} | .hooks."Copilot-review" ={"include": ["**/*.none"], "orchestrator": "none", "severity": "error"}')"
 WD="$WORKDIR/words"
 hooked_repo "$WD" "$BW" v1.0.0
 OUT="$(contract "$WD" sync --update v2.0.0)"
@@ -783,7 +796,8 @@ expect "no branding term, AI-ism or trailer text from the baseline in the body" 
     "$(grep -ciE 'copilot|openai|gemini|seamless|co-authored-by' <<<"$BODY")" 0
 expect_contains "full message keeps the versions" "$BODY" "chore: update policy baseline v1.0.0 -> v2.0.0"
 # A hook name is part of a path and can still trip the rules: the message
-# falls back to counts only.
+# falls back to counts only. (A lowercase kebab-case name such as
+# copilot-review no longer trips them, #297.)
 OUT="$(contract "$WD" sync --update v3.0.0)"
 expect_contains "update whose paths trip the rules still commits" "$OUT" "EXIT=0"
 BODY="$(git -C "$WD" log -1 --format=%B gates/baseline-v3.0.0 2>/dev/null || true)"

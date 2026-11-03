@@ -20,6 +20,55 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   failed gate. The GitHub and GitLab templates keep the directory as an
   artifact on failure. `GATES_VERBOSE=1` streams gate output to stderr as
   it runs. The attestation still carries no tool output.
+- **glab descriptions from a file** (#312). glab has no
+  description-file flag. validate-pr now reads
+  `--description "$(cat <path>)"` and `--description "$(<path)"`, with a
+  literal path, as a description file, with the rules of gh's
+  `--body-file`: the file's text is checked, and a file it cannot read is
+  refused. Anything else in the substitution stays refused.
+- **`git.allow_force_with_lease_on_branches`** (#313, default `false`).
+  When `true`, the agent may run `git push --force-with-lease <remote>
+<branch>`, that form only, to branches other than `main`, `master` and
+  the remote's default branch (`refs/remotes/<remote>/HEAD`, which must
+  be known). `--force`, `-f`, `--force-with-lease=<ref>`, `+ref`,
+  `--mirror` and `--all` stay refused. Under a policy contract, turning
+  it on is a weakening deviation.
+- **A failing step's summary keeps its first line too** (#296). Without
+  a `##gates-fail##` line, a task, custom or project gate step showed only
+  its last non-empty line, so a tool that names the file and line first
+  (uv's "TOML parse error at line 1 ...") lost them. The summary is now
+  `<first> | <last>` when the two differ; a `##gates-fail##` line still
+  wins.
+- **Parity names a stale install** (#299). After a branch switch whose
+  `package-lock.json` pins other linter versions, parity failed with only
+  the version pair. When a linter's entry in
+  `node_modules/.package-lock.json` differs from `package-lock.json`, the
+  failure now says `node_modules was installed from another lockfile; run
+npm ci`. The gate still fails until the install matches.
+
+### Changed
+
+- **Gate commands read the commit's index through
+  `GATES_GIT_INDEX_FILE`** (#293). They no longer inherit
+  `GIT_INDEX_FILE`, and `git commit -a` or `git commit <paths>` hands the
+  hook a temporary index, so a plain `git diff --cached` in a custom
+  command or project gate now reads the repository's index, not the
+  commit's (for `git commit <paths>` it names files the commit does not
+  hold). `verify.sh` exports the absolute path of the index the commit
+  uses as `GATES_GIT_INDEX_FILE` (outside a hook, the repository's own
+  index): `GIT_INDEX_FILE="$GATES_GIT_INDEX_FILE" git diff --cached
+--name-only` lists exactly what the commit holds. A command that read
+  the staged files through the inherited variable switches to it.
+- **The secret scan skips the credential heuristic in unedited gates
+  files** (#308). A match of "Possible credential assignment" in the
+  vendored `.specify/extensions/gates/**` or the projected
+  `.specify/gates/**` could not be cleared, since upgrades overwrite
+  those files; only `--no-verify` got past it. pre-commit and
+  `pr-check.sh` now skip that rule for such a file while its content
+  matches the hash `.specify/gates/.projected.sha256` records for it in
+  the same snapshot (the index, or the commit), or one a released version
+  shipped. An edited copy is scanned as before, and the exact key rules
+  (AWS, OpenAI, GitHub, GitLab, Slack) scan every file.
 
 ### Fixed
 
@@ -42,6 +91,43 @@ init` set the main repository's `core.bare = true` and `git add -A`
   accept blocks and the canary only (#173). Every command the gates run,
   and the `contract.sh sync` fetch, now starts without git's
   per-repository variables; one list serves all of them.
+- **protect-files asks on `credential` and `passwd` in a file name**
+  (#317). The name check listed `credentials` and `password` only, so
+  `assert_no_credential_values.sh` or `passwd.txt` was edited without a
+  prompt. It asks, never blocks, so the wider list adds prompts only.
+- **The credential rule no longer flags variable references and secret
+  names** (#310). `password="${REGISTRY_PASSWORD}"`,
+  `token="$(tool create token)"` and a camel-case name such as
+  `identitySecret = "hub-identity"` were refused as possible credential
+  assignments. A value starting with `$(`, `${` or `$NAME` no longer
+  counts, and the keyword must start a name or follow a character that is
+  not a letter or digit (`DB_PASSWORD`, `--password`). A quoted literal
+  value after such a keyword is still refused.
+- **Branding terms inside kebab-case identifiers pass, and the GitLab
+  template skips a bot MR's description** (#297). `openai-completions`
+  was refused as "AI branding (OpenAI)". A lowercase kebab-case
+  identifier whose parts all start with a letter is no longer checked
+  for the terms; `GPT-4`, `gpt-4o` and `OpenAI-compatible` still are.
+  The GitLab template now checks a Renovate or Dependabot MR without its
+  description, which quotes upstream release notes, as the GitHub
+  template does since #248. GitLab names no MR author, so it goes by the
+  user who started the pipeline (`GITLAB_USER_LOGIN`) and its `bots`
+  list.
+- **`claude` in an inline code span passes the standalone-Claude rule**
+  (#307). A message quoting `` `specify integration upgrade claude` ``
+  was refused. Inline code spans are dropped before that check. An
+  attribution stays refused with or without backticks: "Generated by
+  `Claude`", a `Co-Authored-By` trailer, and in PR text
+  "Generated with `Claude Code`". Branding terms are still checked
+  inside code spans.
+- **validate-pr gives glab users advice glab can follow** (#312). The
+  refusal of a description it cannot read named gh's `--body` and
+  `--body-file`, which glab does not have. For glab it now names
+  `--description '...'` and the description file form below.
+- **The force-push refusal names what to do instead** (#313). It said
+  only "(force push)". It now names a normal push, a new branch, the
+  forge's rebase (GitLab: `PUT /projects/:id/merge_requests/:iid/rebase`)
+  and a human running the push, and the policy key below.
 - **The git boundary says when it judged more than the commit** (#305).
   `pre-commit` runs the gates on the working tree, so an unstaged fix
   could let a broken commit pass and an untracked file could fail a clean
@@ -51,32 +137,6 @@ init` set the main repository's `core.bare = true` and `git add -A`
   not (tracked changes the commit leaves out, including for
   `git commit -a` and `git commit <paths>`, or untracked files that are
   not ignored), the hook prints one warning line with the counts.
-
-### Changed
-
-- **Gate commands read the commit's index through
-  `GATES_GIT_INDEX_FILE`** (#293). They no longer inherit
-  `GIT_INDEX_FILE`, and `git commit -a` or `git commit <paths>` hands the
-  hook a temporary index, so a plain `git diff --cached` in a custom
-  command or project gate now reads the repository's index, not the
-  commit's (for `git commit <paths>` it names files the commit does not
-  hold). `verify.sh` exports the absolute path of the index the commit
-  uses as `GATES_GIT_INDEX_FILE` (outside a hook, the repository's own
-  index): `GIT_INDEX_FILE="$GATES_GIT_INDEX_FILE" git diff --cached
---name-only` lists exactly what the commit holds. A command that read
-  the staged files through the inherited variable switches to it.
-- **A failing step's summary keeps its first line too** (#296). Without
-  a `##gates-fail##` line, a task, custom or project gate step showed only
-  its last non-empty line, so a tool that names the file and line first
-  (uv's "TOML parse error at line 1 ...") lost them. The summary is now
-  `<first> | <last>` when the two differ; a `##gates-fail##` line still
-  wins.
-- **Parity names a stale install** (#299). After a branch switch whose
-  `package-lock.json` pins other linter versions, parity failed with only
-  the version pair. When a linter's entry in
-  `node_modules/.package-lock.json` differs from `package-lock.json`, the
-  failure now says `node_modules was installed from another lockfile; run
-npm ci`. The gate still fails until the install matches.
 
 ## 0.5.0 — 2026-10-27
 
