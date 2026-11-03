@@ -21,6 +21,30 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   exit status on a FIFO and the gate decides with one wait of at most the
   limit: there is no timer process, and no sleep decides the outcome. The
   `hooks.local.d` rule limit works the same way.
+- **Gate commands no longer reach the caller's repository from a linked
+  worktree** (#293). In a linked worktree git runs its hooks with an
+  absolute `GIT_DIR` and `GIT_INDEX_FILE`. The custom command, project
+  gates and the `task` orchestrator's commands inherited them, so a
+  command that built a throwaway repository acted on the real one: `git
+init` set the main repository's `core.bare = true` and `git add -A`
+  staged every tracked file as deleted. 0.4.0 cleared these variables for
+  accept blocks and the canary only (#173). Every command the gates run,
+  and the `contract.sh sync` fetch, now starts without git's
+  per-repository variables; one list serves all of them.
+
+### Changed
+
+- **Gate commands read the commit's index through
+  `GATES_GIT_INDEX_FILE`** (#293). They no longer inherit
+  `GIT_INDEX_FILE`, and `git commit -a` or `git commit <paths>` hands the
+  hook a temporary index, so a plain `git diff --cached` in a custom
+  command or project gate now reads the repository's index, not the
+  commit's (for `git commit <paths>` it names files the commit does not
+  hold). `verify.sh` exports the absolute path of the index the commit
+  uses as `GATES_GIT_INDEX_FILE` (outside a hook, the repository's own
+  index): `GIT_INDEX_FILE="$GATES_GIT_INDEX_FILE" git diff --cached
+--name-only` lists exactly what the commit holds. A command that read
+  the staged files through the inherited variable switches to it.
 
 ## 0.5.0 — 2026-10-27
 
