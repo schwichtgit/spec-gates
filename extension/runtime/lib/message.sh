@@ -128,8 +128,22 @@ gates_message_check() { # <commit|pr> <text> [generated]
         else
             brand_terms=(Anthropic GPT OpenAI Copilot)
         fi
+        # A lowercase kebab-case identifier (openai-completions,
+        # azure-openai-client) names an API or a package, not the tool
+        # (#297): one whose every part starts with a lowercase letter is
+        # dropped before the term check, as claude-* is before the
+        # standalone check below. GPT-4 and OpenAI-compatible stay. sed
+        # first puts a space after every separator, so two identifiers
+        # next to each other do not share the one between them. A term that
+        # holds a hyphen itself is checked against the whole text.
+        local term_msg
+        term_msg="$(LC_ALL=C sed -E -e 's/[^A-Za-z0-9_-]/& /g' \
+            -e 's/(^|[^A-Za-z0-9_-])[a-z][a-z0-9]*(-[a-z][a-z0-9]*)+([^A-Za-z0-9_-]|$)/\1 \3/g' \
+            <<<"$brand_msg")"
         for term in ${brand_terms[@]+"${brand_terms[@]}"}; do
-            if grep -qiwF -e "$term" <<<"$brand_msg"; then
+            if [[ "$term" == *-* ]] && grep -qiwF -e "$term" <<<"$brand_msg"; then
+                hits="${hits:+$hits, }$term"
+            elif [[ "$term" != *-* ]] && grep -qiwF -e "$term" <<<"$term_msg"; then
                 hits="${hits:+$hits, }$term"
             fi
         done

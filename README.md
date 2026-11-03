@@ -573,8 +573,9 @@ CI) apply the same rules, from `lib/message.sh`:
   `git commit -v` diff below the scissors line are not part of it).
 - No AI branding: the terms in `git.ai_branding.terms` (default
   `Anthropic`, `GPT`, `OpenAI`, `Copilot`), and a standalone `Claude`.
-  `Claude Code`, `CLAUDE.md`, `.claude/` paths and `claude-*`
-  identifiers are allowed.
+  A term inside a lowercase kebab-case identifier (`openai-completions`)
+  is allowed; `GPT-4` and `OpenAI-compatible` are not. `Claude Code`,
+  `CLAUDE.md`, `.claude/` paths and `claude-*` identifiers are allowed.
 - No `Co-Authored-By` trailer, whatever the policy says, and in PR text
   no "Generated with Claude Code" attribution line.
 

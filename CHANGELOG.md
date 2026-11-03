@@ -43,6 +43,16 @@ init` set the main repository's `core.bare = true` and `git add -A`
   counts, and the keyword must start a name or follow a character that is
   not a letter or digit (`DB_PASSWORD`, `--password`). A quoted literal
   value after such a keyword is still refused.
+- **Branding terms inside kebab-case identifiers pass, and the GitLab
+  template skips a bot MR's description** (#297). `openai-completions`
+  was refused as "AI branding (OpenAI)". A lowercase kebab-case
+  identifier whose parts all start with a letter is no longer checked
+  for the terms; `GPT-4`, `gpt-4o` and `OpenAI-compatible` still are.
+  The GitLab template now checks a Renovate or Dependabot MR without its
+  description, which quotes upstream release notes, as the GitHub
+  template does since #248. GitLab names no MR author, so it goes by the
+  user who started the pipeline (`GITLAB_USER_LOGIN`) and its `bots`
+  list.
 
 ### Changed
 

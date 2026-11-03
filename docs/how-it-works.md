@@ -510,6 +510,14 @@ other bots' logins to the list in `GATES_PR_BODY`.
 GitLab: a job of its own, with full history (`GIT_DEPTH: "0"`) and the
 tools `pr-check.sh` needs, in merge request pipelines. With "Pipelines
 must succeed" set, a failure blocks the merge.
+In the GitLab template (`extension/ci/gitlab/gates.gitlab-ci.yml`), an
+MR pipeline that a Renovate or Dependabot bot user started is checked
+without its description, as on GitHub; the title, protected changes and
+secrets are still checked. GitLab names no MR author, so the template
+compares `GITLAB_USER_LOGIN`, the user who started the pipeline, with the
+user names in its `bots` list (`renovate-bot dependabot` by default; put
+your bots' user names there). A pipeline a person starts or retries
+checks the description.
 
 ```yaml
 # spec-gates pr step (GitLab): add as a job to the pipeline file that

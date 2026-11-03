@@ -774,6 +774,26 @@ expect "trailer rule off: it is named" "$(grep -c 'without a declaration: script
 sg checkout -q "$ORIG"
 
 echo ""
+echo "=== GitLab template: a bot MR's description is not checked (#297) ==="
+# As on GitHub (#248): the description of an MR pipeline a Renovate or
+# Dependabot user started quotes release notes; its title still counts.
+sg checkout -q -b feat/bot "$BASE"
+echo bump >"$W/bot.txt" && sg add bot.txt && sg commit -q -m "chore: bump a dependency"
+RUN_SHELL=(sh) RUN_SCRIPT="$WORKDIR/tpl-gitlab.sh"
+BOT_MR=(CI_MERGE_REQUEST_DIFF_BASE_SHA="$BASE" CI_MERGE_REQUEST_IID=7 CI_MERGE_REQUEST_DESCRIPTION="Written with Copilot.")
+expect "bot user's MR: quoted release notes pass -> exit 0" \
+    "$(run "${BOT_MR[@]}" CI_MERGE_REQUEST_TITLE="chore: bump a dependency" GITLAB_USER_LOGIN=renovate-bot)" 0
+expect "the skip is named" "$(grep -c 'description (quoted release notes) is not checked' "$WORKDIR/out.txt")" 1
+expect "bot user's MR: the title is still checked -> exit 1" \
+    "$(run "${BOT_MR[@]}" CI_MERGE_REQUEST_TITLE="Update stuff" GITLAB_USER_LOGIN=dependabot)" 1
+expect "a person's MR: the description is checked -> exit 1" \
+    "$(run "${BOT_MR[@]}" CI_MERGE_REQUEST_TITLE="chore: bump a dependency" GITLAB_USER_LOGIN=tester)" 1
+expect "a login that only contains a bot name is a person -> exit 1" \
+    "$(run "${BOT_MR[@]}" CI_MERGE_REQUEST_TITLE="chore: bump a dependency" GITLAB_USER_LOGIN=renovate-bot-fan)" 1
+RUN_SHELL=(bash) RUN_SCRIPT=.specify/gates/pr-check.sh
+sg checkout -q "$ORIG"
+
+echo ""
 echo "$PASS of $TOTAL tests passed."
 [[ "$SKIPPED" -gt 0 ]] && echo "$SKIPPED case group(s) skipped: this host lacks a tool they need."
 [[ "$FAIL" -gt 0 ]] && exit 1
