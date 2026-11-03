@@ -46,7 +46,10 @@ enforcement half lives on here.
 passes; if the git boundary passed, CI passes. Every boundary runs the
 same `verify.sh` with the same policy, and CI runs all of it. An earlier
 boundary runs less only where the policy says so, and names what it skipped
-(constitution, Principle III). `tests/test-parity.sh` asserts it: with
+(constitution, Principle III). The git boundary checks the working tree,
+not the commit, so its half holds when the working tree matches what is
+committed; the pre-commit hook warns when tracked changes are left out of
+the commit or untracked files exist. `tests/test-parity.sh` asserts it: with
 nothing declared, identical results at every boundary, and no boundary
 re-implements the gate.
 A fourth, server-side boundary (branch protection requiring the CI check) is
@@ -70,8 +73,13 @@ proves it did:
 }
 ```
 
-`skip_at` takes `agent` and `git`, never `ci`. Details in
-[How it works](docs/how-it-works.md#one-entrypoint).
+`skip_at` takes `agent` and `git`, never `ci`. Gate commands run from the
+project root without git's per-repository variables (`GIT_DIR`,
+`GIT_INDEX_FILE` and the rest), so one that builds a throwaway repository
+cannot touch this one, even from a linked worktree. To read the files a
+commit holds, use the index `verify.sh` names:
+`GIT_INDEX_FILE="$GATES_GIT_INDEX_FILE" git diff --cached --name-only`.
+Details in [How it works](docs/how-it-works.md#one-entrypoint).
 
 **Don't repeat what the run already proved.** `spec.cover` names a
 protected project script that may vouch for an accept block at the agent
@@ -111,7 +119,9 @@ self-evidencing:
 - **Verified parity** — a synthetic `parity` gate compares each tool's
   resolved version against its lockfile pin on every run, at every
   boundary. Drift fails the boundary with
-  `parity -- prettier: resolved 3.5.3, pinned 3.9.4 (run npm ci)`;
+  `parity -- prettier: resolved 3.5.3, pinned 3.9.4 (run npm ci)`, or,
+  when `node_modules` was installed from another lockfile (after a branch
+  switch), `(node_modules was installed from another lockfile; run npm ci)`;
   tune it with `attestation.parity` (`error | warning | off`). `doctor`
   additionally fails on the no-op signature: a gate that passed while
   checking zero of its candidate files.
@@ -149,15 +159,25 @@ failing command or pipeline stage anywhere fails the criterion, not just
 the last line. A `!`-negated command never trips errexit, so a `!` line
 followed by more commands is a parse error; write `test -z "$(...)"`,
 `if ...; then exit 1; fi`, or `! cmd || exit 1` instead (a `!` on the last
-line is fine).
+line is fine). For the same reason a pipe into `grep -q` or `head` can
+fail a block that holds: the reader exits at its first match, the writer
+dies of SIGPIPE, and the block fails with
+`exit 141 (SIGPIPE: a pipe reader exited early under pipefail)`, more
+often the more the writer prints after the match. Capture the output
+first: `out="$(cmd 2>&1)"; grep -qE 'pattern' <<<"$out"`. doctor
+recommends that form for every such pipe it finds.
 
 Enforcement follows the feature's own completion claim, read from
 `spec.md`:
 
-- **In progress** (any `**Status**:` other than `Complete`) — blocks are
-  parsed and reported on every run, executed only on demand:
-  `verify.sh --accept <feature|all>` runs them informationally, never
-  changing the exit code.
+- **In progress** (any `**Status**:` other than `Complete`, including
+  `Done` or `Implemented`) — blocks are parsed on every run and executed
+  only on demand: `verify.sh --accept <feature|all>` runs them
+  informationally, never changing the exit code. One line counts these
+  features (`spec: 88 informational, 2 enforced -- ...`);
+  `GATES_SPEC_VERBOSE=1` lists each with its Status, and `--json` carries
+  them all. `Complete` is the only completion token, and no setting
+  changes that.
 - **`**Status**: Complete`** — the claim is enforced. Any unchecked
   `- [ ]` task or failing accept block fails the run, naming the feature,
   the task or criterion, and the cause (exit code, `timeout after <N>s`
@@ -166,9 +186,12 @@ Enforcement follows the feature's own completion claim, read from
   auto-reverted). The read-only check covers the working tree, git
   config and hooks, `HEAD` and refs, and gitignored files; work in a
   sibling worktree does not count. A block that leaves a process running
-  fails too. Outside a git work tree blocks fail closed. What the check
+  at its time limit fails too. Outside a git work tree blocks fail closed. What the check
   covers, and its limits, is in
   [How it works](docs/how-it-works.md#spec-conformance-acceptance-criteria-as-executable-gates).
+  Enforced blocks run at every boundary (each agent Stop, each commit
+  and CI), so check their runtime and network needs before you set
+  `Complete`.
 
 Results land in the attestation record (a `spec` gate entry plus per-run
 counts and per-feature outcomes), a `spec` canary proves the gate still
@@ -184,7 +207,11 @@ section, with its defaults:
 read-only check skips, for a cache another process writes while blocks
 run; `cache/` covers the directory and everything under it, and a pattern
 of only `*`, `?` and `/` (which would match every path) makes the policy
-invalid. Writes inside nested repositories and worktrees (a directory
+invalid. Editor temporary files (`*.swp`, `*.swo`, `*~`, `.#*`, `#*#`,
+vim's `4913`) are skipped without it, at any depth. Ignoring a file in
+`.gitignore` does not exempt it, since ignored files are checked too:
+for another process's files, list them in `snapshot_exclude` (for
+example `["**/*.tmp"]`). Writes inside nested repositories and worktrees (a directory
 with its own `.git`, such as agents' worktrees under `.claude/worktrees/`)
 are skipped without it.
 
@@ -301,10 +328,12 @@ its enforcement frontmatter — one registry, two consumers.
 - **python3** with the `json` module: the PR hook parses commands with it
   and refuses every PR command without it. The message rules' emoji check
   needs python3 or perl. `doctor` fails when either is missing.
-- **Standard POSIX tools** (`awk`, `sed`, `grep`, `cmp`, `sha256sum` or
-  `shasum`): `project.sh` refuses to run without `cmp` and a SHA-256
-  tool, the contract gate cannot verify its pin without a SHA-256 tool,
-  and `doctor` fails when either is missing.
+- **Standard POSIX tools** (`awk`, `sed`, `grep`, `cmp`, `mkfifo`,
+  `sha256sum` or `shasum`): `project.sh` refuses to run without `cmp` and
+  a SHA-256 tool, the contract gate cannot verify its pin without a
+  SHA-256 tool, and `doctor` fails when either is missing. The time limits
+  of accept blocks, project gates and `hooks.local.d` rules wait on a
+  FIFO: without `mkfifo` such a block, gate or rule fails, naming it.
 - **Node** with the linters your policy uses (default: **prettier**,
   **markdownlint-cli2**). Pin them in `package.json` so local and CI agree.
   A linter the policy enables but the host lacks does not block anything
@@ -505,7 +534,8 @@ running after 10 seconds (`GATES_LOCAL_TIMEOUT`, a whole number above 0;
 any other value refuses): it is stopped with every process in its process
 group. A rule that exits but leaves a process running refuses too, and the
 process is stopped; a child that leaves the group (`setsid`) is out of
-reach.
+reach. A child the rule killed without waiting gets the rest of the
+limit to exit, so only one still running at the limit refuses.
 
 The rules are the project's, not the agent's: the agent cannot write or
 delete them (Write/Edit is refused, and a Bash command that appears to
@@ -523,7 +553,7 @@ enforcement backstop.
 if grep -q 'vendor/'; then echo "vendor/ is generated; run make vendor" >&2; exit 1; fi
 ```
 
-Two settings in `.specify/gates/policy.json` cover the most common cases:
+Settings in `.specify/gates/policy.json` cover the most common cases:
 
 - `git.block_bulk_staging: true` refuses `git add` and `git stage` forms
   that can sweep an untracked directory into a commit: `-A`, `--all`,
@@ -534,6 +564,16 @@ Two settings in `.specify/gates/policy.json` cover the most common cases:
   forms that stage only tracked changes (`git add -u`, `--renormalize`,
   `git commit -a`) stay allowed. The git boundary cannot tell how files
   were staged, so this is an agent-boundary rule.
+- Every force push is refused, and the refusal names what to do instead:
+  a normal push, a new branch, or the forge's rebase (GitLab:
+  `PUT /projects/:id/merge_requests/:iid/rebase`). With
+  `git.allow_force_with_lease_on_branches: true` the agent may run
+  `git push --force-with-lease <remote> <branch>`, that form only, to a
+  branch other than `main`, `master` and the remote's default branch
+  (`refs/remotes/<remote>/HEAD`, which must be known). `--force`, `-f`,
+  `+ref`, `--mirror` and `--all` stay refused. The key weakens
+  enforcement, so under a policy contract turning it on is a weakening
+  deviation.
 - The file hook blocks only on strong evidence: `.env` files, keys and
   certificates (`*.pem`, `*.key`, `*.p12`, `*.jks`, `*.keystore`, …),
   exact credential file names (`credentials.json`, `.netrc`, `.pypirc`,
@@ -579,10 +619,20 @@ CI) apply the same rules, from `lib/message.sh`:
   `git commit -v` diff below the scissors line are not part of it).
 - No AI branding: the terms in `git.ai_branding.terms` (default
   `Anthropic`, `GPT`, `OpenAI`, `Copilot`), and a standalone `Claude`.
-  `Claude Code`, `CLAUDE.md`, `.claude/` paths and `claude-*`
-  identifiers are allowed.
+  A term inside a lowercase kebab-case identifier (`openai-completions`)
+  is allowed; `GPT-4` and `OpenAI-compatible` are not. `Claude Code`,
+  `CLAUDE.md`, `.claude/` paths, `claude-*` identifiers and `claude` in
+  an inline code span (`` `specify integration upgrade claude` ``) are
+  allowed; an attribution such as "Generated by `Claude`" is not.
 - No `Co-Authored-By` trailer, whatever the policy says, and in PR text
   no "Generated with Claude Code" attribution line.
+
+The agent's PR hook checks the text before the command runs, so it
+refuses a title or body it cannot read (a variable, a command
+substitution). Pass a long body as a file: `gh pr create --body-file
+body.md`, or for glab, which has no file flag,
+`glab mr create --description "$(cat body.md)"`. The hook reads the file
+and checks it.
 
 `git cherry-pick`, `git rebase`, `git am` and `git revert` (also with
 `--continue` or `--skip`) create commits without running any commit hook,

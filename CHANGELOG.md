@@ -10,31 +10,166 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
 
 ## [Unreleased]
 
+### Added
+
+- **A failed gate's output is kept** (#309). A failing custom command or
+  project gate left one line in the log and its output was deleted. The
+  full output of each gate that fails or warns now goes to
+  `.specify/gates/output/<gate>.log` (ignored by git), the report names
+  the file, and at the `ci` boundary it prints the last 40 lines of each
+  failed gate. The GitHub and GitLab templates keep the directory as an
+  artifact on failure. `GATES_VERBOSE=1` streams gate output to stderr as
+  it runs. The attestation still carries no tool output.
+- **glab descriptions from a file** (#312). glab has no
+  description-file flag. validate-pr now reads
+  `--description "$(cat <path>)"` and `--description "$(<path)"`, with a
+  literal path, as a description file, with the rules of gh's
+  `--body-file`: the file's text is checked, and a file it cannot read is
+  refused. Anything else in the substitution stays refused.
+- **`git.allow_force_with_lease_on_branches`** (#313, default `false`).
+  When `true`, the agent may run `git push --force-with-lease <remote>
+<branch>`, that form only, to branches other than `main`, `master` and
+  the remote's default branch (`refs/remotes/<remote>/HEAD`, which must
+  be known). `--force`, `-f`, `--force-with-lease=<ref>`, `+ref`,
+  `--mirror` and `--all` stay refused. Under a policy contract, turning
+  it on is a weakening deviation.
+- **A failing step's summary keeps its first line too** (#296). Without
+  a `##gates-fail##` line, a task, custom or project gate step showed only
+  its last non-empty line, so a tool that names the file and line first
+  (uv's "TOML parse error at line 1 ...") lost them. The summary is now
+  `<first> | <last>` when the two differ; a `##gates-fail##` line still
+  wins.
+- **Parity names a stale install** (#299). After a branch switch whose
+  `package-lock.json` pins other linter versions, parity failed with only
+  the version pair. When a linter's entry in
+  `node_modules/.package-lock.json` differs from `package-lock.json`, the
+  failure now says `node_modules was installed from another lockfile; run
+npm ci`. The gate still fails until the install matches.
+- **doctor reads a CI script one level and the save-and-exit form**
+  (#306). A pipeline may run the gates step as `rc=0`,
+  `bash .specify/gates/verify.sh --boundary ci || rc=$?`, the always-run
+  steps, then `exit "$rc"` (or `exit $rc`) as the last line, with nothing
+  between that exits or assigns `rc`; it fails the job like the bare
+  step. A repository script the pipeline runs as its whole command
+  (`bash scripts/ci.sh`, outside `.specify/gates/`) is read one level: it
+  proves the gates step when it runs `verify.sh` as its last command or in
+  the save-and-exit form, and the `canary` and `pr` steps count when it
+  runs them. Before, both were reported as missing steps.
+- **`install-shellcheck.sh` downloads through a mirror** (#301).
+  `GATES_SHELLCHECK_BASE_URL` replaces the release download base and
+  `GATES_SHELLCHECK_API_URL` the release API base `--update` reads, for
+  runners that reach GitHub only through a proxy. The pinned SHA-256 is
+  still verified.
+- **A `worktree` canary** (#293). The suite now has 19 canaries: a real
+  commit in a linked worktree of a sandbox runs a project gate that builds
+  a throwaway repository, and the sandbox's main repository must stay
+  non-bare and the worktree's index unchanged, so every install proves
+  that gate commands cannot reach the caller's repository.
+
+### Changed
+
+- **The secret scan skips the credential heuristic in unedited gates
+  files** (#308). A match of "Possible credential assignment" in the
+  vendored `.specify/extensions/gates/**` or the projected
+  `.specify/gates/**` could not be cleared, since upgrades overwrite
+  those files; only `--no-verify` got past it. pre-commit and
+  `pr-check.sh` now skip that rule for such a file while its content
+  matches the hash `.specify/gates/.projected.sha256` records for it in
+  the same snapshot (the index, or the commit), or one a released version
+  shipped. An edited copy is scanned as before, and the exact key rules
+  (AWS, OpenAI, GitHub, GitLab, Slack) scan every file.
+- **One line counts the features that are not enforced** (#300). The
+  spec gate printed a "not enforced" line for every feature whose Status
+  is not `Complete`, which buried the summary in a repository with many
+  specs. It now prints one line ("88 informational, 2 enforced") that
+  restates that only `**Status**: Complete` enforces; `GATES_SPEC_VERBOSE=1`
+  lists each feature as before, and `--json` carries them all. `Complete`
+  stays the only completion token.
+- **doctor's nudge to set `Complete` names the cost** (#304). Once a
+  feature is `Complete`, its accept blocks run at the agent, git and ci
+  boundaries, on every agent Stop and every commit. The recommendation,
+  the README and How it works now say so, so a project checks the
+  blocks' runtime and network needs before it turns enforcement on.
+- **protect-files asks on `credential` and `passwd` in a file name**
+  (#317). The name check listed `credentials` and `password` only, so
+  `assert_no_credential_values.sh` or `passwd.txt` was edited without a
+  prompt. It asks, never blocks, so the wider list adds prompts only.
+- **The credential rule no longer flags variable references and secret
+  names** (#310). `password="${REGISTRY_PASSWORD}"`,
+  `token="$(tool create token)"` and a camel-case name such as
+  `identitySecret = "hub-identity"` were refused as possible credential
+  assignments. A value starting with `$(`, `${` or `$NAME` no longer
+  counts, and the keyword must start a name or follow a character that is
+  not a letter or digit (`DB_PASSWORD`, `--password`). A quoted literal
+  value after such a keyword is still refused.
+- **Branding terms inside kebab-case identifiers pass, and the GitLab
+  template skips a bot MR's description** (#297). `openai-completions`
+  was refused as "AI branding (OpenAI)". A lowercase kebab-case
+  identifier whose parts all start with a letter is no longer checked
+  for the terms; `GPT-4`, `gpt-4o` and `OpenAI-compatible` still are.
+  The GitLab template now checks a Renovate or Dependabot MR without its
+  description, which quotes upstream release notes, as the GitHub
+  template does since #248. GitLab names no MR author, so it goes by the
+  user who started the pipeline (`GITLAB_USER_LOGIN`) and its `bots`
+  list.
+- **`claude` in an inline code span passes the standalone-Claude rule**
+  (#307). A message quoting `` `specify integration upgrade claude` ``
+  was refused. Inline code spans are dropped before that check. An
+  attribution stays refused with or without backticks: "Generated by
+  `Claude`", a `Co-Authored-By` trailer, and in PR text
+  "Generated with `Claude Code`". Branding terms are still checked
+  inside code spans.
+- **validate-pr gives glab users advice glab can follow** (#312). The
+  refusal of a description it cannot read named gh's `--body` and
+  `--body-file`, which glab does not have. For glab it now names
+  `--description '...'` and the description file form below.
+- **The force-push refusal names what to do instead** (#313). It said
+  only "(force push)". It now names a normal push, a new branch, the
+  forge's rebase (GitLab: `PUT /projects/:id/merge_requests/:iid/rebase`)
+  and a human running the push, and the policy key below.
+- **The git boundary says when it judged more than the commit** (#305).
+  `pre-commit` runs the gates on the working tree, so an unstaged fix
+  could let a broken commit pass and an untracked file could fail a clean
+  one, while the hook and the README promised "if the git boundary
+  passed, CI passes" without the condition. Both now state it: the
+  promise holds when the working tree matches the commit. When it does
+  not (tracked changes the commit leaves out, including for
+  `git commit -a` and `git commit <paths>`, or untracked files that are
+  not ignored), the hook prints one warning line with the counts.
+- `project.sh` adds `output/` (the per-gate failure output,
+  `.specify/gates/output/<gate>.log`) to `.specify/gates/.gitignore`, so
+  `project.sh --check` reports pending work until you re-project.
+
 ### Fixed
 
-- **No false timeouts** (#292). An accept block or project gate that
-  finished in seconds could fail as "timeout after Ns", more often the
-  higher the load (in 0.4.1 for accept blocks, in 0.5.0 also for project
-  gates); raising the limit did not help. A timer process slept for the
-  limit and then wrote a timeout marker, and stopping it after the command
-  had ended could still let that write happen. Now the command reports its
-  exit status on a FIFO and the gate decides with one wait of at most the
-  limit: there is no timer process, and no sleep decides the outcome. The
-  `hooks.local.d` rule limit works the same way.
-- **Gate commands no longer reach the caller's repository from a linked
-  worktree** (#293). In a linked worktree git runs its hooks with an
-  absolute `GIT_DIR` and `GIT_INDEX_FILE`. The custom command, project
-  gates and the `task` orchestrator's commands inherited them, so a
-  command that built a throwaway repository acted on the real one: `git
-init` set the main repository's `core.bare = true` and `git add -A`
-  staged every tracked file as deleted. 0.4.0 cleared these variables for
-  accept blocks and the canary only (#173). Every command the gates run,
-  and the `contract.sh sync` fetch, now starts without git's
-  per-repository variables; one list serves all of them. A new `worktree`
-  canary proves it in every install (the suite now has 19): a real commit
-  in a linked worktree of a sandbox runs a project gate that builds a
-  throwaway repository, and the sandbox's main repository must stay
-  non-bare and the worktree's index unchanged.
+- **A child on its way out no longer fails a passing block** (#294). An
+  accept block or `hooks.local.d` rule that killed a child without
+  waiting for it failed with "left a process running" when the child was
+  still exiting half a second later, which a loaded machine can make
+  happen. Every process a block or rule starts now holds a lease
+  descriptor, and the end of the lease (its last holder exiting) decides,
+  awaited for the rest of the time limit. A process that is still running
+  at the limit fails the block or refuses the rule, as before; it is
+  reported at the limit rather than half a second after the exit, and a
+  detached child that finishes within the limit now passes.
+- **A covering timeout is named** (#295). When a `spec.cover` script ran
+  past its limit, the block ran and its reason showed only the block's
+  own outcome. The block's reason in the report, the attestation and the
+  timeline now begins with "covering timed out after Ns; block ran". A
+  script that exits 124 by itself is not taken for a timeout. How it
+  works documents `spec.cover.timeout_s` and its default next to
+  `spec.timeout_s`.
+- **Exit 141 names SIGPIPE** (#302). An accept block piping into
+  `grep -q` or `head` failed with a bare `exit 141` when the writer kept
+  printing after the reader had exited. The failure now reads "exit 141
+  (SIGPIPE: a pipe reader exited early under pipefail)", doctor
+  recommends the capture-first form for each such pipe in an accept
+  block, and the README documents it.
+- **Editor temporary files no longer fail an accept block** (#303). A vim
+  swap file written while a block ran failed its read-only check, and a
+  `.gitignore` entry did not help, since ignored files are checked too.
+  `*.swp`, `*.swo`, `*~`, `.#*`, `#*#` and `4913` are now exempt at any
+  depth; `spec.snapshot_exclude` covers other processes' files.
 - **The projected `project.sh` takes every option** (#315).
   `.specify/gates/project.sh --keep-local <path>` or
   `--add-lint-ignores` exited 2 with "run the installed copy", and the
@@ -77,29 +212,46 @@ init` set the main repository's `core.bare = true` and `git add -A`
   `source: gates:commands/...` registration, which Spec Kit no longer
   updates or removes, get a recommendation with the same fix.
 
-### Added
+## 0.5.1 — 2026-11-03
 
-- **doctor reads a CI script one level and the save-and-exit form**
-  (#306). A pipeline may run the gates step as `rc=0`,
-  `bash .specify/gates/verify.sh --boundary ci || rc=$?`, the always-run
-  steps, then `exit "$rc"` (or `exit $rc`) as the last line, with nothing
-  between that exits or assigns `rc`; it fails the job like the bare
-  step. A repository script the pipeline runs as its whole command
-  (`bash scripts/ci.sh`, outside `.specify/gates/`) is read one level: it
-  proves the gates step when it runs `verify.sh` as its last command or in
-  the save-and-exit form, and the `canary` and `pr` steps count when it
-  runs them. Before, both were reported as missing steps.
-- **`install-shellcheck.sh` downloads through a mirror** (#301).
-  `GATES_SHELLCHECK_BASE_URL` replaces the release download base and
-  `GATES_SHELLCHECK_API_URL` the release API base `--update` reads, for
-  runners that reach GitHub only through a proxy. The pinned SHA-256 is
-  still verified.
+### Upgrading
+
+- Upgrade as for 0.5.0 (README "Upgrade"): one `project.sh` run, then
+  commit `.specify/gates/.projected.sha256` with the upgrade. No policy
+  change is needed, and no new policy key exists.
+- A custom command or project gate that reads the files being committed
+  (`git diff --cached`) must read them through `GATES_GIT_INDEX_FILE`:
+  `GIT_INDEX_FILE="$GATES_GIT_INDEX_FILE" git diff --cached --name-only`.
+  Gate commands no longer inherit `GIT_INDEX_FILE`, so without it they
+  read the repository's index, not the commit's (`git commit -a`,
+  `git commit <paths>`).
+- `hooks.local.d` rules and the time limits of accept blocks and project
+  gates now need `mkfifo` (POSIX; the accept-block lease already did).
+
+### Fixed
+
+- **No false timeouts** (#292). An accept block or project gate that
+  finished in seconds could fail as "timeout after Ns", more often the
+  higher the load (in 0.4.1 for accept blocks, in 0.5.0 also for project
+  gates); raising the limit did not help. A timer process slept for the
+  limit and then wrote a timeout marker, and stopping it after the command
+  had ended could still let that write happen. Now the command reports its
+  exit status on a FIFO and the gate decides with one wait of at most the
+  limit: there is no timer process, and no sleep decides the outcome. The
+  `hooks.local.d` rule limit works the same way.
+- **Gate commands no longer reach the caller's repository from a linked
+  worktree** (#293). In a linked worktree git runs its hooks with an
+  absolute `GIT_DIR` and `GIT_INDEX_FILE`. The custom command, project
+  gates and the `task` orchestrator's commands inherited them, so a
+  command that built a throwaway repository acted on the real one: `git
+init` set the main repository's `core.bare = true` and `git add -A`
+  staged every tracked file as deleted. 0.4.0 cleared these variables for
+  accept blocks and the canary only (#173). Every command the gates run,
+  and the `contract.sh sync` fetch, now starts without git's
+  per-repository variables; one list serves all of them.
 
 ### Changed
 
-- `project.sh` adds `output/` (the per-gate failure output,
-  `.specify/gates/output/<gate>.log`) to `.specify/gates/.gitignore`, so
-  `project.sh --check` reports pending work until you re-project.
 - **Gate commands read the commit's index through
   `GATES_GIT_INDEX_FILE`** (#293). They no longer inherit
   `GIT_INDEX_FILE`, and `git commit -a` or `git commit <paths>` hands the

@@ -320,6 +320,22 @@ expect "Complete + passing block passes" "$(gate "$D")" 0
 expect "outcome is enforced-pass" \
     "$(gate_json "$D" | jq -r '.attestation.spec.results[0].outcome')" "enforced-pass"
 
+# Issue #300: features that are not enforced get one counting line, not
+# one line each; GATES_SPEC_VERBOSE=1 lists them, --json carries them.
+for st in Done Implemented; do
+    printf -- '- [x] T001 Task\n' | mkfeature "$D" "210-$st" "$st"
+done
+OUT="$(gate_out "$D")"
+expect "informational features: one counting line" \
+    "$(grep -c 'spec: 2 informational, 1 enforced -- not enforced unless spec.md says exactly \*\*Status\*\*: Complete' <<<"$OUT")/$(grep -c 'not enforced (Status:' <<<"$OUT" || true)" "1/0"
+OUT="$(GATES_SPEC_VERBOSE=1 gate_out "$D")"
+expect "GATES_SPEC_VERBOSE=1 lists each informational feature" \
+    "$(grep -c 'criteria parsed, not enforced (Status: ' <<<"$OUT")/$(grep -c 'informational, 1 enforced' <<<"$OUT" || true)" "2/0"
+expect "--json carries every informational feature" \
+    "$(gate_json "$D" | jq -c '[.attestation.spec.results[] | select(.outcome == "informational") | .feature]')" \
+    '["210-Done","210-Implemented"]'
+rm -rf "$D/specs/210-Done" "$D/specs/210-Implemented"
+
 D="$WORKDIR/enforced-fail"
 project "$D" "$MINIMAL"
 mkfeature "$D" 200-broken Complete <<'EOF'
@@ -796,6 +812,13 @@ OUT="$(isoblock nested '  out="$(CLAUDE_PROJECT_DIR="$PWD" bash .specify/gates/v
   grep -q "skipped. spec" <<<"$out"
   test -s .specify/gates/attestations.jsonl')"
 expect_contains "nested verify.sh inside a block passes" "$OUT" "EXIT=0"
+# A nested run writes a failing gate's output under .specify/gates/output/
+# (ignored by its own .gitignore of *): the gate's own files, not the
+# block's writes.
+OUT="$(isoblock gateoutput '  mkdir -p .specify/gates/output
+  printf "*\n" >.specify/gates/output/.gitignore
+  echo "lint failed" >.specify/gates/output/lint.log')"
+expect_contains "gate output written inside a block does not count" "$OUT" "EXIT=0"
 
 # The leftover children below record their pid when they start, live far
 # longer than the gate takes to stop them, then act. Each check waits for
@@ -819,8 +842,24 @@ late_child_done() { # <pidfile>: wait until the child it names has exited
         n=$((n + 1))
     done
 }
+# A process still holding the block's lease at the block's time limit is
+# left running (#294): a short limit, far below the children's 30 s.
+SHORT='{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } }, "spec": { "timeout_s": 3 } }'
 
-OUT="$(isoblock child "  /bin/sh $LATE $WORKDIR/iso-child.pid touch late.txt &")"
+# Issue #294: a child the block killed without waiting passes, however
+# long its exit takes. The child's TERM handler spins for seconds before
+# it exits, which forces the late exit on any machine: the old half-second
+# grace failed this block every time. The block waits until the handler is
+# in place (the child writes ready.err) before it sends TERM.
+# shellcheck disable=SC2016  # block text, expanded when the block runs
+OUT="$(isoblock lateexit '  bash -c '"'"'trap "i=0; while [ \$i -lt 1000000 ]; do i=\$((i + 1)); done; exit 0" TERM; echo ready >&2; while :; do :; done'"'"' 2>ready.err &
+  c=$!
+  until [ -s ready.err ]; do :; done
+  kill -TERM "$c"
+  rm -f ready.err')"
+expect_contains "a child on its way out does not fail its block (#294)" "$OUT" "EXIT=0"
+
+OUT="$(isoblock child "  /bin/sh $LATE $WORKDIR/iso-child.pid touch late.txt &" "$SHORT")"
 expect_contains "block leaving a child running blocks the run" "$OUT" "EXIT=2"
 expect_contains "leftover child is named" "$OUT" "left a process running"
 
@@ -828,17 +867,17 @@ expect_contains "leftover child is named" "$OUT" "left a process running"
 # (setsid after a fork) is found by the lease descriptor it inherited. The
 # system binaries are named by path: macOS hides their environment from ps,
 # so these pass only through the lease.
-OUT="$(isoblock setm "  /bin/bash -c \"set -m; /bin/sh $LATE $WORKDIR/iso-setm.pid git config core.hooksPath /dev/null & disown\"")"
+OUT="$(isoblock setm "  /bin/bash -c \"set -m; /bin/sh $LATE $WORKDIR/iso-setm.pid git config core.hooksPath /dev/null & disown\"" "$SHORT")"
 expect_contains "block leaving a set -m child running blocks the run" "$OUT" "EXIT=2"
 expect_contains "detached child is named" "$OUT" "left a detached process running (stopped)"
-OUT="$(isoblock setsid "  perl -e \"use POSIX; fork and exit; POSIX::setsid(); exec q(/bin/sh), q($LATE), q($WORKDIR/iso-setsid.pid), q(touch), q(late.txt)\"")"
+OUT="$(isoblock setsid "  perl -e \"use POSIX; fork and exit; POSIX::setsid(); exec q(/bin/sh), q($LATE), q($WORKDIR/iso-setsid.pid), q(touch), q(late.txt)\"" "$SHORT")"
 expect_contains "block leaving a setsid child running blocks the run" "$OUT" "EXIT=2"
 expect_contains "new-session child is named" "$OUT" "left a detached process running (stopped)"
 # A runtime that closes inherited descriptors (Node's spawn passes only
 # stdio) is found by the GATES_SPEC_BLOCK marker; on macOS a system shell
 # hides it, so this runs where /proc exposes every environment.
 if [[ -r /proc/self/environ ]]; then
-    OUT="$(isoblock nodespawn "  node -e \"require('child_process').spawn('sh', ['$LATE', '$WORKDIR/iso-nodespawn.pid', 'touch', 'late.txt'], { detached: true, stdio: 'ignore' }).unref()\"")"
+    OUT="$(isoblock nodespawn "  node -e \"require('child_process').spawn('sh', ['$LATE', '$WORKDIR/iso-nodespawn.pid', 'touch', 'late.txt'], { detached: true, stdio: 'ignore' }).unref()\"" "$SHORT")"
     expect_contains "child without the lease descriptor is found by its marker" "$OUT" \
         "left a detached process running (stopped)"
 fi
@@ -874,6 +913,21 @@ if [[ -r /proc/self/environ ]]; then
         FAIL=$((FAIL + 1))
     fi
 fi
+
+# Issue #303: an editor's temporary files are not the block's writes, at
+# any depth.
+OUT="$(isoblock editor '  mkdir -p sub
+  touch .policy.json.swp sub/.f.swo sub/f~ "sub/.#f" "sub/#f#" 4913')"
+expect_contains "editor temporary files do not fail a block (#303)" "$OUT" "EXIT=0"
+
+# Issue #302: a pipe reader that exits early fails the block under
+# pipefail with the writer's 141; the failure names SIGPIPE. The writer
+# exits 141 itself: a runner that ignores SIGPIPE (GitHub Actions does,
+# and children inherit it) turns `yes | head -n 1` into a write error and
+# exit 1 instead.
+OUT="$(isoblock sigpipe '  sh -c "exit 141" | cat')"
+expect_contains "exit 141 names SIGPIPE (#302)" "$OUT" \
+    "exit 141 (SIGPIPE: a pipe reader exited early under pipefail)"
 
 OUT="$(isoblock skipflag '  git update-index --skip-worktree .gitignore')"
 expect_contains "block setting skip-worktree blocks the run" "$OUT" "index flags modified: .gitignore"
@@ -1167,6 +1221,9 @@ exit 0 with two lines|echo one; echo two
 exit 0 with a line and an empty one|echo one; echo
 exit 124 with a line|echo covered; exit 124
 EOF
+# The script's own exit 124 is its answer, not a covering timeout (#295).
+expect "not covered (exit 124): the reason names no covering timeout" \
+    "$(cv_last "$D4" '.spec.results[0].blocks[0].reason')" '""'
 rm -f "$CVM"/*
 cv_script "$D4" 'echo covered'
 chmod -x "$D4/scripts/cover.sh"
@@ -1181,6 +1238,11 @@ T0="$(date +%s)"
 OUT="$(cv_run "$D4" git)"
 T1="$(date +%s)"
 expect "timeout: the block runs" "$([[ -e "$CVM/answer-block-ran" ]] && echo ran || echo not-run)" ran
+# The block's line and its record say why it ran (#295).
+expect_contains "timeout: the block's line names the covering timeout" "$OUT" \
+    '" -- pass (covering timed out after 2s; block ran)'
+expect "timeout: the attestation reason names the covering timeout" \
+    "$(cv_last "$D4" '.spec.results[0].blocks[0].reason')" '"covering timed out after 2s; block ran"'
 expect "timeout: the run ends within 7s of a 2s limit" "$([[ $((T1 - T0)) -le 7 ]] && echo yes || echo "no ($((T1 - T0))s)")" yes
 sleep 0.5
 # shellcheck disable=SC2009  # pgrep -x matches the name, not "sleep 67"

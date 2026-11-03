@@ -56,7 +56,15 @@ spec-gates uses four of them:
   discarding the whole working tree with `git checkout`, `git restore` or
   `git rm` of `.`, `:/` or other pathspec magic in any option order,
   `git checkout -f`, `git switch -f` or `--discard-changes`,
-  `git stash clear`, `git clean` with `-f` or `--force` anywhere, …). With
+  `git stash clear`, `git clean` with `-f` or `--force` anywhere, …). A
+  force-push refusal names the alternatives: a normal push, a new branch,
+  or the forge's rebase (GitLab's
+  `PUT /projects/:id/merge_requests/:iid/rebase`). With
+  `git.allow_force_with_lease_on_branches` the bare
+  `git push --force-with-lease <remote> <branch>...` passes when every
+  branch it names is none of `main`, `master` and the remote's default
+  branch (`refs/remotes/<remote>/HEAD`; unknown refuses); no named branch,
+  a refspec it cannot read, or a cd it cannot follow refuses. With
   `git.block_bulk_staging` it also refuses bulk staging: `git add` or
   `git stage` with `-A` (also in a cluster such as `-vA`), `--all`,
   `--no-ignore-removal`, `--pathspec-from-file`, `.`, `:/` and other
@@ -78,7 +86,11 @@ spec-gates uses four of them:
   command inside `sh -c`, behind `eval` or behind `xargs`. A PR command
   after a shell keyword (`if …; then gh pr create …`) or a wrapper and
   its options (`env -i`, `sudo -u bob`) is checked; `gh api "$EP"`, whose
-  endpoint only the shell knows, asks.
+  endpoint only the shell knows, asks. A body file is read and its text
+  checked: gh's `--body-file <path>`, and for glab, which has no
+  description-file flag, `--description "$(cat <path>)"` or
+  `--description "$(<path)"` with a literal path. A file it cannot read
+  is refused.
 - `PostToolUse(Write|Edit)` → `post-edit.sh`: formats the touched file per
   policy.
 - `Stop` → `format-changed.sh` + `verify-quality.sh`: a stop while
@@ -99,8 +111,9 @@ ask the human when they cannot judge, and allow everything else. "Ask" is
 the PreToolUse `permissionDecision: ask` answer, which prompts in every
 permission mode. The hooks ask:
 
-- when a file name merely contains a word such as `secret` or `token` (a
-  test like `test_no_secret_leak.py` is not a credential), and on a Write
+- when a file name merely contains `credential`, `secret`, `password`,
+  `passwd`, `token` or `keystore`, in any case (a test like
+  `test_no_secret_leak.py` is not a credential), and on a Write
   or Edit to the constitution;
 - when a Bash command appears to modify a protected path: `rm`, `mv`,
   `sed -i` or `--in-place`, a redirect (also `>|`), an `--out`/`--output`
@@ -176,7 +189,13 @@ file.
 When work becomes history. `pre-commit` blocks commits to `main`, scans
 staged content for secrets and forbidden files (renamed and typechanged
 files included), and runs the same verify
-entrypoint. `commit-msg` enforces Conventional Commits and refuses
+entrypoint. That run judges the working tree, not the commit: an unstaged
+fix can let a broken commit pass (CI then fails), and an untracked file
+can fail a clean one. When the working tree differs from the commit
+(tracked changes the commit leaves out, for `git commit -a` and
+`git commit <paths>` too, or untracked files that are not ignored),
+`pre-commit` prints one line, `gates: warning: the gate judges the working
+tree, not this commit: ...`, with the counts. `commit-msg` enforces Conventional Commits and refuses
 AI-isms, emoji (anywhere in the message, not only the subject; comment
 lines and the scissors section are dropped first), AI branding and
 `Co-Authored-By` trailers. The branding
@@ -196,7 +215,19 @@ and anything in or named `.ssh`, `.gnupg`, `.aws` or `.gcloud`, with or
 without a trailing slash. Names ending in `.example`, `.sample` or
 `.template` are exempt. The content scan looks for AWS, OpenAI, GitHub,
 GitLab and Slack key shapes and for a `password`, `secret`, `api_key` or
-`token` assignment of a quoted value of 8 or more characters.
+`token` assignment of a quoted value of 8 or more characters. The keyword
+must start a name or follow a character that is not a letter or digit
+(`DB_PASSWORD`, `--password`; not `identitySecret`), and a value that
+starts with `$(`, `${` or `$NAME` is a variable reference or command
+substitution, not a literal, so it passes. The gates' own files, the
+vendored `.specify/extensions/gates/**` and the projected
+`.specify/gates/**`, skip that assignment rule while their content is
+what was projected: the hash `.specify/gates/.projected.sha256` records
+for the file in the same snapshot (the staged index, or the commit
+`pr-check.sh` scans), or the hash a released version shipped. Upgrades
+overwrite these files, so a match there cannot be fixed by editing them;
+an edited copy is scanned as before, and the key-shape rules scan every
+file.
 
 Subjects git writes itself are exempt from the Conventional Commits rule
 only: a merge commit (recognized by `MERGE_HEAD`, not by its subject) and
@@ -517,6 +548,14 @@ other bots' logins to the list in `GATES_PR_BODY`.
 GitLab: a job of its own, with full history (`GIT_DEPTH: "0"`) and the
 tools `pr-check.sh` needs, in merge request pipelines. With "Pipelines
 must succeed" set, a failure blocks the merge.
+In the GitLab template (`extension/ci/gitlab/gates.gitlab-ci.yml`), an
+MR pipeline that a Renovate or Dependabot bot user started is checked
+without its description, as on GitHub; the title, protected changes and
+secrets are still checked. GitLab names no MR author, so the template
+compares `GITLAB_USER_LOGIN`, the user who started the pipeline, with the
+user names in its `bots` list (`renovate-bot dependabot` by default; put
+your bots' user names there). A pipeline a person starts or retries
+checks the description.
 
 ```yaml
 # spec-gates pr step (GitLab): add as a job to the pipeline file that
@@ -714,8 +753,41 @@ The file-linter gates mark their first finding that way (a prettier
 `[warn] <file>` line, a markdownlint `<file>:<line>` finding, shellcheck's
 `<file> line N: SC<code> ...`), since their output opens with banners and
 ends with a footer; without a marked line they show their first
-non-empty line. A task or custom step without one shows its last
-non-empty line, where such steps print their verdict.
+non-empty line. A task, custom or project gate step without one shows
+its last non-empty line, where such steps print their verdict, preceded
+by its first non-empty line when the two differ (`<first> | <last>`), so
+a tool that names the file and line first and the message last keeps
+both.
+
+**A failing step keeps its output.** The full output of each gate that
+fails or warns (markers stripped) goes to
+`.specify/gates/output/<gate>.log`, and the text report names it on the
+next line (`output: .specify/gates/output/custom.log`). At the `ci`
+boundary the report also prints the last 40 lines of each failed gate's
+output, so the cause reaches the job log without a local rerun. The
+run that holds the gate lock first removes the files an earlier run
+left, so the directory holds this run's failures; `--dry-run` and a run
+nested in another (a walk inside a gate command, a run in an accept
+block) write none. The directory ignores itself (its own `.gitignore`
+of `*`), and the attestation still carries no tool output.
+`GATES_VERBOSE=1` streams each gate's output to stderr as it runs, under
+a `gates: output of <gate>` line. Its output then passes through `tee`,
+so a background process a gate command leaves running keeps the gate
+open until that process exits (for a project gate, at most its time
+limit, after which the gate fails as a timeout).
+
+To keep the files in CI: the GitHub template uploads them with
+`actions/upload-artifact` when a step fails, and the GitLab template
+declares `artifacts: when: on_failure` for `.specify/gates/output/`. In
+Jenkins, add to the stage:
+
+```groovy
+post {
+    failure {
+        archiveArtifacts artifacts: '.specify/gates/output/*.log', allowEmptyArchive: true
+    }
+}
+```
 
 **One gate run per working tree.** Two runs in one tree see each
 other's writes (build output, test files) and fail each other, so a run
@@ -880,7 +952,12 @@ lockfile pin, and the record's policy hash captures policy identity, so
 agent, git and CI runs are proven equivalent transitively. The lockfile is
 the shared source of truth; no attestation has to travel between
 boundaries. Drift fails the run by default (`attestation.parity: error`);
-tools with no pin source are attested but exempt.
+tools with no pin source are attested but exempt. When a node linter's
+entry in `node_modules/.package-lock.json` (what npm last installed)
+differs from `package-lock.json`, the failure says `node_modules was
+installed from another lockfile; run npm ci`: the usual cause is a branch
+switch since the last `npm ci`. The gate still fails until the install
+matches.
 
 ## Spec conformance: acceptance criteria as executable gates
 
@@ -908,7 +985,11 @@ tool gates and before `parity`:
    parser refuses one that is followed by another command line (the
    body and terminator of a heredoc it feeds are not command lines);
    `test -z "$(...)"`, `if ...; then exit 1; fi` and `! cmd || exit 1`
-   fail the block wherever they stand. Output is captured (shown only on
+   fail the block wherever they stand. A pipe into `grep -q` or `head`
+   fails a block that holds when the writer prints on after the reader
+   has exited: SIGPIPE, which the failure names next to `exit 141`.
+   `out="$(cmd 2>&1)"; grep -q pat <<<"$out"` avoids it, and doctor
+   recommends that form for each such pipe. Output is captured (shown only on
    failure), with a per-block watchdog (`spec.timeout_s`, default 30s) that stops the
    block's whole process group (the failure reads
    `timeout after <N>s at load <1-minute load average>`, the load from
@@ -942,13 +1023,18 @@ tool gates and before `parity`:
    project, or commits in another worktree, is not caught either (one
    inside the project shows up as an untracked directory).
 
-   No process may outlive its block. The process group is stopped after
-   every block, and a block that leaves a process running fails. A child
+   No process may outlive its block. Every process the block starts
+   inherits the write end of a FIFO on descriptor 7, which the gate reads
+   to EOF: the block ends when the last holder has exited. That EOF is
+   awaited for the rest of the block's time limit, so a child the block
+   killed without waiting passes however long its exit takes on a loaded
+   machine, and no fixed grace decides. A process still holding the
+   descriptor at the limit, or left in the block's process group after
+   the EOF (one that closed the descriptor), is stopped and fails the
+   block with `left a process running after it exited (stopped)`. A child
    that leaves the group or the session (`set -m`, `setsid`, a double
-   fork) is found two ways: every process the block starts inherits the
-   write end of a FIFO on descriptor 7, which the gate reads to EOF (no
-   EOF half a second after the block exits means a holder is alive), and
-   carries `GATES_SPEC_BLOCK=<id>` in its environment, which the gate
+   fork) is found by the same descriptor, or by
+   `GATES_SPEC_BLOCK=<id>` in its environment, which the gate
    looks for in `/proc/<pid>/environ` on Linux and in `ps -E` elsewhere.
    What is found is killed, and the block fails with
    `left a detached process running (stopped)`. Not found: a process that
@@ -958,13 +1044,21 @@ tool gates and before `parity`:
    (`/bin/sh`, `/bin/sleep`, `/usr/bin/git`, `/usr/bin/perl`), so there
    only the descriptor finds them: a `/bin/sh` child started through
    Node's `child_process` or Python's `subprocess`, which pass no extra
-   descriptors, is not seen on macOS. The process table is read after a
-   short settle and before the after-snapshot, so a write such a process
-   makes right away is still caught as a mutation; a later one is not.
+   descriptors, is not seen on macOS. The process table is read once,
+   before the after-snapshot, so a write such a process makes before
+   then is still caught as a mutation; a later one is not.
    `spec.snapshot_exclude` exempts untracked or ignored paths another
    process writes during the run; `cache/` names the directory and
    everything under it, like `cache/**`, and a pattern of only `*`, `?`
    and `/` (which would exempt everything) makes the policy invalid.
+   Editor temporary files are exempt without it, at any depth: `*.swp`,
+   `*.swo`, `*~`, `.#*`, `#*#` and vim's `4913` write probe, which an
+   editor holding a file open writes while a block runs. A `.gitignore`
+   entry is no substitute, since ignored files are checked too. One
+   limit: inside a directory that is ignored as a whole, a new or deleted
+   entry also changes the directory, and that change still counts, since
+   it may be a deleted file; exempt such a directory through
+   `spec.snapshot_exclude` if an editor works in it.
    Writes inside a nested repository or worktree (a directory below the
    root with its own `.git`, such as an agent's worktree under an ignored
    `.claude/worktrees/`) are left out of the ignored-files check by
@@ -975,10 +1069,18 @@ tool gates and before `parity`:
 
 4. **Enforce**: a Complete feature fails the `spec` gate on any unchecked
    task or failing block, naming the feature, the task or criterion, and
-   the cause. Incomplete features are informational
-   (`spec: <feature> -- N criteria parsed, not enforced`); a Complete
+   the cause. Incomplete features are informational, counted on one line
+   (`spec: <n> informational, <m> enforced -- ...`);
+   `GATES_SPEC_VERBOSE=1` lists each instead
+   (`spec: <feature> -- N criteria parsed, not enforced (Status: ...)`),
+   and `--json` carries every feature's outcome. `Complete` is the only
+   token that enforces: `Done`, `Implemented` or `Complete (merged)` do
+   not, and there is no setting to add one. A Complete
    feature with zero blocks is flagged as having nothing executable to hold
-   it to, but does not block.
+   it to, but does not block. An enforced feature's blocks run at every
+   boundary, each agent Stop, each commit and CI, so a block that takes
+   seconds or reaches the network costs that on every turn; doctor's
+   nudge to set `Complete` says so.
 
 **Covered accept blocks.** A project's own test gate often proves what
 an accept block would re-run seconds later. `spec.cover` lets a project
@@ -1003,7 +1105,12 @@ with exactly one non-empty line covers the block: it does not run, and
 the line (control characters removed, cut to 200 characters) is its
 reason. Anything else (another exit code, no line, several lines, the
 time limit, a script that is not executable) runs the block as before,
-so the script can never fail a block. The guards:
+so the script can never fail a block. The script's own limit is
+`spec.cover.timeout_s` (default 30 s), separate from the block's
+`spec.timeout_s` (default 30 s): a script that runs out of it costs its
+limit and then the block's full run. Such a block's reason, in the
+report, the attestation and the timeline, begins with
+`covering timed out after <N>s; block ran`. The guards:
 
 - **Never at CI.** `at` takes `agent` and `git` only; `"ci"` is refused
   like any invalid policy (exit `1`), and a run without `--boundary`
