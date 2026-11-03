@@ -234,6 +234,15 @@ else
     FAIL=$((FAIL + 1))
 fi
 TOTAL=$((TOTAL + 1))
+# The nudge names what enforcement costs (#304).
+if grep -q "100-ready .*run at the agent, git and ci boundaries, so check their runtime and network needs" "$D/out.txt"; then
+    echo "PASS: completion nudge names the boundaries enforced blocks run at"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL: completion nudge cost (got: $(grep '100-ready' "$D/out.txt" || echo none))"
+    FAIL=$((FAIL + 1))
+fi
+TOTAL=$((TOTAL + 1))
 
 echo ""
 echo "=== git boundary wiring (issues #20/#23) ==="

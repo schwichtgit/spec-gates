@@ -961,7 +961,10 @@ tool gates and before `parity`:
    the cause. Incomplete features are informational
    (`spec: <feature> -- N criteria parsed, not enforced`); a Complete
    feature with zero blocks is flagged as having nothing executable to hold
-   it to, but does not block.
+   it to, but does not block. An enforced feature's blocks run at every
+   boundary, each agent Stop, each commit and CI, so a block that takes
+   seconds or reaches the network costs that on every turn; doctor's
+   nudge to set `Complete` says so.
 
 **Covered accept blocks.** A project's own test gate often proves what
 an accept block would re-run seconds later. `spec.cover` lets a project

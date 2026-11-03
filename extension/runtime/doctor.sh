@@ -776,7 +776,7 @@ if declare -f gates_spec_features >/dev/null 2>&1 \
             [[ "$ferrors" -eq 0 ]] \
                 && echo "${OK}$f — Complete, $nblocks accept block(s), enforced"
         elif [[ "$tasks_total" -gt 0 && "$tasks_unchecked" -eq 0 ]]; then
-            echo "${REC}$f — every task checked but Status is not Complete; set **Status**: Complete in spec.md to turn enforcement on"
+            echo "${REC}$f — every task checked but Status is not Complete; set **Status**: Complete in spec.md to turn enforcement on; its accept blocks then run at the agent, git and ci boundaries, so check their runtime and network needs first"
         elif [[ "$ferrors" -eq 0 ]]; then
             echo "${SKIP}$f — $nblocks accept block(s), not enforced ($tasks_unchecked of $tasks_total tasks open)"
         fi

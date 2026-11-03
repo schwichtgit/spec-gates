@@ -34,6 +34,11 @@ init` set the main repository's `core.bare = true` and `git add -A`
 
 ### Changed
 
+- **doctor's nudge to set `Complete` names the cost** (#304). Once a
+  feature is `Complete`, its accept blocks run at the agent, git and ci
+  boundaries, on every agent Stop and every commit. The recommendation,
+  the README and How it works now say so, so a project checks the
+  blocks' runtime and network needs before it turns enforcement on.
 - **Gate commands read the commit's index through
   `GATES_GIT_INDEX_FILE`** (#293). They no longer inherit
   `GIT_INDEX_FILE`, and `git commit -a` or `git commit <paths>` hands the

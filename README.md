@@ -169,6 +169,9 @@ Enforcement follows the feature's own completion claim, read from
   fails too. Outside a git work tree blocks fail closed. What the check
   covers, and its limits, is in
   [How it works](docs/how-it-works.md#spec-conformance-acceptance-criteria-as-executable-gates).
+  Enforced blocks run at every boundary (each agent Stop, each commit
+  and CI), so check their runtime and network needs before you set
+  `Complete`.
 
 Results land in the attestation record (a `spec` gate entry plus per-run
 counts and per-feature outcomes), a `spec` canary proves the gate still
