@@ -584,6 +584,31 @@ expect "a watched command's timeout names the load" "$(GATES_SPEC_LOADAVG_FILE="
     rc=0
     gates_run_watched 1 "$2" sleep 20 || rc=$?
     printf "%s|%s" "$rc" "$GATES_WATCH_DETAIL"' _ "$REPO_ROOT" "$WORKDIR/watched.out")" "124|timeout after 1s at load 48.20"
+# A block that ends before its limit is never a timeout. Up to 0.5.0 a
+# timer process ran `sleep <limit>`, then wrote a marker; stopping it
+# killed the sleep, and under load its shell could write the marker
+# before its own TERM landed. A TERM handler that keeps that shell busy
+# forces the order: the old timer then failed every run. The block spins
+# briefly so a timer would have its handler in place.
+RB="$WORKDIR/race-repo"
+mkdir -p "$RB"
+git -C "$RB" init -q
+git -C "$RB" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+# shellcheck disable=SC2016  # the block's own variables
+printf 'i=0; while [ $i -lt 30000 ]; do i=$((i + 1)); done\n' >"$WORKDIR/race-block.sh"
+# shellcheck disable=SC2016  # expanded by the inner bash
+expect "a block that ends first is never a timeout (forced race, 8 runs)" "$(bash -c '
+    source "$1/extension/runtime/lib/spec-gate.sh"
+    spin() { local i=0; while [[ $i -lt $1 ]]; do i=$((i + 1)); done; }
+    sleep() { [[ "$1" == 600 ]] && trap "spin 200000" TERM; command sleep "$@"; }
+    bad=0
+    for k in 1 2 3 4 5 6 7 8; do
+        rc=0
+        gates_spec_run_block "$3" 600 "$2" "$4.$k" 2>/dev/null || rc=$?
+        [[ $rc -eq 0 ]] || bad=$((bad + 1))
+    done
+    printf "%s" "$bad"' _ "$REPO_ROOT" "$RB" "$WORKDIR/race-block.sh" "$WORKDIR/race.out")" 0
+expect "the block runner leaves no status FIFO" "$(find "$WORKDIR" -maxdepth 1 -name 'race.out.*.status' | wc -l | tr -d ' ')" 0
 
 D="$WORKDIR/mutation"
 project "$D" "$MINIMAL"

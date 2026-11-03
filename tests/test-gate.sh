@@ -1096,6 +1096,32 @@ else
     echo "FAIL: the timeout took ${W##*|}s"
     FAIL=$((FAIL + 1))
 fi
+# A command that ends before its limit is never a timeout. Up to 0.5.0 a
+# timer process ran `sleep <limit>`, then wrote a marker; stopping it
+# killed the sleep, and under load its shell could write the marker
+# before its own TERM landed. A TERM handler that keeps that shell busy
+# forces the order: the old timer then failed every run. The command
+# spins briefly so a timer would have its handler in place. Both functions
+# are called only by the library under test.
+# shellcheck disable=SC2329
+spin() { # <count>
+    local i=0
+    while [[ $i -lt $1 ]]; do i=$((i + 1)); done
+}
+# shellcheck disable=SC2329
+sleep() {
+    [[ "$1" == 600 ]] && trap 'spin 200000' TERM
+    command sleep "$@"
+}
+RACED=0
+for _ in 1 2 3 4 5 6 7 8; do
+    # shellcheck disable=SC2016  # expanded by the inner bash
+    W="$(watched 600 "$WO" bash -c 'i=0; while [ $i -lt 30000 ]; do i=$((i + 1)); done' | cut -d'|' -f1,2)"
+    [[ "$W" == "0|" ]] || RACED=$((RACED + 1))
+done
+unset -f sleep spin
+expect "a command that ends first is never a timeout (forced race, 8 runs)" "$RACED" 0
+expect "no status FIFO is left behind" "$(find "$WORKDIR" -maxdepth 1 -name 'watched.out.*' | wc -l | tr -d ' ')" 0
 # The command and a child it started: both are in the stopped group.
 PIDF="$WORKDIR/watched.pids"
 watched 2 "$WO" sh -c "echo \$\$ >'$PIDF'; sleep 31 & echo \$! >>'$PIDF'; wait" >/dev/null
