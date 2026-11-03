@@ -714,6 +714,36 @@ by its first non-empty line when the two differ (`<first> | <last>`), so
 a tool that names the file and line first and the message last keeps
 both.
 
+**A failing step keeps its output.** The full output of each gate that
+fails or warns (markers stripped) goes to
+`.specify/gates/output/<gate>.log`, and the text report names it on the
+next line (`output: .specify/gates/output/custom.log`). At the `ci`
+boundary the report also prints the last 40 lines of each failed gate's
+output, so the cause reaches the job log without a local rerun. The
+run that holds the gate lock first removes the files an earlier run
+left, so the directory holds this run's failures; `--dry-run` and a run
+nested in another (a walk inside a gate command, a run in an accept
+block) write none. The directory ignores itself (its own `.gitignore`
+of `*`), and the attestation still carries no tool output.
+`GATES_VERBOSE=1` streams each gate's output to stderr as it runs, under
+a `gates: output of <gate>` line. Its output then passes through `tee`,
+so a background process a gate command leaves running keeps the gate
+open until that process exits (for a project gate, at most its time
+limit, after which the gate fails as a timeout).
+
+To keep the files in CI: the GitHub template uploads them with
+`actions/upload-artifact` when a step fails, and the GitLab template
+declares `artifacts: when: on_failure` for `.specify/gates/output/`. In
+Jenkins, add to the stage:
+
+```groovy
+post {
+    failure {
+        archiveArtifacts artifacts: '.specify/gates/output/*.log', allowEmptyArchive: true
+    }
+}
+```
+
 **One gate run per working tree.** Two runs in one tree see each
 other's writes (build output, test files) and fail each other, so a run
 holds `.specify/gates/.lock` (a directory, created with `mkdir`; it

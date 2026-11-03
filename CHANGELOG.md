@@ -10,6 +10,17 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
 
 ## [Unreleased]
 
+### Added
+
+- **A failed gate's output is kept** (#309). A failing custom command or
+  project gate left one line in the log and its output was deleted. The
+  full output of each gate that fails or warns now goes to
+  `.specify/gates/output/<gate>.log` (ignored by git), the report names
+  the file, and at the `ci` boundary it prints the last 40 lines of each
+  failed gate. The GitHub and GitLab templates keep the directory as an
+  artifact on failure. `GATES_VERBOSE=1` streams gate output to stderr as
+  it runs. The attestation still carries no tool output.
+
 ### Fixed
 
 - **No false timeouts** (#292). An accept block or project gate that

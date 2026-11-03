@@ -290,6 +290,61 @@ expect "--json detail carries no ##gates-fail## marker" \
 expect "text report carries no ##gates-fail## marker" \
     "$(cd "$DS" && CLAUDE_PROJECT_DIR="$DS" bash "$DS/.specify/gates/verify.sh" --boundary ci 2>&1 | grep -c 'gates-fail##' || true)" 0
 
+# --- a failed gate keeps its output (#309) ---
+echo ""
+echo "=== failed gate output: file, ci tail, GATES_VERBOSE ==="
+DO="$WORKDIR/keep-output"
+project "$DO" '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error", "custom_command": "sh ./check.sh",
+    "gates": { "pg": { "command": "echo pg-first-309; echo pg-last-309; exit 1" } } } } }'
+{
+    echo '#!/bin/sh'
+    echo 'echo "lint: TOML parse error at line 1, column 4 in pyproject.toml"'
+    echo 'echo "##gates-fail## MARKED-309 only here"'
+    # shellcheck disable=SC2016 # the script's own variables
+    echo 'i=1; while [ $i -le 50 ]; do echo "noise line $i"; i=$((i + 1)); done'
+    echo 'echo "task: [check:tools] missing"'
+    echo 'exit 1'
+} >"$DO/check.sh"
+DOF="$DO/.specify/gates/output/custom.log"
+rc=0
+OUT="$(cd "$DO" && CLAUDE_PROJECT_DIR="$DO" bash "$DO/.specify/gates/verify.sh" --boundary ci 2>/dev/null)" || rc=$?
+expect "ci: the run fails (exit 2)" "$rc" 2
+expect "the report names the kept file after the summary" \
+    "$(grep -A1 '^  \[fail\] custom -- ' <<<"$OUT" | sed -n 2p)" "    output: .specify/gates/output/custom.log"
+expect "the kept file holds the whole output, markers stripped" \
+    "$(grep -c 'lint: TOML parse error at line 1' "$DOF" 2>/dev/null)|$(grep -c 'MARKED-309 only here' "$DOF" 2>/dev/null)|$(grep -c 'gates-fail##' "$DOF" 2>/dev/null || true)|$(grep -c '' "$DOF" 2>/dev/null)" "1|1|0|53"
+expect "ci: the report prints the last 40 lines of the output" \
+    "$(grep -c '^    | ' <<<"$OUT")|$(grep -c '^    | noise line 12$' <<<"$OUT")|$(grep -c '^    | noise line 11$' <<<"$OUT" || true)|$(grep -c '^    | task: \[check:tools\] missing$' <<<"$OUT")" "42|1|0|1"
+expect "a project gate keeps its output too" \
+    "$(cat "$DO/.specify/gates/output/pg.log" 2>/dev/null | paste -sd ' ' -)|$(grep -c '^    output: .specify/gates/output/pg.log$' <<<"$OUT")" "pg-first-309 pg-last-309|1"
+expect "the output directory ignores itself" "$(cat "$DO/.specify/gates/output/.gitignore" 2>/dev/null)" "*"
+expect "the attestation carries no tool output" \
+    "$(grep -c 'noise line\|pg-first-309' "$DO/.specify/gates/attestations.jsonl" || true)" 0
+OUT="$(cd "$DO" && CLAUDE_PROJECT_DIR="$DO" bash "$DO/.specify/gates/verify.sh" --boundary agent 2>/dev/null || true)"
+expect "agent: the file is named, the tail is not printed" \
+    "$(grep -c '^    output: .specify/gates/output/custom.log$' <<<"$OUT")|$(grep -c '^    | ' <<<"$OUT" || true)" "1|0"
+OUT="$(cd "$DO" && CLAUDE_PROJECT_DIR="$DO" bash "$DO/.specify/gates/verify.sh" --boundary ci --json 2>/dev/null || true)"
+expect "--json: stdout stays one JSON object" "$(jq -r '.failed' <<<"$OUT" 2>/dev/null)" 2
+# GATES_VERBOSE=1 streams the output to stderr, for the custom command
+# and a (watched) project gate; stdout and the outcome do not change.
+rc=0
+VERR="$(cd "$DO" && GATES_VERBOSE=1 CLAUDE_PROJECT_DIR="$DO" bash "$DO/.specify/gates/verify.sh" --boundary agent 2>&1 >/dev/null)" || rc=$?
+expect "GATES_VERBOSE=1: the outcome is unchanged (exit 2)" "$rc" 2
+expect "GATES_VERBOSE=1: both gates' output reaches stderr" \
+    "$(grep -c '^noise line 37$' <<<"$VERR")|$(grep -c '^pg-last-309$' <<<"$VERR")|$(grep -c '^gates: output of custom' <<<"$VERR")" "1|1|1"
+expect "GATES_VERBOSE=1: the kept files are written too" \
+    "$(grep -c '' "$DOF" 2>/dev/null)|$(grep -c '' "$DO/.specify/gates/output/pg.log" 2>/dev/null)" "53|2"
+expect "without GATES_VERBOSE no gate output reaches stderr" \
+    "$(cd "$DO" && CLAUDE_PROJECT_DIR="$DO" bash "$DO/.specify/gates/verify.sh" --boundary agent 2>&1 >/dev/null | grep -c 'noise line\|pg-last-309' || true)" 0
+# --dry-run keeps the files; a green run removes them.
+(cd "$DO" && CLAUDE_PROJECT_DIR="$DO" bash "$DO/.specify/gates/verify.sh" --boundary ci --dry-run >/dev/null 2>&1) || true
+expect "--dry-run leaves the kept files alone" "$(test -f "$DOF" && echo kept)" kept
+project "$DO" '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error", "custom_command": "true" } } }'
+rc=0
+(cd "$DO" && CLAUDE_PROJECT_DIR="$DO" bash "$DO/.specify/gates/verify.sh" --boundary ci >/dev/null 2>&1) || rc=$?
+expect "a green run removes the earlier run's files" \
+    "$rc|$(find "$DO/.specify/gates/output" -name '*.log' 2>/dev/null | grep -c . || true)" "0|0"
+
 # A file linter's output opens with banners and ends with a footer
 # (prettier's "Run Prettier with --write", shellcheck's wiki links), so
 # its summary is the first finding, marked by the dispatch.
@@ -347,8 +402,9 @@ if have_node_linters; then
         txt="$(CLAUDE_PROJECT_DIR="$d" bash "$d/.specify/gates/verify.sh" --boundary ci 2>&1 || true)"
         json="$(CLAUDE_PROJECT_DIR="$d" bash "$d/.specify/gates/verify.sh" --boundary ci --json 2>/dev/null || true)"
         det="$(jq -r --arg t "$1" '.gates[] | select(.name == $t) | .detail' <<<"$json")"
+        # The kept output's tail (#309, indented) quotes the tool itself.
         expect "$1: the text report names the failing file once" \
-            "$(grep -c 'once-bad\.md' <<<"$txt" || true)" 1
+            "$(grep -v '^    ' <<<"$txt" | grep -c 'once-bad\.md' || true)" 1
         expect "$1: the --json detail names the finding once" \
             "$(grep -cE "$3" <<<"$det" || true)" 1
     }

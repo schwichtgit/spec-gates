@@ -288,7 +288,7 @@ gates_lock_alive() { # true if the process in LOCK_PID still runs (same start)
 
 # shellcheck disable=SC2329  # called from the traps below
 gates_lock_release() {
-    rm -f "/tmp/gates-out.$$" "/tmp/gates-out.$$.timedout"
+    rm -f "/tmp/gates-out.$$" "/tmp/gates-out.$$.view" "/tmp/gates-out.$$.timedout"
     [[ "$LOCK_HELD" == "1" ]] || return 0
     LOCK_HELD=0
     gates_lock_read
@@ -446,10 +446,39 @@ if [[ "$DRY_RUN" != "1" ]]; then
     gates_lock_acquire
 fi
 
+# A failing or warning gate's full output (#309) goes to
+# .specify/gates/output/<gate>.log, for a CI job to keep as an artifact:
+# the report names the file, and at ci prints its last 40 lines. Only the
+# run that holds the gate lock writes there (not --dry-run, and not a run
+# nested in another: a walk inside a gate command, a run in an accept
+# block), and it first removes the files an earlier run left, so the
+# directory holds this run's failures. The directory ignores itself
+# (a .gitignore of "*"). The attestation never carries the output.
+OUTPUT_DIR=""
+if [[ "$LOCK_HELD" == "1" ]]; then
+    OUTPUT_DIR="$GATES_DIR/output"
+    rm -f "$OUTPUT_DIR"/*.log 2>/dev/null || true
+fi
+
+# Keep /tmp/gates-out.$$.view (run_gate's output, markers stripped) as
+# <gate>.log; prints its path relative to the project root. Best effort:
+# a file that cannot be written never changes the gate's outcome.
+gates_output_keep() { # <gate-name>
+    local f
+    [[ -n "$OUTPUT_DIR" ]] || return 1
+    f="$OUTPUT_DIR/$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_').log"
+    { mkdir -p "$OUTPUT_DIR" \
+        && { [[ -f "$OUTPUT_DIR/.gitignore" ]] || printf '*\n' >"$OUTPUT_DIR/.gitignore"; } \
+        && cp "/tmp/gates-out.$$.view" "$f"; } 2>/dev/null || return 1
+    printf '%s\n' "${f#"$PROJECT_ROOT"/}"
+}
+
 FAILED=0
 WARNINGS=0
 declare -a RESULTS=()
 declare -a SUMMARIES=()
+# The kept output file of each RESULTS entry, or "" (gates_output_keep).
+declare -a OUTPUTS=()
 declare -a ATT_GATES=()
 # Tools whose pins were looked up; the parity gate checks their pin
 # sources for conflicts and unreadable mise files (#260).
@@ -460,6 +489,7 @@ declare -a PIN_TOOLS=()
 record() { # name status detail [summary]
     RESULTS+=("{\"name\":\"$1\",\"status\":\"$2\",\"detail\":$(jq -Rn --arg d "$3" '$d')}")
     SUMMARIES+=("${4:-}")
+    OUTPUTS+=("")
 }
 
 # Append a GateEntry (attestation shape, data-model.md) for an evaluated
@@ -494,6 +524,30 @@ att_gate() { # name bin version pinned candidates checked result reason duration
 WATCH_S=""
 WATCH_CMD=""
 
+# Run <cmd...> for run_gate in a subshell without git's per-repository
+# variables (#293, lib/watch.sh), from the project root when <root> is 1,
+# its output to /tmp/gates-out.$$. With GATES_VERBOSE=1 the output also
+# goes to stderr as it is written (#309); the command's status is
+# returned either way (pipefail: tee succeeds).
+gate_exec() { # <root 0|1> <cmd...>
+    local root="$1"
+    shift
+    if [[ "${GATES_VERBOSE:-}" == "1" ]]; then
+        gate_exec_in "$root" "$@" 2>&1 | tee "/tmp/gates-out.$$" >&2
+    else
+        gate_exec_in "$root" "$@" >"/tmp/gates-out.$$" 2>&1
+    fi
+}
+gate_exec_in() { # <root 0|1> <cmd...>
+    local root="$1"
+    shift
+    (
+        if [[ "$root" == "1" ]]; then cd "$PROJECT_ROOT" || exit 1; fi
+        gates_git_env_clear
+        GATES_GATE_ROOT="$PROJECT_ROOT" "$@"
+    )
+}
+
 run_gate() { # name severity cmd...
     local name="$1" severity="$2"; shift 2
     if [[ "$DRY_RUN" == "1" ]]; then
@@ -506,20 +560,22 @@ run_gate() { # name severity cmd...
     fi
     local start end rc=0
     gates_progress_start "$name"
+    [[ "${GATES_VERBOSE:-}" == "1" ]] && echo "gates: output of $name (GATES_VERBOSE=1):" >&2
     start="$(date +%s)"
     if [[ -n "$WATCH_S" ]]; then
         local here="$PWD"
+        # Read by gates_run_watched: stream the output too (GATES_VERBOSE).
+        # shellcheck disable=SC2034
+        local GATES_WATCH_STREAM="${GATES_VERBOSE:-}"
         cd "$PROJECT_ROOT" || return 1
         GATES_GATE_ROOT="$PROJECT_ROOT" gates_run_watched "$WATCH_S" "/tmp/gates-out.$$" "$@" || rc=$?
         cd "$here" || true
     elif [[ "$name" == "custom" ]]; then
         # The custom command runs from the project root, as project gates
         # do, wherever verify.sh was started (#276).
-        # Without git's per-repository variables (#293, lib/watch.sh).
-        (cd "$PROJECT_ROOT" && gates_git_env_clear && GATES_GATE_ROOT="$PROJECT_ROOT" "$@") \
-            >/tmp/gates-out.$$ 2>&1 || rc=$?
+        gate_exec 1 "$@" || rc=$?
     else
-        (gates_git_env_clear && GATES_GATE_ROOT="$PROJECT_ROOT" "$@") >/tmp/gates-out.$$ 2>&1 || rc=$?
+        gate_exec 0 "$@" || rc=$?
     fi
     end="$(date +%s)"
 
@@ -555,9 +611,10 @@ run_gate() { # name severity cmd...
     # joins two of its lines.
     # Three passes over the file: collect the marked texts (the first 20
     # distinct ones, so the search stays linear), find which appear in
-    # another line, print.
+    # another line, print. The printed output is the file a failing gate
+    # keeps (#309, gates_output_keep).
     local detail summary
-    detail="$(awk -v esc="$(printf '\033')" -v all="${meta:+1}" '
+    awk -v esc="$(printf '\033')" -v all="${meta:+1}" '
         function plain(s) { gsub(esc "\\[[0-9;]*[A-Za-z]", "", s); return s }
         function text(s) {
             sub(/.*##gates-fail##[ \t]*/, "", s); s = plain(s)
@@ -583,7 +640,8 @@ run_gate() { # name severity cmd...
             sub(/##gates-fail##[ \t]*/, "")
         }
         { print }' /tmp/gates-out.$$ /tmp/gates-out.$$ /tmp/gates-out.$$ \
-        | tail -c 2000 || true)"
+        >"/tmp/gates-out.$$.view" 2>/dev/null || true
+    detail="$(tail -c 2000 "/tmp/gates-out.$$.view" 2>/dev/null || true)"
     summary="$(grep '##gates-fail##' /tmp/gates-out.$$ 2>/dev/null | tail -n 1 \
         | sed 's/.*##gates-fail##[[:space:]]*//' || true)"
     # Without a marked line, a file linter shows its first non-empty line.
@@ -639,6 +697,10 @@ run_gate() { # name severity cmd...
         fail) record "$name" "fail" "$detail" "$summary"; FAILED=$((FAILED + 1)) ;;
         warn) record "$name" "warn" "$detail" "$summary"; WARNINGS=$((WARNINGS + 1)) ;;
     esac
+    if [[ "$result" == "fail" || "$result" == "warn" ]]; then
+        OUTPUTS[${#OUTPUTS[@]} - 1]="$(gates_output_keep "$name" || true)"
+    fi
+    rm -f "/tmp/gates-out.$$.view"
     att_gate "$name" "$bin" "$version" "$pinned" "$candidates" "$checked" \
         "$result" "$reason" "$((end - start))"
     gates_timeline_line "$name" "$start" "$end" "$result" "$reason"
@@ -1036,6 +1098,7 @@ else
             name="$(printf '%s' "$r" | jq -r '.name')"
             status="$(printf '%s' "$r" | jq -r '.status')"
             detail="${SUMMARIES[i]}"
+            kept="${OUTPUTS[i]}"
             i=$((i + 1))
             if [[ -z "$detail" ]]; then
                 detail="$(jq -r '.detail' <<<"$r")"
@@ -1045,6 +1108,15 @@ else
                 echo "  [$status] $name -- $detail"
             else
                 echo "  [$status] $name"
+            fi
+            # The kept output (#309); at ci, where no one reruns the step by
+            # hand, a failed gate's last 40 lines go to the log too.
+            if [[ -n "$kept" ]]; then
+                echo "    output: $kept"
+                if [[ "$BOUNDARY" == "ci" && "$status" == "fail" ]]; then
+                    echo "    last 40 lines:"
+                    tail -n 40 "$PROJECT_ROOT/$kept" 2>/dev/null | sed 's/^/    | /' || true
+                fi
             fi
             [[ "$status" == "fail" && -z "${WALK_FIRST_FAIL:-}" ]] \
                 && WALK_FIRST_FAIL="$name -- $detail"
