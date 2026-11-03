@@ -213,7 +213,15 @@ GitLab and Slack key shapes and for a `password`, `secret`, `api_key` or
 must start a name or follow a character that is not a letter or digit
 (`DB_PASSWORD`, `--password`; not `identitySecret`), and a value that
 starts with `$(`, `${` or `$NAME` is a variable reference or command
-substitution, not a literal, so it passes.
+substitution, not a literal, so it passes. The gates' own files, the
+vendored `.specify/extensions/gates/**` and the projected
+`.specify/gates/**`, skip that assignment rule while their content is
+what was projected: the hash `.specify/gates/.projected.sha256` records
+for the file in the same snapshot (the staged index, or the commit
+`pr-check.sh` scans), or the hash a released version shipped. Upgrades
+overwrite these files, so a match there cannot be fixed by editing them;
+an edited copy is scanned as before, and the key-shape rules scan every
+file.
 
 Subjects git writes itself are exempt from the Conventional Commits rule
 only: a merge commit (recognized by `MERGE_HEAD`, not by its subject) and

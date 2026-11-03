@@ -488,6 +488,32 @@ EOF
 )
 check "secret scan: a quoted variable reference commits clean (#310)" 0 \
     bash -c "cd '$GF' && printf '%s\n' 'password=\"\${REGISTRY_PASSWORD}\"' >k3.sh && git add k3.sh && git commit -q -m 'chore: k3'"
+# #308: a vendored or projected gates file that holds what the manifest
+# records skips the heuristic rule; an edited copy, another path with the
+# same text, and the exact key rules are scanned as before.
+GF_HEAD="$(git -C "$GF" rev-parse HEAD)"
+VEND=".specify/extensions/gates/runtime/lib/vend.sh"
+mkdir -p "$GF/${VEND%/*}"
+vend_manifest() { # record the vendored file's content as projected
+    # shellcheck source=/dev/null disable=SC1091
+    printf '# spec-gates-manifest v1 version=0.5.0\n%s  .specify/gates/lib/vend.sh\n' \
+        "$(source "$REPO_ROOT/extension/runtime/lib/attest.sh" && gates_sha256 "$GF/$VEND")" \
+        >"$GF/.specify/gates/.projected.sha256"
+}
+printf 'token = "%s"\n' abcdefgh1234 >"$GF/$VEND"
+vend_manifest
+check "secret scan: a pristine vendored gates file commits (#308)" 0 \
+    bash -c "cd '$GF' && git add '$VEND' .specify/gates/.projected.sha256 && git commit -q -m 'chore: vendor gates'"
+check "secret scan: an edited vendored gates file is refused (#308)" 0 \
+    bash -c "cd '$GF' && echo '# local' >>'$VEND' && git add '$VEND' && ! git commit -q -m 'chore: edit' 2>'$WORKDIR/v.err' && grep -qF 'SECRET: Possible credential assignment in $VEND' '$WORKDIR/v.err'"
+check "secret scan: the same text elsewhere is refused (#308)" 0 \
+    bash -c "cd '$GF' && git reset -q -- . && git checkout -q -- '$VEND' && cp '$VEND' vend.sh && git add vend.sh && ! git commit -q -m 'chore: copy' 2>'$WORKDIR/v.err' && grep -qF 'SECRET: Possible credential assignment in vend.sh' '$WORKDIR/v.err'"
+( cd "$GF" && git reset -q -- . >/dev/null 2>&1; rm -f vend.sh )
+printf 'AKIA%s\n' ABCDEFGHIJKLMNOP >"$GF/$VEND"
+vend_manifest
+check "secret scan: a key in a pristine gates file is still refused (#308)" 0 \
+    bash -c "cd '$GF' && git add '$VEND' .specify/gates/.projected.sha256 && ! git commit -q -m 'chore: key' 2>'$WORKDIR/v.err' && grep -qF 'SECRET: AWS key pattern in $VEND' '$WORKDIR/v.err'"
+( cd "$GF" && git reset -q --hard "$GF_HEAD" >/dev/null 2>&1; rm -rf .specify/extensions .specify/gates/.projected.sha256 )
 
 # The scan reads the staged blobs in one batch per rule (issue #133): a name
 # with a space is one file, binary content is scanned, the staged copy is

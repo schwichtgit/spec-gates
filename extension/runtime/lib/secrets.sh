@@ -81,6 +81,59 @@ GATES_SECRET_FLAGS=(-E -E -E -E -E -i)
 GATES_SECRET_PATTERNS=('AKIA[0-9A-Z]{16}' 'sk-[a-zA-Z0-9]{48}' '(ghp_|gho_)[a-zA-Z0-9]{36}'
     'glpat-[a-zA-Z0-9_-]{20}' 'xoxb-[0-9]{10,}'
     '(^|[^A-Za-z0-9])(password|secret|api_key|token)[[:space:]]*[=:][[:space:]]*["'\'']([^$[:space:]"'\''][^[:space:]"'\'']{7,}|\$[^({A-Za-z_[:space:]"'\''][^[:space:]"'\'']{6,})')
+GATES_SECRET_HEURISTIC="Possible credential assignment"
+
+# The gates' own files (issue #308): the vendored extension
+# (.specify/extensions/gates/**) and the projected runtime
+# (.specify/gates/**) are overwritten by every upgrade, so a match of the
+# heuristic rule above in them cannot be fixed by editing them. A copy whose
+# content is exactly what was projected -- the hash .projected.sha256
+# records for it in the same snapshot (the index, or the commit), or one a
+# released version shipped (lib/known-releases.sha256) -- skips that rule.
+# An edited copy is scanned as before, and the exact key rules scan every
+# file.
+_GATES_KNOWN_RELEASES=""
+case "${BASH_SOURCE[0]}" in
+    */*) _GATES_KNOWN_RELEASES="$(cd "${BASH_SOURCE[0]%/*}" 2>/dev/null && pwd)/known-releases.sha256" ;;
+esac
+
+# The projected path the manifest records for <path>, on stdout; 1 when
+# <path> is not a gates file. The extension's runtime/<src> maps as the
+# projection table does (lib/manifest.sh).
+_gates_managed_target() { # <path>
+    case "$1" in
+        .specify/gates/*) printf '%s\n' "$1" ;;
+        .specify/extensions/gates/runtime/hooks/git/*) printf '.specify/gates/hooks/%s\n' "${1#.specify/extensions/gates/runtime/hooks/git/}" ;;
+        .specify/extensions/gates/runtime/hooks/claude/*) printf '.claude/hooks/gates/%s\n' "${1#.specify/extensions/gates/runtime/hooks/claude/}" ;;
+        .specify/extensions/gates/runtime/*) printf '.specify/gates/%s\n' "${1#.specify/extensions/gates/runtime/}" ;;
+        *) return 1 ;;
+    esac
+}
+
+# 0 when the blob <object> (a git object name: ":<path>", "<rev>:<path>" or
+# a blob id) holds what the manifest of <rev> (empty: the index) records
+# for <path>'s projected target, or what a released version shipped there.
+# No hash tool, no manifest, no record: 1, and the file is scanned.
+_gates_pristine() { # <rev> <path> <object>
+    local target sum
+    target="$(_gates_managed_target "$2")" || return 1
+    if command -v sha256sum >/dev/null 2>&1; then
+        sum="$(git cat-file blob "$3" 2>/dev/null | sha256sum)" || return 1
+    elif command -v shasum >/dev/null 2>&1; then
+        sum="$(git cat-file blob "$3" 2>/dev/null | shasum -a 256)" || return 1
+    else
+        return 1
+    fi
+    sum="${sum%% *}"
+    [[ "${#sum}" -eq 64 ]] || return 1
+    if git cat-file blob "$1:.specify/gates/.projected.sha256" 2>/dev/null \
+        | awk -v p="$target" -v h="$sum" 'NR > 1 && $1 == h && $2 == p { found = 1 } END { exit !found }'; then
+        return 0
+    fi
+    [[ -n "$_GATES_KNOWN_RELEASES" && -f "$_GATES_KNOWN_RELEASES" ]] || return 1
+    awk -F '\t' -v p="$target" -v h="$sum" '$2 == h && $3 == p { found = 1 } END { exit !found }' \
+        "$_GATES_KNOWN_RELEASES"
+}
 
 # Paths (of the NUL-separated list on stdin) whose content matches rule <i>
 # in the index (--cached) or in any of the given commits, NUL-separated on
@@ -122,6 +175,24 @@ _gates_secret_print() {
             last="$rev"
         fi
         printf '  %s\n' "$line"
+    done
+}
+
+# The hit lines on stdin ("H\t<label>\t<rev>:<path>"), without the
+# heuristic rule's hits on a gates file that holds what was projected
+# (issue #308). Only those hits cost a hash; the rest pass through.
+_gates_secret_drop_pristine() {
+    local line key rev
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        case "$line" in
+            "H"$'\t'"$GATES_SECRET_HEURISTIC"$'\t'*.specify/*)
+                key="${line#H$'\t'"$GATES_SECRET_HEURISTIC"$'\t'}"
+                rev="${key%%:*}"
+                _gates_pristine "$rev" "${key#*:}" "$key" && continue
+                ;;
+        esac
+        printf '%s\n' "$line"
     done
 }
 
@@ -170,6 +241,7 @@ gates_secret_scan() {
             fi
         done
         rm -f "$tmp" "$tmp.fail"
+        hits="$(_gates_secret_drop_pristine <<<"$hits")"$'\n'
     fi
 
     report="$(printf '%s%s' "$hits" "$verdicts" | awk -F'\t' '
@@ -255,17 +327,36 @@ gates_secret_scan_range() {
         done
     fi
 
+    # A gates file whose first match is the heuristic rule and whose blob
+    # holds what that commit's manifest records (issue #308): its
+    # "<commit>\t<path>" goes to the skip list. Only those entries cost a
+    # hash.
+    : >"$tmp/skip"
+    if grep -q "^$GATES_SECRET_HEURISTIC"$'\t' "$tmp/hits"; then
+        awk -F'\t' -v hits="$tmp/hits" -v l="$GATES_SECRET_HEURISTIC" '
+            FILENAME == hits { if (!($2 in first)) first[$2] = $1; next }
+            $1 == "S" && ($3 in first) && first[$3] == l {
+                p = $0
+                for (k = 0; k < 3; k++) p = substr(p, index(p, "\t") + 1)
+                if (p ~ /^\.specify\//) print $2 "\t" $3 "\t" p
+            }' "$tmp/hits" "$tmp/entries" | while IFS=$'\t' read -r c b p; do
+            _gates_pristine "$c" "$p" "$b" && printf '%s\t%s\n' "$c" "$p"
+        done >"$tmp/skip"
+    fi
+
     # Per entry, in input order: the forbidden-file refusal, or the first
     # rule its blob matched. The path is everything after the third tab.
-    report="$(awk -F'\t' -v hits="$tmp/hits" '
+    report="$(awk -F'\t' -v hits="$tmp/hits" -v skip="$tmp/skip" -v l="$GATES_SECRET_HEURISTIC" '
         FILENAME == hits { if (!($2 in hit)) hit[$2] = $1; next }
+        FILENAME == skip { sk[$0] = 1; next }
         {
             p = $0
             for (k = 0; k < 3; k++) p = substr(p, index(p, "\t") + 1)
+            pristine = ($3 in hit) && hit[$3] == l && (($2 "\t" p) in sk)
             gsub("\001", "\n", p)
             if ($1 == "F") print $2 "\tBLOCKED: forbidden file: " p
-            else if ($3 in hit) print $2 "\t  SECRET: " hit[$3] " in " p
-        }' "$tmp/hits" "$tmp/entries")"
+            else if (($3 in hit) && !pristine) print $2 "\t  SECRET: " hit[$3] " in " p
+        }' "$tmp/hits" "$tmp/skip" "$tmp/entries")"
     rm -rf "$tmp"
     _gates_secret_print <<<"$report"
 

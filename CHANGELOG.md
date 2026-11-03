@@ -82,6 +82,16 @@ init` set the main repository's `core.bare = true` and `git add -A`
   index): `GIT_INDEX_FILE="$GATES_GIT_INDEX_FILE" git diff --cached
 --name-only` lists exactly what the commit holds. A command that read
   the staged files through the inherited variable switches to it.
+- **The secret scan skips the credential heuristic in unedited gates
+  files** (#308). A match of "Possible credential assignment" in the
+  vendored `.specify/extensions/gates/**` or the projected
+  `.specify/gates/**` could not be cleared, since upgrades overwrite
+  those files; only `--no-verify` got past it. pre-commit and
+  `pr-check.sh` now skip that rule for such a file while its content
+  matches the hash `.specify/gates/.projected.sha256` records for it in
+  the same snapshot (the index, or the commit), or one a released version
+  shipped. An edited copy is scanned as before, and the exact key rules
+  (AWS, OpenAI, GitHub, GitLab, Slack) scan every file.
 
 ### Added
 

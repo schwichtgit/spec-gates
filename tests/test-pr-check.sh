@@ -630,6 +630,34 @@ expect "a merge bringing in the base's files -> exit 0" "$(run GATES_COMMIT_RANG
 akia >"$W/evil.txt" && sg add evil.txt && sg commit -q --amend --no-edit
 expect "a secret the merge itself adds -> exit 1" "$(run GATES_COMMIT_RANGE="$SECMAIN..sec-merge")" 1
 
+# #308: a vendored gates file holding what the commit's manifest records
+# skips the heuristic rule; the same text elsewhere, an edited copy and a
+# key-shaped value are reported as before.
+VEND=.specify/extensions/gates/runtime/lib/vend.sh
+vend_manifest() {
+    # shellcheck source=/dev/null disable=SC1091
+    printf '# spec-gates-manifest v1 version=0.5.0\n%s  .specify/gates/lib/vend.sh\n' \
+        "$(source "$REPO_ROOT/extension/runtime/lib/attest.sh" && gates_sha256 "$W/$VEND")" \
+        >"$W/.specify/gates/.projected.sha256"
+}
+sg checkout -q -b sec-vend "$BASE"
+mkdir -p "$W/${VEND%/*}"
+printf 'token = "%s"\n' abcdefgh1234 >"$W/$VEND"
+vend_manifest
+sg add "$VEND" .specify/gates/.projected.sha256 && sg commit -q -m "chore: vendor gates"
+expect "a pristine vendored gates file -> exit 0" "$(run GATES_COMMIT_RANGE="$BASE..sec-vend")" 0
+cp "$W/$VEND" "$W/copy.sh" && sg add copy.sh && sg commit -q -m "chore: copy"
+echo '# local' >>"$W/$VEND" && sg add "$VEND" && sg commit -q -m "chore: edit vendored"
+expect "the same text elsewhere and an edited copy -> exit 1" "$(run GATES_COMMIT_RANGE="$BASE..sec-vend")" 1
+expect "both are reported, the pristine commit is not" \
+    "$(grep -cE '^    SECRET: Possible credential assignment in (copy\.sh|\.specify/extensions/gates/runtime/lib/vend\.sh)$' "$WORKDIR/out.txt"):$(grep -c '^commit [0-9a-f]* chore: vendor gates:$' "$WORKDIR/out.txt")" 2:0
+sg checkout -q -b sec-vend-key "$BASE"
+mkdir -p "$W/${VEND%/*}"
+akia >"$W/$VEND"
+vend_manifest
+sg add "$VEND" .specify/gates/.projected.sha256 && sg commit -q -m "chore: vendor key"
+expect "a key-shaped value in a pristine gates file -> exit 1" "$(run GATES_COMMIT_RANGE="$BASE..sec-vend-key")" 1
+
 echo ""
 echo "=== a multi-commit range scans each distinct blob once, same report (#228) ==="
 # The scan reads each blob the range adds once per rule and maps the hits
