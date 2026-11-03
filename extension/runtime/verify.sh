@@ -447,8 +447,12 @@ if [[ "$DRY_RUN" != "1" ]]; then
 fi
 
 # A failing or warning gate's full output (#309) goes to
-# .specify/gates/output/<gate>.log, for a CI job to keep as an artifact:
-# the report names the file, and at ci prints its last 40 lines. Only the
+# .specify/gates/output/<gate>.log: the report names the file, and at ci
+# prints the output in the job log, where the forge masks its secrets. A
+# file is never masked, so at ci it is first scanned with the secret rules
+# (lib/secrets.sh): output that looks like it holds a secret is deleted
+# and withheld from the log too, and the report says which rule matched.
+# The templates upload no file; a project that does so opts in (docs). Only the
 # run that holds the gate lock writes there (not --dry-run, and not a run
 # nested in another: a walk inside a gate command, a run in an accept
 # block), and it first removes the files an earlier run left, so the
@@ -461,16 +465,59 @@ if [[ "$LOCK_HELD" == "1" ]]; then
 fi
 
 # Keep /tmp/gates-out.$$.view (run_gate's output, markers stripped) as
-# <gate>.log; prints its path relative to the project root. Best effort:
-# a file that cannot be written never changes the gate's outcome.
+# <gate>.log; prints its path relative to the project root, or at ci
+# "withheld:<reason>" when the secret scan matched or could not run (the
+# file is then removed: fail closed). Best effort otherwise: a file that
+# cannot be written never changes the gate's outcome.
 gates_output_keep() { # <gate-name>
-    local f
+    local f rc=0
     [[ -n "$OUTPUT_DIR" ]] || return 1
     f="$OUTPUT_DIR/$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_').log"
     { mkdir -p "$OUTPUT_DIR" \
         && { [[ -f "$OUTPUT_DIR/.gitignore" ]] || printf '*\n' >"$OUTPUT_DIR/.gitignore"; } \
         && cp "/tmp/gates-out.$$.view" "$f"; } 2>/dev/null || return 1
+    if [[ "$BOUNDARY" == "ci" ]]; then
+        if ! declare -F gates_secret_scan_file >/dev/null; then
+            # shellcheck source=lib/secrets.sh disable=SC1091
+            source "$GATES_DIR/lib/secrets.sh" 2>/dev/null || true
+        fi
+        if declare -F gates_secret_scan_file >/dev/null; then
+            gates_secret_scan_file "$f" || rc=$?
+        else
+            rc=2
+        fi
+        if [[ "$rc" -ne 0 ]]; then
+            rm -f "$f"
+            if [[ "$rc" -eq 1 ]]; then
+                printf 'withheld:it looks like it holds a secret (%s)\n' "${GATES_SECRET_WHAT:-secret rule}"
+            else
+                printf 'withheld:it could not be scanned for secrets\n'
+            fi
+            return 0
+        fi
+    fi
     printf '%s\n' "${f#"$PROJECT_ROOT"/}"
+}
+
+# Print a failed gate's kept output in the ci job log, in a collapsed
+# section where the forge has one (GitHub Actions ::group::, GitLab CI
+# section markers), else its last 40 lines. Each line is indented, so a
+# line of the output can never act as a workflow command.
+gates_output_log() { # <gate-name> <file>
+    local id
+    if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+        echo "::group::$1: full output"
+        sed 's/^/    | /' "$2" 2>/dev/null || true
+        echo "::endgroup::"
+    elif [[ "${GITLAB_CI:-}" == "true" ]]; then
+        id="gates_$(printf '%s' "$1" | tr -c 'A-Za-z0-9_' '_')"
+        printf '\033[0Ksection_start:%s:%s[collapsed=true]\r\033[0K%s\n' "$(date +%s)" "$id" "$1: full output"
+        sed 's/^/    | /' "$2" 2>/dev/null || true
+        printf '\033[0Ksection_end:%s:%s\r\033[0K\n' "$(date +%s)" "$id"
+    else
+        echo "    last 40 lines:"
+        tail -n 40 "$2" 2>/dev/null | sed 's/^/    | /' || true
+    fi
 }
 
 FAILED=0
@@ -1104,18 +1151,21 @@ else
                 detail="$(jq -r '.detail' <<<"$r")"
                 detail="${detail%%$'\n'*}"
             fi
+            # Output the secret scan withheld (gates_output_keep) is not
+            # quoted in the summary either.
+            [[ "$kept" == withheld:* ]] \
+                && detail="output withheld: ${kept#withheld:}; run the step locally to see it"
             if [[ -n "$detail" ]]; then
                 echo "  [$status] $name -- $detail"
             else
                 echo "  [$status] $name"
             fi
             # The kept output (#309); at ci, where no one reruns the step by
-            # hand, a failed gate's last 40 lines go to the log too.
-            if [[ -n "$kept" ]]; then
+            # hand, a failed gate's output goes to the log too.
+            if [[ -n "$kept" && "$kept" != withheld:* ]]; then
                 echo "    output: $kept"
                 if [[ "$BOUNDARY" == "ci" && "$status" == "fail" ]]; then
-                    echo "    last 40 lines:"
-                    tail -n 40 "$PROJECT_ROOT/$kept" 2>/dev/null | sed 's/^/    | /' || true
+                    gates_output_log "$name" "$PROJECT_ROOT/$kept"
                 fi
             fi
             [[ "$status" == "fail" && -z "${WALK_FIRST_FAIL:-}" ]] \

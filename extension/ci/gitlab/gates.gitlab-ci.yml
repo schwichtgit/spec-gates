@@ -84,13 +84,9 @@ gates:
         echo "pr-check: the base ($base) has no pr-check.sh (adoption MR); running the merge request's own copy"
         bash .specify/gates/pr-check.sh
       fi
-  # A failed gate's full output stays in .specify/gates/output/ (the log
-  # shows its last 40 lines); keep it with the job.
-  artifacts:
-    when: on_failure
-    paths:
-      - .specify/gates/output/
-    expire_in: 14 days
+  # A failed gate's full output is in the job log, in a collapsed section
+  # the job masks like any log line. No artifact is kept: an artifact is
+  # not masked (see How it works before adding one).
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == "main"'
