@@ -921,8 +921,11 @@ OUT="$(isoblock editor '  mkdir -p sub
 expect_contains "editor temporary files do not fail a block (#303)" "$OUT" "EXIT=0"
 
 # Issue #302: a pipe reader that exits early fails the block under
-# pipefail; the failure names SIGPIPE.
-OUT="$(isoblock sigpipe '  yes | head -n 1')"
+# pipefail with the writer's 141; the failure names SIGPIPE. The writer
+# exits 141 itself: a runner that ignores SIGPIPE (GitHub Actions does,
+# and children inherit it) turns `yes | head -n 1` into a write error and
+# exit 1 instead.
+OUT="$(isoblock sigpipe '  sh -c "exit 141" | cat')"
 expect_contains "exit 141 names SIGPIPE (#302)" "$OUT" \
     "exit 141 (SIGPIPE: a pipe reader exited early under pipefail)"
 
