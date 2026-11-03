@@ -469,6 +469,33 @@ else
     fail "schema entry for block_bulk_staging missing or wrong"
 fi
 
+# 0.6.0 key: allow_force_with_lease_on_branches (issue #313).
+FWL_OK="$(write_policy fwl-ok '{
+  "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } },
+  "git": { "allow_force_with_lease_on_branches": true }
+}')"
+if gates_validate_policy "$FWL_OK" >/dev/null 2>&1; then
+    pass "git.allow_force_with_lease_on_branches accepted"
+else
+    fail "git.allow_force_with_lease_on_branches rejected"
+fi
+FWL_BAD="$(write_policy fwl-bad '{
+  "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error" } },
+  "git": { "allow_force_with_lease_on_branches": "yes" }
+}')"
+ERR_OUT="$(gates_validate_policy "$FWL_BAD" 2>&1 || true)"
+if grep -q 'git: allow_force_with_lease_on_branches must be a boolean' <<<"$ERR_OUT"; then
+    pass "non-boolean git.allow_force_with_lease_on_branches rejected"
+else
+    fail "non-boolean git.allow_force_with_lease_on_branches not rejected: $ERR_OUT"
+fi
+if jq -e '.properties.git.properties.allow_force_with_lease_on_branches | .default == false and ."x-since" == "0.6.0"' \
+    "$REPO_ROOT/extension/runtime/policy.schema.json" >/dev/null; then
+    pass "schema documents allow_force_with_lease_on_branches (default false, x-since 0.6.0)"
+else
+    fail "schema entry for allow_force_with_lease_on_branches missing or wrong"
+fi
+
 # Nested accessor tells "absent" (defaults) from "present but empty".
 if ! GATES_POLICY_FILE="$GOOD_SECTIONS" gates_policy_path_list git ai_branding terms >/dev/null \
     && [[ "$(GATES_POLICY_FILE="$NEW_GIT" gates_policy_path_list git ai_branding terms)" == "Gemini" ]] \
