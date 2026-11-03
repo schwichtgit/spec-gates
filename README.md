@@ -149,7 +149,13 @@ failing command or pipeline stage anywhere fails the criterion, not just
 the last line. A `!`-negated command never trips errexit, so a `!` line
 followed by more commands is a parse error; write `test -z "$(...)"`,
 `if ...; then exit 1; fi`, or `! cmd || exit 1` instead (a `!` on the last
-line is fine).
+line is fine). For the same reason a pipe into `grep -q` or `head` can
+fail a block that holds: the reader exits at its first match, the writer
+dies of SIGPIPE, and the block fails with
+`exit 141 (SIGPIPE: a pipe reader exited early under pipefail)`, more
+often the more the writer prints after the match. Capture the output
+first: `out="$(cmd 2>&1)"; grep -qE 'pattern' <<<"$out"`. doctor
+recommends that form for every such pipe it finds.
 
 Enforcement follows the feature's own completion claim, read from
 `spec.md`:

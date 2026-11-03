@@ -763,6 +763,9 @@ if declare -f gates_spec_features >/dev/null 2>&1 \
                     MISSING=$((MISSING + 1))
                     ferrors=$((ferrors + 1))
                     ;;
+                # A block that may fail by itself (#302): a nudge, since
+                # refusing it would break blocks that pass today.
+                WARN) echo "${REC}specs/$f/tasks.md:$a1: $a2" ;;
                 BLOCK) nblocks=$((nblocks + 1)) ;;
                 TASKS)
                     tasks_total="$a1"

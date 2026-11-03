@@ -48,6 +48,12 @@ init` set the main repository's `core.bare = true` and `git add -A`
   script that exits 124 by itself is not taken for a timeout. How it
   works documents `spec.cover.timeout_s` and its default next to
   `spec.timeout_s`.
+- **Exit 141 names SIGPIPE** (#302). An accept block piping into
+  `grep -q` or `head` failed with a bare `exit 141` when the writer kept
+  printing after the reader had exited. The failure now reads "exit 141
+  (SIGPIPE: a pipe reader exited early under pipefail)", doctor
+  recommends the capture-first form for each such pipe in an accept
+  block, and the README documents it.
 
 ### Changed
 

@@ -243,6 +243,25 @@ else
     FAIL=$((FAIL + 1))
 fi
 TOTAL=$((TOTAL + 1))
+# #302: an accept block piping into grep -q or head is a nudge, not a
+# failure; a capture-first block and `||` are not flagged.
+mkdir -p "$D/specs/110-pipe"
+printf '# Pipe\n\n**Status**: Draft\n' >"$D/specs/110-pipe/spec.md"
+# shellcheck disable=SC2016  # block text
+printf -- '- [ ] T001 Task\n\n  ```accept\n  bash run.sh 2>&1 | grep -qE cap\n  out="$(cmd)"; grep -q x <<<"$out" || true\n  ```\n' \
+    >"$D/specs/110-pipe/tasks.md"
+healthy "pipe into grep -q -> still exit 0" "$(run_doctor "$D")" "$LACK_BASE"
+# shellcheck disable=SC2016  # literal backticks
+if [[ "$(grep -c '\[rec\] specs/110-pipe/tasks.md:4: a pipe into `grep -q` or `head` can fail the block with exit 141' "$D/out.txt")" == 1 ]] \
+    && [[ "$(grep -c 'specs/110-pipe/tasks.md:5' "$D/out.txt")" == 0 ]]; then
+    echo "PASS: doctor recommends capture-first for a pipe into grep -q"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL: pipe lint (got: $(grep '110-pipe' "$D/out.txt" || echo none))"
+    FAIL=$((FAIL + 1))
+fi
+TOTAL=$((TOTAL + 1))
+rm -rf "$D/specs/110-pipe"
 
 echo ""
 echo "=== git boundary wiring (issues #20/#23) ==="

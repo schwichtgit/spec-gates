@@ -89,6 +89,7 @@ gates_spec_included() { # <feature-name>
 # state machine; command bodies land in <outdir>/block-N.cmd, metadata on
 # stdout as TAB-separated protocol lines:
 #   ERROR<TAB><line><TAB><message>
+#   WARN<TAB><line><TAB><message>   (doctor's lint; the gate ignores it)
 #   BLOCK<TAB><cmdfile><TAB><verifies-or-dash><TAB><ordinal><TAB><task text>
 #   TASKS<TAB><total><TAB><unchecked><TAB><first unchecked task text>
 # <ordinal> is the block's position (from 1) among the accept blocks under
@@ -140,7 +141,27 @@ gates_spec_parse() { # <tasks-md> <outdir>
             i = j - 1
         }
     }
+    # Does command line <s> pipe into `grep -q` (or --quiet, --silent) or
+    # `head`? The reader exits early, the writer dies of SIGPIPE, and
+    # under pipefail that is the block status, exit 141 (#302). `||` is
+    # not a pipe.
+    function pipe_early(s,    t, seg, i) {
+        t = s
+        while ((i = index(t, "|")) > 0) {
+            t = substr(t, i + 1)
+            if (substr(t, 1, 1) == "|") { t = substr(t, 2); continue }
+            if (substr(t, 1, 1) == "&") t = substr(t, 2)
+            seg = t
+            sub(/^[ \t]+/, "", seg)
+            if (seg ~ /^head([ \t]|$)/) return 1
+            if (seg !~ /^[ef]?grep[ \t]/) continue
+            if (match(seg, /[|;&]/)) seg = substr(seg, 1, RSTART - 1)
+            if (seg ~ /[ \t]-[A-Za-z]*q/ || seg ~ /[ \t]--(quiet|silent)/) return 1
+        }
+        return 0
+    }
     BEGIN {
+        pipemsg = "a pipe into `grep -q` or `head` can fail the block with exit 141 (SIGPIPE) under pipefail; capture first: out=\"$(cmd 2>&1)\"; grep -q pat <<<\"$out\""
         in_fence = 0; in_accept = 0
         task = ""; have_task = 0; tord = 0
         nblocks = 0; total = 0; unchecked = 0; first_unc = ""
@@ -204,6 +225,7 @@ gates_spec_parse() { # <tasks-md> <outdir>
                     if (stripped ~ /^[[:space:]]*![[:space:]]/ && index(stripped, "||") == 0) neg_line = NR
                 }
                 cont = (stripped ~ /\\$/)
+                if (pipe_early(stripped)) printf "WARN\t%d\t%s\n", NR, pipemsg
                 hd_scan(stripped)
                 if (!cont && hd_n > 0) { hd_on = 1; hd_i = 1 }
             }
@@ -885,7 +907,11 @@ gates_spec_run_block() { # <cmdfile> <timeout-s> <root> <outfile>
     fi
     if [[ "$rc" -ne 0 ]]; then
         SPEC_BLOCK_DETAIL="exit $rc"
-        [[ -f "$leftover" ]] && SPEC_BLOCK_DETAIL="exit $rc; left a process running (stopped)"
+        # 141 is 128 + SIGPIPE: under pipefail a `| grep -q` or `| head`
+        # that exits early fails the block (#302).
+        [[ "$rc" -eq 141 ]] &&
+            SPEC_BLOCK_DETAIL="exit 141 (SIGPIPE: a pipe reader exited early under pipefail)"
+        [[ -f "$leftover" ]] && SPEC_BLOCK_DETAIL="$SPEC_BLOCK_DETAIL; left a process running (stopped)"
         SPEC_BLOCK_DETAIL="$SPEC_BLOCK_DETAIL${detached:+; $detached}"
         rm -f "$leftover" "$mark"
         return 1

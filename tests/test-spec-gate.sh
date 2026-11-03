@@ -891,6 +891,12 @@ if [[ -r /proc/self/environ ]]; then
     fi
 fi
 
+# Issue #302: a pipe reader that exits early fails the block under
+# pipefail; the failure names SIGPIPE.
+OUT="$(isoblock sigpipe '  yes | head -n 1')"
+expect_contains "exit 141 names SIGPIPE (#302)" "$OUT" \
+    "exit 141 (SIGPIPE: a pipe reader exited early under pipefail)"
+
 OUT="$(isoblock skipflag '  git update-index --skip-worktree .gitignore')"
 expect_contains "block setting skip-worktree blocks the run" "$OUT" "index flags modified: .gitignore"
 

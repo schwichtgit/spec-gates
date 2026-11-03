@@ -891,7 +891,11 @@ tool gates and before `parity`:
    parser refuses one that is followed by another command line (the
    body and terminator of a heredoc it feeds are not command lines);
    `test -z "$(...)"`, `if ...; then exit 1; fi` and `! cmd || exit 1`
-   fail the block wherever they stand. Output is captured (shown only on
+   fail the block wherever they stand. A pipe into `grep -q` or `head`
+   fails a block that holds when the writer prints on after the reader
+   has exited: SIGPIPE, which the failure names next to `exit 141`.
+   `out="$(cmd 2>&1)"; grep -q pat <<<"$out"` avoids it, and doctor
+   recommends that form for each such pipe. Output is captured (shown only on
    failure), with a per-block watchdog (`spec.timeout_s`, default 30s) that stops the
    block's whole process group (the failure reads
    `timeout after <N>s at load <1-minute load average>`, the load from
