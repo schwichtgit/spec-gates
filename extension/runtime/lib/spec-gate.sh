@@ -284,14 +284,16 @@ gates_spec_parse() { # <tasks-md> <outdir>
 # nested verify.sh appends its attestation), left out of the read-only
 # check together with the policy's spec.snapshot_exclude globs. A tracked
 # path is never exempt. gates_spec_gate sets GATES_SPEC_SNAPSHOT_EXCLUDE.
-# The gate lock (#263) is held by the run itself, not by a block. Editor
-# temporary files (#303) come and go while a block runs whenever a file
+# The gate lock (#263) is held by the run itself, not by a block; a nested
+# verify.sh writes each failing gate's output under .specify/gates/output/.
+# Editor temporary files (#303) come and go while a block runs whenever a file
 # is open in an editor: vim's swap files and its 4913 write probe, backup
 # files, Emacs lock and auto-save files. Being gitignored does not exempt
 # them, since ignored files are checked too.
 GATES_SPEC_SNAPSHOT_BUILTIN_EXCLUDE=".specify/gates/attestations.jsonl
 .specify/gates/.attestations.jsonl.*
 .specify/gates/.lock/
+.specify/gates/output/
 **/*.swp
 **/*.swo
 **/*~

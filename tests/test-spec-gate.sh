@@ -812,6 +812,13 @@ OUT="$(isoblock nested '  out="$(CLAUDE_PROJECT_DIR="$PWD" bash .specify/gates/v
   grep -q "skipped. spec" <<<"$out"
   test -s .specify/gates/attestations.jsonl')"
 expect_contains "nested verify.sh inside a block passes" "$OUT" "EXIT=0"
+# A nested run writes a failing gate's output under .specify/gates/output/
+# (ignored by its own .gitignore of *): the gate's own files, not the
+# block's writes.
+OUT="$(isoblock gateoutput '  mkdir -p .specify/gates/output
+  printf "*\n" >.specify/gates/output/.gitignore
+  echo "lint failed" >.specify/gates/output/lint.log')"
+expect_contains "gate output written inside a block does not count" "$OUT" "EXIT=0"
 
 # The leftover children below record their pid when they start, live far
 # longer than the gate takes to stop them, then act. Each check waits for
