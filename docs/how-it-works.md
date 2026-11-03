@@ -1262,7 +1262,18 @@ by one always leaves another. It counts only when all of these hold:
   `sh(script: '...')`); or the last line of such a `|` block or `'''`
   string. Nothing before it in the same shell (earlier lines of the block,
   earlier GitLab script items) holds a heredoc, a `trap`, an `exit 0` or a
-  `\` continuation into it;
+  `\` continuation into it. One more form saves the status for steps that
+  must always run: `rc=0` (or `rc=`) on a line before the step, the step
+  followed by `|| rc=$?`, and `exit "$rc"` (or `exit $rc`) as the last
+  line of the same block, with nothing between that exits, traps, execs,
+  opens a heredoc, assigns `rc` or continues a line (any variable name,
+  the same in all three places);
+- in place of the `verify.sh` command, a script of the repository may
+  stand: `[bash |sh ][./]<path>` naming a file outside `.specify/gates/`
+  (no `..`, not absolute) whose own text runs the step as its last
+  command or in the save-and-exit form. Scripts are followed one level: a
+  script that script calls is not read. The `canary` and `pr` steps also
+  count in a repository script a live pipeline line runs, one level deep;
 - a GitHub workflow has `push` or `pull_request` among its `on:` events;
 - the pipeline file never names `GATES_SPEC_EXEC` (skips the spec gate)
   or `GATES_POLICY_FILE` (replaces the policy), in any `env:`,
@@ -1291,8 +1302,9 @@ not the Jenkinsfile; a Jenkins `when` other than a literal false; a
 Jenkins step in a closure that is never called. Rejected although it may
 be fine: the gates command followed by other commands in the same block
 (move it to its own step, or make it the last line), and a path written
-with a variable. The canary and PR-check steps are still recognized by
-command after the removals above, not proven. The proof that the gates
+with a variable, or a script called more than one level down. The canary
+and PR-check steps are still recognized by command after the removals
+above, not proven. The proof that the gates
 ran is the CI run's own log: `verify.sh` prints a
 `gates: boundary=ci failed=N warnings=N` summary line.
 

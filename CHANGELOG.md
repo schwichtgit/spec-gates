@@ -64,6 +64,16 @@ init` set the main repository's `core.bare = true` and `git add -A`
 
 ### Added
 
+- **doctor reads a CI script one level and the save-and-exit form**
+  (#306). A pipeline may run the gates step as `rc=0`,
+  `bash .specify/gates/verify.sh --boundary ci || rc=$?`, the always-run
+  steps, then `exit "$rc"` (or `exit $rc`) as the last line, with nothing
+  between that exits or assigns `rc`; it fails the job like the bare
+  step. A repository script the pipeline runs as its whole command
+  (`bash scripts/ci.sh`, outside `.specify/gates/`) is read one level: it
+  proves the gates step when it runs `verify.sh` as its last command or in
+  the save-and-exit form, and the `canary` and `pr` steps count when it
+  runs them. Before, both were reported as missing steps.
 - **`install-shellcheck.sh` downloads through a mirror** (#301).
   `GATES_SHELLCHECK_BASE_URL` replaces the release download base and
   `GATES_SHELLCHECK_API_URL` the release API base `--update` reads, for

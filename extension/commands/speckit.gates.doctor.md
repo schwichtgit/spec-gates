@@ -84,12 +84,16 @@ nothing is checked.
      Jenkins stages under `when { expression { false } }` do not. The
      gates step must be proven: `bash .specify/gates/verify.sh --boundary ci`
      as the whole command (or the last line of its script, with no heredoc,
-     `trap` or `exit 0` before it), on a push or pull request trigger (GitLab:
+     `trap` or `exit 0` before it), or saved and returned (`rc=0`, the
+     step with `|| rc=$?`, `exit "$rc"` as the last line, nothing between
+     that exits or assigns `rc`), or in a repository script the pipeline
+     calls as its whole command, followed one level (the `canary` and `pr`
+     steps count there too), on a push or pull request trigger (GitLab:
      a branch or merge request pipeline), with no `GATES_SPEC_EXEC` or
      `GATES_POLICY_FILE` in the file, and not inside Jenkins `catchError`,
      `warnError` or `try`. A pipeline that calls `verify.sh` without such a
-     step fails, and the line says what to change. Wrapper scripts and
-     computed conditions are read as live: the CI run's own log is the
+     step fails, and the line says what to change. Computed conditions are
+     read as live: the CI run's own log is the
      proof that the gates ran. A
      `ci:<step>` hold for a step the pipeline runs is stale and fails, and
      an unknown id gets a `[rec]`. A hold for a step the pipeline lacks is

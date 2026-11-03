@@ -944,6 +944,63 @@ ci_form "Jenkins sh(script: ...)" live Jenkinsfile < <(printf "stage('G') { step
 ci_form "Jenkins last line of a ''' script" live Jenkinsfile < <(printf "stage('G') {\n  steps {\n    sh '''\n      npm ci\n      %s\n    '''\n  }\n}\n" "$V")
 ci_form "Jenkins a ''' line followed by another" inert Jenkinsfile < <(printf "stage('G') {\n  steps {\n    sh '''\n      %s\n      echo done\n    '''\n  }\n}\n" "$V")
 ci_form "Jenkins withEnv GATES_POLICY_FILE" inert Jenkinsfile < <(printf "stage('G') {\n  steps {\n    withEnv(['GATES_POLICY_FILE=x.json']) {\n      sh '%s'\n    }\n  }\n}\n" "$V")
+# Save the status, run the always-run steps, exit with it (#306): one
+# narrow form. The variable starts at 0, nothing between reassigns it or
+# exits, and `exit "$rc"` ends the script.
+SAVE="      rc=0
+      $V || rc=\$?
+      bash .specify/gates/canary.sh
+      exit \"\$rc\""
+ci_form "GitLab save-and-exit block" live .gitlab-ci.yml < <(printf 'gates:\n  script:\n    - |\n%s\n' "$SAVE")
+# shellcheck disable=SC2016  # literal pipeline text
+ci_form "save-and-exit with exit \$rc unquoted" live "$GHW" < <(printf '%s\n      - run: |\n          rc=\n          %s || rc=$?\n          exit $rc\n' "$GHJ" "$V")
+# shellcheck disable=SC2016  # literal pipeline text
+ci_form "Jenkins save-and-exit" live Jenkinsfile < <(printf "stage('G') {\n  steps {\n    sh '''\n      rc=0\n      %s || rc=\$?\n      bash .specify/gates/canary.sh\n      exit \"\$rc\"\n    '''\n  }\n}\n" "$V")
+# shellcheck disable=SC2016  # literal pipeline text
+ci_form "save-and-exit: rc reset between" inert .gitlab-ci.yml < <(printf 'gates:\n  script:\n    - |\n      rc=0\n      %s || rc=$?\n      rc=0\n      exit "$rc"\n' "$V")
+# shellcheck disable=SC2016  # literal pipeline text
+ci_form "save-and-exit: exit 0 between" inert .gitlab-ci.yml < <(printf 'gates:\n  script:\n    - |\n      rc=0\n      %s || rc=$?\n      exit 0\n      exit "$rc"\n' "$V")
+# shellcheck disable=SC2016  # literal pipeline text
+ci_form "save-and-exit: a line after the exit" inert .gitlab-ci.yml < <(printf 'gates:\n  script:\n    - |\n      rc=0\n      %s || rc=$?\n      exit "$rc"\n      echo done\n' "$V")
+# shellcheck disable=SC2016  # literal pipeline text
+ci_form "save-and-exit: no rc=0 before" inert .gitlab-ci.yml < <(printf 'gates:\n  script:\n    - |\n      %s || rc=$?\n      exit "$rc"\n' "$V")
+# shellcheck disable=SC2016  # literal pipeline text
+ci_form "save-and-exit: exits with another variable" inert .gitlab-ci.yml < <(printf 'gates:\n  script:\n    - |\n      rc=0\n      %s || rc=$?\n      exit "$other"\n' "$V")
+# shellcheck disable=SC2016  # literal pipeline text
+ci_form "save-and-exit: a trap between" inert .gitlab-ci.yml < <(printf "gates:\n  script:\n    - |\n      rc=0\n      %s || rc=\$?\n      trap 'exit 0' EXIT\n      exit \"\$rc\"\n" "$V")
+# shellcheck disable=SC2016  # literal pipeline text
+ci_form "save-and-exit: as a single script item" inert .gitlab-ci.yml < <(printf 'gates:\n  script:\n    - %s || rc=$?\n' "$V")
+# A script the pipeline calls is followed one level (#306): a repo file
+# named as the whole command proves the gates step when its own text runs
+# verify.sh in a provable form.
+mkdir -p "$CIF/scripts" "$CIF/.specify/gates"
+printf '#!/bin/bash\nset -e\nnpm ci\n%s\n' "$V" >"$CIF/scripts/ci.sh"
+# shellcheck disable=SC2016  # literal script text
+printf '#!/bin/bash\nrc=0\n%s || rc=$?\nbash .specify/gates/canary.sh\nexit "$rc"\n' "$V" >"$CIF/scripts/save.sh"
+printf '#!/bin/bash\n%s\necho done\n' "$V" >"$CIF/scripts/tail.sh"
+printf '#!/bin/bash\n%s\n' "$V" >"$CIF/.specify/gates/wrap.sh"
+ci_form "a called script whose last line runs it" live .gitlab-ci.yml < <(printf 'gates:\n  script:\n    - bash scripts/ci.sh\n')
+ci_form "a called script, ./ form" live "$GHW" < <(printf '%s\n      - run: ./scripts/ci.sh\n' "$GHJ")
+ci_form "a called script in the save-and-exit form" live .gitlab-ci.yml < <(printf 'gates:\n  script:\n    - bash scripts/save.sh\n')
+ci_form "a called script that runs more after it" inert .gitlab-ci.yml < <(printf 'gates:\n  script:\n    - bash scripts/tail.sh\n')
+ci_form "a called script behind || true" inert .gitlab-ci.yml < <(printf 'gates:\n  script:\n    - bash scripts/ci.sh || true\n')
+ci_form "a script under .specify/gates is not followed" inert .gitlab-ci.yml < <(printf 'gates:\n  script:\n    - bash .specify/gates/wrap.sh\n')
+ci_form "a missing script" inert .gitlab-ci.yml < <(printf 'gates:\n  script:\n    - bash scripts/none.sh\n')
+rm -rf "$CIF/scripts" "$CIF/.specify"
+# The canary and pr steps in a called script count (#306).
+CS="$WORKDIR/ci-script"
+mkdir -p "$CS/scripts"
+printf 'gates:\n  script:\n    - %s\n    - bash scripts/checks.sh\n' "$V" >"$CS/.gitlab-ci.yml"
+printf '#!/bin/bash\nset -e\nbash .specify/gates/canary.sh\nbash .specify/gates/pr-check.sh\n' >"$CS/scripts/checks.sh"
+expect "steps in a called script are present" \
+    "$(bash -c 'source "$1/extension/runtime/lib/manifest.sh"; gates_ci_present "$2" | tr "\n" " "' _ "$REPO_ROOT" "$CS")" "gates canary pr "
+printf 'gates:\n  script:\n    - %s\n    - bash scripts/checks.sh || true\n' "$V" >"$CS/.gitlab-ci.yml"
+expect "a called script whose failure is swallowed is not read" \
+    "$(bash -c 'source "$1/extension/runtime/lib/manifest.sh"; gates_ci_present "$2" | tr "\n" " "' _ "$REPO_ROOT" "$CS")" "gates "
+printf 'gates:\n  script:\n    - %s\n    # - bash scripts/checks.sh\n' "$V" >"$CS/.gitlab-ci.yml"
+expect "a commented-out script call is not read" \
+    "$(bash -c 'source "$1/extension/runtime/lib/manifest.sh"; gates_ci_present "$2" | tr "\n" " "' _ "$REPO_ROOT" "$CS")" "gates "
+rm -rf "$CS"
 fx_cleanup "$U"
 U="$(fx_project)"
 (cd "$U" && GATES_TEST=1 bash .specify/extensions/gates/runtime/project.sh --skip-canary --no-agent-hooks >/dev/null 2>&1)
