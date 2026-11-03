@@ -599,6 +599,20 @@ Every gate command can read the boundary it runs at from
 `GATES_BOUNDARY` (`agent`, `git`, `ci`, or `none` for a run without
 `--boundary`).
 
+Every command the gates run (the orchestrator's, project gates, accept
+blocks, the cover script) starts without git's per-repository variables
+(`GIT_DIR`, `GIT_INDEX_FILE`, `GIT_WORK_TREE` and the rest of
+`git rev-parse --local-env-vars`). A git hook in a linked worktree sets
+`GIT_DIR` and `GIT_INDEX_FILE` to absolute paths; a command that built a
+throwaway repository with them set would act on the real one (#293). Its
+own git calls find the repository from its working directory as usual.
+To see what a commit holds, read the index git uses for it, which
+`git commit -a` and `git commit <paths>` make a temporary one:
+`verify.sh` exports its absolute path as `GATES_GIT_INDEX_FILE`
+(outside a hook, the repository's own index), and
+`GIT_INDEX_FILE="$GATES_GIT_INDEX_FILE" git diff --cached --name-only`
+lists exactly the committed files.
+
 **Project gates.** A project declares its own checks next to whatever
 the orchestrator runs, under `hooks.verify-quality.gates`, an object
 keyed by gate name:

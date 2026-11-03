@@ -821,18 +821,18 @@ gates_spec_run_block() { # <cmdfile> <timeout-s> <root> <outfile>
         # A git hook runs this with GIT_DIR and GIT_INDEX_FILE set (absolute
         # in a linked worktree): a block that builds a sandbox repository
         # would then add, commit and tag in the caller's repository (#173).
-        # The block gets a clean git environment; it runs in the project
-        # directory, so its own git calls still find this repository.
+        # The block gets a clean git environment (gates_git_env_clear,
+        # lib/watch.sh); it runs in the project directory, so its own git
+        # calls still find this repository.
         # The job around it leads the block's process group, outlives a TERM
         # to that group (a handler, not an ignore, so the block still gets
         # the signal), and reports the block's status however it ended. Its
         # own stdio is /dev/null, so it never holds a caller's $() pipe.
         {
             trap : HUP INT TERM
-            (cd "$root" && GATES_SPEC_EXEC=1 GATES_SPEC_BLOCK="$bid" exec env -u GIT_DIR -u GIT_INDEX_FILE \
-                -u GIT_WORK_TREE -u GIT_PREFIX -u GIT_COMMON_DIR -u GIT_OBJECT_DIRECTORY \
-                -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_NAMESPACE -u GIT_QUARANTINE_PATH \
-                bash -eo pipefail "$cmdfile") 7>"$lease" >"$outfile" 2>&1 </dev/null 6>&-
+            gates_git_env_clear
+            (cd "$root" && GATES_SPEC_EXEC=1 GATES_SPEC_BLOCK="$bid" exec bash -eo pipefail "$cmdfile") \
+                7>"$lease" >"$outfile" 2>&1 </dev/null 6>&-
             echo "$?" >&6
         } >/dev/null 2>&1 </dev/null &
         pid=$!

@@ -5,6 +5,8 @@
 #   gates_group_stop <pgid>                       # TERM, 2 s grace, KILL
 #   gates_run_watched <timeout-s> <outfile> <cmd...>
 #   gates_watch_wait <timeout-s> <fd>             # the decision, for callers
+#   gates_git_env_clear                           # in a subshell: drop git's
+#                                                 # per-repository variables
 #
 # Pure bash 3.2: stock macOS has no timeout(1). The command runs as a job
 # of a `set -m` subshell, so it leads its own process group. When it ends,
@@ -18,6 +20,29 @@
 # the accept-block runner's lease and snapshot checks do not apply here.
 
 # shellcheck disable=SC2034   # library file; GATES_WATCH_DETAIL is read by callers
+
+# git's per-repository variables (`git rev-parse --local-env-vars`, plus
+# GIT_NAMESPACE and GIT_QUARANTINE_PATH). A git hook exports some of them,
+# GIT_DIR and GIT_INDEX_FILE absolute in a linked worktree; a command a
+# gate runs would then point every repository it creates or changes at the
+# caller's: `git init` and `git add -A` in a temp directory set the main
+# repository's core.bare and staged deletions in the worktree (#173,
+# #293). Every command the gates run starts without them, in the project
+# or the caller's directory, so its own git calls still find this
+# repository. Not cleared in verify.sh itself: the contract gate reads the
+# index of the commit being made (`git commit <paths>` uses a temporary
+# one).
+GATES_GIT_LOCAL_ENV="GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_CONFIG GIT_CONFIG_PARAMETERS
+GIT_CONFIG_COUNT GIT_OBJECT_DIRECTORY GIT_DIR GIT_WORK_TREE GIT_IMPLICIT_WORK_TREE
+GIT_GRAFT_FILE GIT_INDEX_FILE GIT_NO_REPLACE_OBJECTS GIT_REPLACE_REF_BASE GIT_PREFIX
+GIT_SHALLOW_FILE GIT_COMMON_DIR GIT_NAMESPACE GIT_QUARANTINE_PATH"
+
+# Unset GATES_GIT_LOCAL_ENV in the current shell: call it in the subshell
+# that runs a command, never in the caller's.
+gates_git_env_clear() {
+    local v
+    for v in $GATES_GIT_LOCAL_ENV; do unset "$v"; done
+}
 
 # Stop process group <pgid>: TERM, a two-second grace, then KILL.
 gates_group_stop() { # <pgid>
@@ -68,6 +93,7 @@ gates_run_watched() { # <timeout-s> <outfile> <cmd...>
         # reports the command's status however it ended.
         {
             trap : HUP INT TERM
+            gates_git_env_clear
             "$@" >"$outfile" 2>&1 </dev/null 6>&-
             echo "$?" >&6
         } >/dev/null 2>&1 </dev/null &
