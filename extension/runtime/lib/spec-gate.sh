@@ -678,38 +678,44 @@ gates_spec_lease_holders() { # <fifo> <scratch>
         /^n/ { if (substr($0, 2) == f && a ~ /[wu]/) print p }' "$scratch"
 }
 
-# Stop every process a block left behind (#197): anything still holding
-# the lease descriptor (<eof> is missing until the last holder exits) or
-# carrying block marker <id>. Lease holders on their way out get half a
-# second, as in the group check. The table is read after a short settle,
-# so a fork racing the block's exit is in it and a quick write by a
-# process neither check sees lands before the after-snapshot. Whatever is
-# left is killed and both are checked again. Returns 0 when none was
-# left, 1 when some had to be stopped.
-gates_spec_detached_stop() { # <id> <scratch> <fifo> <eof>
-    local id="$1" scratch="$2" fifo="$3" eof="$4" pids n=0 m
-    while [[ ! -f "$eof" && $n -lt 5 ]]; do
-        sleep 0.1
-        n=$((n + 1))
-    done
-    sleep 0.1
+# Of <pid...>, the live (non-zombie) processes outside process group
+# <pgid>, one per line: the block's own group is stopped and reported on
+# its own, and a member killed a moment ago can still hold the lease.
+# Without ps every PID is printed.
+gates_spec_foreign() { # <pgid> <pid...>
+    local g="$1" procs
+    shift
+    [[ $# -gt 0 ]] || return 0
+    if procs="$(ps -A -o pid= -o pgid= -o stat= 2>/dev/null)" && [[ -n "$procs" ]]; then
+        awk -v g="$g" -v want=" $* " 'index(want, " " $1 " ") && $2 != g && $3 !~ /^Z/ { print $1 }' <<<"$procs"
+        return 0
+    fi
+    printf '%s\n' "$@"
+}
+
+# Stop every process outside the block's group <pgid> that the block left
+# behind (#197): anything carrying block marker <id> and, when the lease
+# was still held (<held> non-empty), anything holding the lease FIFO
+# <fifo>. They are killed. Then, when the lease was held, the last holder
+# exiting is the event that ends the wait: the lease reader writes "eof"
+# to descriptor <fd>. That wait has a cap, so a holder that neither /proc
+# nor lsof can name (or one that cannot die) does not hang the gate; the
+# cap decides nothing, since a lease still held at this point fails the
+# block either way. Returns 0 when none was left, 1 when some was.
+gates_spec_detached_stop() { # <id> <scratch> <fifo> <pgid> <held> <fd>
+    local id="$1" scratch="$2" fifo="$3" pgid="$4" held="$5" fd="$6" pids
     pids="$(gates_spec_marked "$id" "$scratch")" || pids=""
-    [[ -f "$eof" && -z "$pids" ]] && return 0
-    n=0
-    while [[ $n -lt 5 ]]; do
-        [[ -f "$eof" ]] || pids="$pids $(gates_spec_lease_holders "$fifo" "$scratch")"
-        # shellcheck disable=SC2086  # a list of numeric PIDs
-        [[ -n "${pids// /}" ]] && kill -KILL $pids 2>/dev/null
-        m=0
-        while [[ ! -f "$eof" && $m -lt 6 ]]; do
-            sleep 0.05
-            m=$((m + 1))
-        done
-        pids="$(gates_spec_marked "$id" "$scratch")" || pids=""
-        [[ -f "$eof" && -z "$pids" ]] && break
-        n=$((n + 1))
-    done
-    return 1
+    [[ -n "$held" ]] && pids="$pids $(gates_spec_lease_holders "$fifo" "$scratch")"
+    # shellcheck disable=SC2086  # a list of numeric PIDs
+    pids="$(gates_spec_foreign "$pgid" $pids)"
+    [[ -z "$held" && -z "$pids" ]] && return 0
+    # shellcheck disable=SC2086  # a list of numeric PIDs
+    [[ -n "$pids" ]] && kill -KILL $pids 2>/dev/null
+    if [[ -n "$held" ]]; then
+        gates_watch_wait 5 "$fd"
+        [[ -n "$GATES_WATCH_RC" ]] || return 1
+    fi
+    [[ -z "$pids" ]]
 }
 
 # The 1-minute load average, for the timeout detail (#264): without it a
@@ -739,15 +745,19 @@ gates_spec_load_avg() {
 # timeout(1) on macOS base), snapshots before and after. Outside a git work
 # tree the block does not run: a mutation check that cannot happen fails
 # closed. The block is a job of a `set -m` subshell, so it leads its own
-# process group. A timeout stops that whole group (#136); so does the end
-# of every block, and a block that leaves a process running past a short
-# grace fails (#164): a late write would land after the snapshot. A child
+# process group. A timeout stops that whole group (#136). A block ends
+# when every process holding its lease descriptor has exited: the lease
+# reader's "eof" is the event, awaited for the rest of the block's time
+# limit, so a child the block killed without waiting passes however long
+# its exit takes (#294). A process still holding the lease at the limit
+# fails the block (#164): a late write would land after the snapshot. So
+# does a process left in the group after the lease is released (it closed
+# the descriptor); that last check reads the process table once. A child
 # that left the group (set -m, setsid, a double fork) is found by the
-# lease descriptor it inherited or the GATES_SPEC_BLOCK marker in its
-# environment, stopped, and fails the block too (#197). A process that
-# closed the descriptor and re-executed without the marker (or, on macOS,
-# runs an Apple-signed binary, whose environment ps cannot read) is not
-# found.
+# lease or the GATES_SPEC_BLOCK marker in its environment, stopped, and
+# fails the block too (#197). A process that closed the descriptor and
+# re-executed without the marker (or, on macOS, runs an Apple-signed
+# binary, whose environment ps cannot read) is not found.
 # The previous block's after-snapshot is reused as this block's before-
 # snapshot (SPEC_SNAP_PREV), since the gate writes nothing in between.
 # Returns 0 pass, 1 fail, 2 timeout, 3 mutation; detail in SPEC_BLOCK_DETAIL.
@@ -777,47 +787,37 @@ gates_spec_run_block() { # <cmdfile> <timeout-s> <root> <outfile>
         mark="$outfile.mark"
         gates_spec_mark "$mark"
     fi
-    rm -f "$marker" "$leftover"
-    local rc=0 procs="$outfile.procs" lease="$outfile.lease" eof="$outfile.lease.eof"
+    rm -f "$marker" "$leftover" "$outfile.detached"
+    local rc=0 procs="$outfile.procs" lease="$outfile.lease" leased="$outfile.leased"
     # Unique per block and gate run; set only in the block's environment.
     GATES_SPEC_BLOCK_SEQ=$((${GATES_SPEC_BLOCK_SEQ:-0} + 1))
-    local bid="$$-$GATES_SPEC_BLOCK_SEQ-$RANDOM$RANDOM" reader
+    local bid="$$-$GATES_SPEC_BLOCK_SEQ-$RANDOM$RANDOM"
     # The lease (#197): the block inherits the write end of a FIFO on fd 7,
     # and so does every process it starts, in or out of its group or
-    # session, unless it closes the descriptor. The reader sees EOF, and
-    # writes <eof>, only once the last holder has exited. It starts first
-    # (opening the write end waits for a reader) and outside the block's
-    # group, so a timeout does not take it along.
-    rm -f "$lease" "$eof"
-    if ! mkfifo "$lease" 2>/dev/null; then
-        rm -f "$mark"
-        SPEC_BLOCK_DETAIL="cannot check for leftover processes: mkfifo failed"
-        return 1
-    fi
-    (
-        cat "$lease" >/dev/null 2>&1 &
-        c=$!
-        trap 'kill "$c" 2>/dev/null; exit 0' TERM
-        wait "$c"
-        : >"$eof"
-    ) </dev/null >/dev/null 2>&1 &
-    reader=$!
-    # The block's exit status comes back on a FIFO, and one read with the
-    # block's time limit decides (gates_watch_wait, lib/watch.sh): no timer
-    # process, so a block that has finished is never reported as timed out.
-    # Only that decision writes the timeout marker.
+    # session, unless it closes the descriptor. The lease reader sees EOF
+    # only once the last holder has exited, and then writes "eof" to a
+    # second FIFO, <leased>. The block's exit status comes back on a third,
+    # <status>. One read with the block's time limit decides on the status
+    # (gates_watch_wait, lib/watch.sh): no timer process, so a block that
+    # has finished is never reported as timed out, and only that decision
+    # writes the timeout marker. A second read, for the rest of the limit,
+    # waits for "eof". No sleep decides either outcome.
     local status="$outfile.status"
-    rm -f "$status"
-    if ! mkfifo "$status" 2>/dev/null; then
-        kill -TERM "$reader" 2>/dev/null
-        wait "$reader" 2>/dev/null
-        rm -f "$mark" "$lease" "$eof"
+    rm -f "$lease" "$leased" "$status"
+    if ! mkfifo "$lease" "$leased" "$status" 2>/dev/null; then
+        rm -f "$mark" "$lease" "$leased" "$status"
         SPEC_BLOCK_DETAIL="cannot watch the block: mkfifo failed"
         return 1
     fi
     (
         set -m
-        exec 6<>"$status"
+        exec 6<>"$status" 5<>"$leased"
+        SECONDS=0
+        # The reader starts first (opening the write end waits for a
+        # reader) and is its own job, so stopping the block's group does
+        # not take it along.
+        { cat "$lease" >/dev/null 2>&1; echo eof >&5; } </dev/null >/dev/null 2>&1 6>&- &
+        reader=$!
         # A git hook runs this with GIT_DIR and GIT_INDEX_FILE set (absolute
         # in a linked worktree): a block that builds a sandbox repository
         # would then add, commit and tag in the caller's repository (#173).
@@ -834,42 +834,48 @@ gates_spec_run_block() { # <cmdfile> <timeout-s> <root> <outfile>
             (cd "$root" && GATES_SPEC_EXEC=1 GATES_SPEC_BLOCK="$bid" exec bash -eo pipefail "$cmdfile") \
                 7>"$lease" >"$outfile" 2>&1 </dev/null 6>&-
             echo "$?" >&6
-        } >/dev/null 2>&1 </dev/null &
+        } >/dev/null 2>&1 </dev/null 5>&- &
         pid=$!
         stopped=""
         trap 'stopped=1; kill -TERM -- -"$pid" 2>/dev/null' HUP INT TERM
         gates_watch_wait "$timeout" 6
         brc="$GATES_WATCH_RC"
-        if [[ -z "$brc" ]]; then
+        held=1
+        if [[ -n "$brc" ]]; then
+            wait "$pid" 2>/dev/null
+            # What the block started may finish within its limit: a child
+            # it killed without waiting is gone once it releases the lease,
+            # however long that takes on a loaded machine. At least one
+            # second, so a block that ended at its limit still gets a read.
+            left=$((timeout - SECONDS))
+            [[ "$left" -ge 1 ]] || left=1
+            gates_watch_wait "$left" 5
+            [[ -n "$GATES_WATCH_RC" ]] && held=""
+            # Still in the group after the lease was released (a process
+            # that closed descriptor 7), or still holding it at the limit.
+            if gates_spec_group_alive "$pid"; then
+                : >"$leftover"
+                gates_spec_group_stop "$pid"
+            fi
+        else
             gates_spec_group_stop "$pid"
             wait "$pid" 2>/dev/null
-            # Stopped from outside (the caller was interrupted): not a timeout.
-            [[ -n "$stopped" ]] && exit 143
-            : >"$marker"
-            exit 2
         fi
-        wait "$pid" 2>/dev/null
-        # A child that is already on its way out (the block killed it
-        # without waiting) gets half a second before it counts.
-        n=0
-        while [[ $n -lt 5 ]] && gates_spec_group_alive "$pid"; do
-            sleep 0.1
-            n=$((n + 1))
-        done
-        if gates_spec_group_alive "$pid"; then
-            : >"$leftover"
-            gates_spec_group_stop "$pid"
-        fi
-        exit "$brc"
+        # A process outside the group is stopped on every path, pass or not.
+        gates_spec_detached_stop "$bid" "$procs" "$lease" "$pid" "$held" 5 ||
+            : >"$outfile.detached"
+        kill -TERM -- -"$reader" 2>/dev/null
+        wait "$reader" 2>/dev/null
+        [[ -n "$brc" ]] && exit "$brc"
+        # Stopped from outside (the caller was interrupted): not a timeout.
+        [[ -n "$stopped" ]] && exit 143
+        : >"$marker"
+        exit 2
     ) 2>/dev/null || rc=$?
-    rm -f "$status"
-    # A process outside the group is stopped on every path, pass or not.
+    rm -f "$status" "$lease" "$leased"
     local detached=""
-    gates_spec_detached_stop "$bid" "$procs" "$lease" "$eof" ||
-        detached="left a detached process running (stopped)"
-    kill -TERM "$reader" 2>/dev/null
-    wait "$reader" 2>/dev/null
-    rm -f "$lease" "$eof"
+    [[ -f "$outfile.detached" ]] && detached="left a detached process running (stopped)"
+    rm -f "$outfile.detached"
     if [[ -f "$marker" ]]; then
         rm -f "$marker" "$leftover" "$mark"
         local load

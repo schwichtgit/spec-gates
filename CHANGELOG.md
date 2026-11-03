@@ -31,6 +31,16 @@ init` set the main repository's `core.bare = true` and `git add -A`
   accept blocks and the canary only (#173). Every command the gates run,
   and the `contract.sh sync` fetch, now starts without git's
   per-repository variables; one list serves all of them.
+- **A child on its way out no longer fails a passing block** (#294). An
+  accept block or `hooks.local.d` rule that killed a child without
+  waiting for it failed with "left a process running" when the child was
+  still exiting half a second later, which a loaded machine can make
+  happen. Every process a block or rule starts now holds a lease
+  descriptor, and the end of the lease (its last holder exiting) decides,
+  awaited for the rest of the time limit. A process that is still running
+  at the limit fails the block or refuses the rule, as before; it is
+  reported at the limit rather than half a second after the exit, and a
+  detached child that finishes within the limit now passes.
 
 ### Changed
 

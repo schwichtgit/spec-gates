@@ -925,13 +925,18 @@ tool gates and before `parity`:
    project, or commits in another worktree, is not caught either (one
    inside the project shows up as an untracked directory).
 
-   No process may outlive its block. The process group is stopped after
-   every block, and a block that leaves a process running fails. A child
+   No process may outlive its block. Every process the block starts
+   inherits the write end of a FIFO on descriptor 7, which the gate reads
+   to EOF: the block ends when the last holder has exited. That EOF is
+   awaited for the rest of the block's time limit, so a child the block
+   killed without waiting passes however long its exit takes on a loaded
+   machine, and no fixed grace decides. A process still holding the
+   descriptor at the limit, or left in the block's process group after
+   the EOF (one that closed the descriptor), is stopped and fails the
+   block with `left a process running after it exited (stopped)`. A child
    that leaves the group or the session (`set -m`, `setsid`, a double
-   fork) is found two ways: every process the block starts inherits the
-   write end of a FIFO on descriptor 7, which the gate reads to EOF (no
-   EOF half a second after the block exits means a holder is alive), and
-   carries `GATES_SPEC_BLOCK=<id>` in its environment, which the gate
+   fork) is found by the same descriptor, or by
+   `GATES_SPEC_BLOCK=<id>` in its environment, which the gate
    looks for in `/proc/<pid>/environ` on Linux and in `ps -E` elsewhere.
    What is found is killed, and the block fails with
    `left a detached process running (stopped)`. Not found: a process that
@@ -941,9 +946,9 @@ tool gates and before `parity`:
    (`/bin/sh`, `/bin/sleep`, `/usr/bin/git`, `/usr/bin/perl`), so there
    only the descriptor finds them: a `/bin/sh` child started through
    Node's `child_process` or Python's `subprocess`, which pass no extra
-   descriptors, is not seen on macOS. The process table is read after a
-   short settle and before the after-snapshot, so a write such a process
-   makes right away is still caught as a mutation; a later one is not.
+   descriptors, is not seen on macOS. The process table is read once,
+   before the after-snapshot, so a write such a process makes before
+   then is still caught as a mutation; a later one is not.
    `spec.snapshot_exclude` exempts untracked or ignored paths another
    process writes during the run; `cache/` names the directory and
    everything under it, like `cache/**`, and a pattern of only `*`, `?`

@@ -166,7 +166,7 @@ Enforcement follows the feature's own completion claim, read from
   auto-reverted). The read-only check covers the working tree, git
   config and hooks, `HEAD` and refs, and gitignored files; work in a
   sibling worktree does not count. A block that leaves a process running
-  fails too. Outside a git work tree blocks fail closed. What the check
+  at its time limit fails too. Outside a git work tree blocks fail closed. What the check
   covers, and its limits, is in
   [How it works](docs/how-it-works.md#spec-conformance-acceptance-criteria-as-executable-gates).
   Enforced blocks run at every boundary (each agent Stop, each commit
@@ -502,7 +502,8 @@ running after 10 seconds (`GATES_LOCAL_TIMEOUT`, a whole number above 0;
 any other value refuses): it is stopped with every process in its process
 group. A rule that exits but leaves a process running refuses too, and the
 process is stopped; a child that leaves the group (`setsid`) is out of
-reach.
+reach. A child the rule killed without waiting gets the rest of the
+limit to exit, so only one still running at the limit refuses.
 
 The rules are the project's, not the agent's: the agent cannot write or
 delete them (Write/Edit is refused, and a Bash command that appears to

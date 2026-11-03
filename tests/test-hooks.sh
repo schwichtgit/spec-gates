@@ -1400,12 +1400,26 @@ rule validate-bash 30-hangs.sh 'sleep 20'
 check "a rule still running after the timeout refuses" 0 bash -c "out=\$(printf '%s' '{\"tool_input\":{\"command\":\"ls\"}}' | GATES_LOCAL_TIMEOUT=1 CLAUDE_PROJECT_DIR='$LR' '$HOOKS/validate-bash.sh' 2>&1); rc=\$?; [[ \$rc -eq 2 ]] && grep -q 'still running after 1s' <<<\"\$out\""
 rm -f "$LR/.specify/gates/hooks.local.d/validate-bash/30-hangs.sh"
 # #189: a background child holding the rule's stderr no longer makes the
-# hook wait for it; it is stopped, and leaving it running refuses. The
-# rules record the child's pid so the test can see it is gone.
+# hook wait for it past the rule's limit (#294); it is stopped, and
+# leaving it running refuses. The rules record the child's pid so the test
+# can see it is gone.
 BGPID="$WORKDIR/rule-bg.pid"
 rule validate-bash 30-leaves-child.sh "(sleep 20) & echo \$! >'$BGPID'; exit 0"
-check "a rule that exits leaving a child running refuses at once, child stopped" 0 bash -c "SECONDS=0; out=\$(printf '%s' '{\"tool_input\":{\"command\":\"ls\"}}' | GATES_LOCAL_TIMEOUT=5 CLAUDE_PROJECT_DIR='$LR' '$HOOKS/validate-bash.sh' 2>&1); rc=\$?; [[ \$rc -eq 2 && \$SECONDS -lt 4 ]] && grep -q 'left a process running' <<<\"\$out\" && ! kill -0 \$(cat '$BGPID') 2>/dev/null"
+check "a rule that exits leaving a child running refuses at its limit, child stopped" 0 bash -c "SECONDS=0; out=\$(printf '%s' '{\"tool_input\":{\"command\":\"ls\"}}' | GATES_LOCAL_TIMEOUT=2 CLAUDE_PROJECT_DIR='$LR' '$HOOKS/validate-bash.sh' 2>&1); rc=\$?; [[ \$rc -eq 2 && \$SECONDS -lt 8 ]] && grep -q 'left a process running' <<<\"\$out\" && ! kill -0 \$(cat '$BGPID') 2>/dev/null"
 rm -f "$LR/.specify/gates/hooks.local.d/validate-bash/30-leaves-child.sh" "$BGPID"
+# #294: a child the rule killed without waiting does not refuse, however
+# long its exit takes. Its TERM handler spins for seconds before it exits
+# (the old half-second grace refused every time); the rule sends TERM only
+# once the handler is in place.
+RREADY="$WORKDIR/rule-ready"
+rule validate-bash 30-late-exit.sh "rm -f '$RREADY'
+bash -c 'trap \"i=0; while [ \\\$i -lt 1000000 ]; do i=\\\$((i + 1)); done; exit 0\" TERM; echo ready >&2; while :; do :; done' 2>'$RREADY' &
+c=\$!
+until [ -s '$RREADY' ]; do :; done
+kill -TERM \$c
+exit 0"
+check "a rule's child on its way out does not refuse (#294)" 0 bash -c "printf '%s' '{\"tool_input\":{\"command\":\"ls\"}}' | GATES_LOCAL_TIMEOUT=120 CLAUDE_PROJECT_DIR='$LR' '$HOOKS/validate-bash.sh'"
+rm -f "$LR/.specify/gates/hooks.local.d/validate-bash/30-late-exit.sh" "$RREADY"
 rule validate-bash 30-hangs-with-child.sh "nohup sleep 20 >/dev/null 2>&1 & echo \$! >'$BGPID'; sleep 20"
 check "a timed-out rule is stopped with the child it started" 0 bash -c "SECONDS=0; out=\$(printf '%s' '{\"tool_input\":{\"command\":\"ls\"}}' | GATES_LOCAL_TIMEOUT=1 CLAUDE_PROJECT_DIR='$LR' '$HOOKS/validate-bash.sh' 2>&1); rc=\$?; [[ \$rc -eq 2 && \$SECONDS -lt 6 ]] && grep -q 'still running after 1s' <<<\"\$out\" && ! kill -0 \$(cat '$BGPID') 2>/dev/null"
 rm -f "$LR/.specify/gates/hooks.local.d/validate-bash/30-hangs-with-child.sh" "$BGPID"
