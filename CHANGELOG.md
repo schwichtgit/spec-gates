@@ -31,6 +31,12 @@ init` set the main repository's `core.bare = true` and `git add -A`
   accept blocks and the canary only (#173). Every command the gates run,
   and the `contract.sh sync` fetch, now starts without git's
   per-repository variables; one list serves all of them.
+- **The projected `project.sh` takes every option** (#315).
+  `.specify/gates/project.sh --keep-local <path>` or
+  `--add-lint-ignores` exited 2 with "run the installed copy", and the
+  command it printed dropped the options. Once the install checks pass,
+  the projected copy now hands the whole invocation to the installed copy,
+  as it already did for `--check`.
 
 ### Added
 

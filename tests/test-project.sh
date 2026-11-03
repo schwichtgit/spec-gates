@@ -190,6 +190,18 @@ ok "--no-agent-hooks leaves settings alone" test ! -e "$D/.claude/settings.json"
 OUT="$(cd "$D" && bash .specify/gates/project.sh --check --no-agent-hooks 2>&1)" && rc=0 || rc=$?
 ok "projected copy --check keeps the caller's flags" test "$rc" -eq 0
 
+# The projected copy takes every option and hands it on (#315): a hold
+# and the lint ignores reach the installed copy, which does the work.
+printf '# local hardening\n' >>"$D/.specify/gates/verify.sh"
+printf '\n# newer upstream\n' >>"$D/.specify/extensions/gates/runtime/verify.sh"
+printf 'node_modules\n' >"$D/.prettierignore"
+OUT="$(cd "$D" && bash .specify/gates/project.sh --skip-canary --no-agent-hooks \
+    --keep-local ./.specify/gates/verify.sh --add-lint-ignores 2>&1)" && rc=0 || rc=$?
+ok "projected copy runs --keep-local and --add-lint-ignores" test "$rc" -eq 0
+ok "projected copy: the local edit is kept" grep -q '^# local hardening' "$D/.specify/gates/verify.sh"
+ok "projected copy: the hold is recorded" grep -qxF .specify/gates/verify.sh "$D/.specify/gates/.upgrade-holds"
+ok "projected copy: the lint ignores are added" grep -qxF .specify/extensions/ "$D/.prettierignore"
+
 echo ""
 echo "=== local edits ==="
 fixture

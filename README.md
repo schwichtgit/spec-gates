@@ -474,7 +474,9 @@ instead of overwritten: re-run with `--keep-local <path>` (held in
 which also releases a hold. A deleted file cannot be held. A 0.3.x
 projection has no such record; there only files that differ from every
 0.3.x release stop the run. `project.sh` ends by running the canary suite
-and fails if any gate no longer blocks.
+and fails if any gate no longer blocks. The projected copy,
+`.specify/gates/project.sh`, takes the same options and hands them to the
+installed copy once the install is complete.
 
 Between upgrades, `/speckit.gates.doctor` reports the same state: local
 edits that are not held, stale holds, and CI pipelines missing a template
