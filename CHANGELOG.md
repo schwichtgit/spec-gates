@@ -53,6 +53,17 @@ init` set the main repository's `core.bare = true` and `git add -A`
   when the tool generated a hook or no gates hook is installed. Older gates
   hooks become the stub whatever the config says, and the summary names
   what git runs.
+- **A worktree without `.specify/` names the main worktree's runtime**
+  (#316, in part). In a linked worktree of a repository that keeps
+  `.specify/` untracked, the stub skipped every git-boundary check with
+  "this branch has no gates runtime" although the main worktree had one.
+  The stub now finds the main worktree of the same repository
+  (`git rev-parse --git-common-dir`) and runs its hook with
+  `GATES_RUNTIME_DIR` pointing at its runtime when that hook declares
+  support for it; otherwise it skips with one line naming that runtime and
+  why it cannot judge the worktree. The projected hooks do not declare that
+  support yet, so such worktrees still commit unchecked, now with a
+  message that says so.
 - **doctor fails when no gates command is registered** (#311). A registry
   entry with an empty `registered_commands` loaded no `/speckit.gates.*`
   command, and doctor stayed healthy. It now fails on an entry that

@@ -1319,7 +1319,16 @@ installed `project.sh`. The git hook stubs in `.git/hooks` are shared by
 every branch and worktree and run the checked-out branch's projected
 hook; the `pre-merge-commit` stub falls back to the branch's `pre-commit`
 hook on a branch projected before that hook shipped (0.3.x), so rolling
-back to 0.3.x means removing that stub as well. A
+back to 0.3.x means removing that stub as well. A checked-out tree with
+no runtime and nothing tracked under `.specify/gates` (a linked worktree
+of a repository that keeps `.specify/` untracked, or a branch from before
+adoption) has nothing of its own to run. The stub then looks at the main
+worktree of the same repository (the parent of
+`git rev-parse --git-common-dir`, never a path from elsewhere): when its
+hook declares that it loads its runtime from `GATES_RUNTIME_DIR`, the stub
+runs it with that variable set, judging the checked-out tree; otherwise
+it skips with one line naming that runtime and why it cannot judge the
+worktree, or that there is no runtime at all. A
 `specify extension add --dev` install renders the gates skills as symlinks
 that exist only on the author's machine; doctor fails on symlinked,
 dangling or missing skills. `doctor --installed-only`, run from the

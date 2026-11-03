@@ -1048,6 +1048,56 @@ check "agent boundary: the gate sees the staged files of the worktree's index" 0
     test "$(cat "$PROBE_OUT" 2>/dev/null)" == "pa.txt "
 git -C "$WT" reset -q --hard
 
+# #316: a repository that keeps .specify/ untracked. A linked worktree has
+# no runtime of its own; the stub looks at the main worktree of the same
+# repository and says which runtime ran, or why none did.
+UM="$WORKDIR/wt-untracked"
+mkdir -p "$UM/.specify/gates/hooks"
+git -C "$UM" init -q -b main
+git -C "$UM" config user.email t@example.com
+git -C "$UM" config user.name tester
+project_runtime "$UM" "true"
+cp "$GITHOOKS/pre-commit" "$UM/.specify/gates/hooks/"
+printf '.specify/\nnode_modules\n' >"$UM/.gitignore"
+echo a >"$UM/a.txt"
+( cd "$UM" && git add -A && git commit -q -m "chore: seed" ) >/dev/null 2>&1
+UHOOKS="$(git -C "$UM" rev-parse --git-path hooks)"
+[[ "$UHOOKS" != /* ]] && UHOOKS="$UM/$UHOOKS"
+cp "$GITHOOKS/stub.sh" "$UHOOKS/pre-commit"
+chmod +x "$UHOOKS/pre-commit"
+UW="$WORKDIR/wt-untracked-linked"
+git -C "$UM" worktree add -q -b feat/u "$UW" >/dev/null 2>&1
+UOUT="$WORKDIR/wt-untracked.out"
+UMP="$(cd "$UM" && pwd -P)"
+# shellcheck disable=SC2329  # called through check
+ucommit() { # <file>: stage and commit it in the linked worktree, stderr in $UOUT
+    (cd "$UW" && echo x >>"$1" && git add "$1" && git commit -q -m "docs: $1") 2>"$UOUT"
+}
+check "untracked .specify: a main hook without GATES_RUNTIME_DIR support skips (exit 0)" 0 ucommit b.txt
+check "untracked .specify: the skip names the main worktree's runtime and why" 0 \
+    grep -qF "skipped -- this worktree has no gates runtime, and the main worktree's ($UMP/.specify/gates) cannot judge it from here" "$UOUT"
+# A main hook that loads its runtime from GATES_RUNTIME_DIR is run, from
+# the worktree, with that variable pointing at the main runtime.
+cat >"$UM/.specify/gates/hooks/pre-commit" <<'SH'
+#!/bin/bash
+# gates: honours GATES_RUNTIME_DIR
+printf '%s|%s\n' "$(git rev-parse --show-toplevel)" "$GATES_RUNTIME_DIR" >"$UNTRACKED_PROBE"
+exit 1
+SH
+export UNTRACKED_PROBE="$WORKDIR/wt-untracked.probe"
+check "untracked .specify: the main worktree's hook runs and its refusal reaches git" 1 ucommit c.txt
+check "untracked .specify: the run is named" 0 \
+    grep -qF "this worktree has no gates runtime; running the main worktree's ($UMP/.specify/gates)" "$UOUT"
+check "untracked .specify: it judges the worktree with the main runtime" 0 \
+    test "$(cat "$UNTRACKED_PROBE" 2>/dev/null)" == "$(cd "$UW" && pwd -P)|$UMP/.specify/gates"
+unset UNTRACKED_PROBE
+# Neither worktree has a runtime: the pre-adoption skip, as before.
+mv "$UM/.specify" "$WORKDIR/wt-untracked.specify"
+( cd "$UW" && git reset -q ) >/dev/null 2>&1
+check "untracked .specify: no runtime anywhere skips (exit 0)" 0 ucommit d.txt
+check "untracked .specify: the skip says no runtime" 0 \
+    grep -qF "pre-commit skipped -- this branch has no gates runtime" "$UOUT"
+
 # ===========================================================================
 # Part E3: configurable AI branding (git.ai_branding, issue #52)
 # ===========================================================================
