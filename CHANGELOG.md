@@ -31,6 +31,10 @@ init` set the main repository's `core.bare = true` and `git add -A`
   accept blocks and the canary only (#173). Every command the gates run,
   and the `contract.sh sync` fetch, now starts without git's
   per-repository variables; one list serves all of them.
+- **protect-files asks on `credential` and `passwd` in a file name**
+  (#317). The name check listed `credentials` and `password` only, so
+  `assert_no_credential_values.sh` or `passwd.txt` was edited without a
+  prompt. It asks, never blocks, so the wider list adds prompts only.
 
 ### Changed
 

@@ -99,8 +99,9 @@ ask the human when they cannot judge, and allow everything else. "Ask" is
 the PreToolUse `permissionDecision: ask` answer, which prompts in every
 permission mode. The hooks ask:
 
-- when a file name merely contains a word such as `secret` or `token` (a
-  test like `test_no_secret_leak.py` is not a credential), and on a Write
+- when a file name merely contains `credential`, `secret`, `password`,
+  `passwd`, `token` or `keystore`, in any case (a test like
+  `test_no_secret_leak.py` is not a credential), and on a Write
   or Edit to the constitution;
 - when a Bash command appears to modify a protected path: `rm`, `mv`,
   `sed -i` or `--in-place`, a redirect (also `>|`), an `--out`/`--output`

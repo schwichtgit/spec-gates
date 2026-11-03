@@ -1271,7 +1271,8 @@ done
 # ===========================================================================
 echo ""
 echo "=== protect-files: block on strong evidence, ask on a name alone (#71) ==="
-for f in tests/test_no_secret_leak.py src/token_parser.ts docs/password-policy.md lib/keystore_util.go; do
+for f in tests/test_no_secret_leak.py src/token_parser.ts docs/password-policy.md lib/keystore_util.go \
+    tests/assert_no_credential_values.sh etc/passwd.txt docs/Passwd-rotation.md; do
     askcheck "name alone asks: $f" "$(jq -nc --arg f "$f" '{tool_input:{file_path:$f}}')" protect-files.sh CLAUDE_PROJECT_DIR="$WORKDIR/none"
 done
 for f in .env config/.env.prod id_ed25519 server.pem app.keystore release.jks credentials credentials.json .netrc .pypirc aws-credentials service-account-x.json; do
