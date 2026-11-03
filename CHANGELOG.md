@@ -32,6 +32,14 @@ init` set the main repository's `core.bare = true` and `git add -A`
   and the `contract.sh sync` fetch, now starts without git's
   per-repository variables; one list serves all of them.
 
+### Added
+
+- **`install-shellcheck.sh` downloads through a mirror** (#301).
+  `GATES_SHELLCHECK_BASE_URL` replaces the release download base and
+  `GATES_SHELLCHECK_API_URL` the release API base `--update` reads, for
+  runners that reach GitHub only through a proxy. The pinned SHA-256 is
+  still verified.
+
 ### Changed
 
 - **Gate commands read the commit's index through

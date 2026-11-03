@@ -326,7 +326,11 @@ its enforcement frontmatter — one registry, two consumers.
   with `--update` and commit `.specify/gates/shellcheck.local.sha256`.
   `--update` reads GitHub's asset digests, which shellcheck releases carry
   only from v0.11.0 on; for an older version, add the checksums to that
-  file by hand, from assets you verified another way.
+  file by hand, from assets you verified another way. A runner that
+  reaches GitHub only through a mirror sets `GATES_SHELLCHECK_BASE_URL`
+  (the release download base, `<base>/v<version>/<asset>`) and, for
+  `--update`, `GATES_SHELLCHECK_API_URL` (the release API base); the
+  pinned checksum is still verified.
 - **Claude Code** for the agent boundary. The git and CI boundaries are
   agent-agnostic.
 

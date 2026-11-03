@@ -214,7 +214,7 @@ while [[ $# -gt 0 ]]; do
 done
 printf '%s\n' "$url" >>"$STUB_LOG"
 case "$url" in
-    *api.github.com*) cp "$STUB_RELEASE" "$out" ;;
+    */releases/tags/*) cp "$STUB_RELEASE" "$out" ;;
     *) cp "$STUB_ASSET" "$out" ;;
 esac
 EOF
@@ -310,6 +310,26 @@ if (cd "$IW/asset" && tar -cJf "$IW/good.tar.xz" shellcheck-v9.9.9) 2>/dev/null 
         "$(grep -c "lines to $IW/proj/.specify/gates/shellcheck.local.sha256" "$IW/out")" "1"
     jq -n --arg d "sha256:$GOOD_SHA" '{assets: [("darwin.aarch64", "darwin.x86_64", "linux.aarch64", "linux.x86_64")
         | {name: "shellcheck-v9.9.9.\(.).tar.xz", digest: $d}]}' >"$IW/release.json"
+
+    # Mirrors (#301): both bases come from the environment, a trailing
+    # slash is dropped, and the pinned checksum still decides.
+    rm -f "$IW/proj/.specify/gates/shellcheck.local.sha256"
+    expect "mirror: installs through GATES_SHELLCHECK_BASE_URL" \
+        "$(GATES_SHELLCHECK_BASE_URL=https://mirror.example/sc/ inst Linux x86_64 "$IW/good.tar.xz")" "0"
+    expect "mirror: the asset comes from the mirror base" \
+        "$(cat "$IW/log")" "https://mirror.example/sc/v9.9.9/shellcheck-v9.9.9.linux.x86_64.tar.xz"
+    expect "mirror: a tampered download is still refused" \
+        "$(GATES_SHELLCHECK_BASE_URL=https://mirror.example/sc inst Linux x86_64 "$IW/evil.tar.xz")" "1"
+    expect "mirror: reported as a checksum mismatch" \
+        "$(grep -c 'checksum mismatch for shellcheck-v9.9.9.linux.x86_64.tar.xz' "$IW/out")" "1"
+    expect "mirror: --update reads GATES_SHELLCHECK_API_URL" \
+        "$(GATES_SHELLCHECK_API_URL=https://mirror.example/api/releases/tags \
+            GATES_SHELLCHECK_BASE_URL=https://mirror.example/sc inst Linux x86_64 "$IW/good.tar.xz" --update)" "0"
+    expect "mirror: --update fetched the release from the mirror API" \
+        "$(grep -cx 'https://mirror.example/api/releases/tags/v9.9.9' "$IW/log")" "1"
+    expect "mirror: --update fetched no asset from github.com" \
+        "$(grep -c 'github.com' "$IW/log")" "0"
+    rm -f "$IW/proj/.specify/gates/shellcheck.local.sha256"
 
     # Run from the packaging source (#159): the installer in
     # extension/runtime/ of a git work tree, no CLAUDE_PROJECT_DIR, started
