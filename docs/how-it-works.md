@@ -176,7 +176,13 @@ file.
 When work becomes history. `pre-commit` blocks commits to `main`, scans
 staged content for secrets and forbidden files (renamed and typechanged
 files included), and runs the same verify
-entrypoint. `commit-msg` enforces Conventional Commits and refuses
+entrypoint. That run judges the working tree, not the commit: an unstaged
+fix can let a broken commit pass (CI then fails), and an untracked file
+can fail a clean one. When the working tree differs from the commit
+(tracked changes the commit leaves out, for `git commit -a` and
+`git commit <paths>` too, or untracked files that are not ignored),
+`pre-commit` prints one line, `gates: warning: the gate judges the working
+tree, not this commit: ...`, with the counts. `commit-msg` enforces Conventional Commits and refuses
 AI-isms, emoji (anywhere in the message, not only the subject; comment
 lines and the scissors section are dropped first), AI branding and
 `Co-Authored-By` trailers. The branding
@@ -702,8 +708,41 @@ The file-linter gates mark their first finding that way (a prettier
 `[warn] <file>` line, a markdownlint `<file>:<line>` finding, shellcheck's
 `<file> line N: SC<code> ...`), since their output opens with banners and
 ends with a footer; without a marked line they show their first
-non-empty line. A task or custom step without one shows its last
-non-empty line, where such steps print their verdict.
+non-empty line. A task, custom or project gate step without one shows
+its last non-empty line, where such steps print their verdict, preceded
+by its first non-empty line when the two differ (`<first> | <last>`), so
+a tool that names the file and line first and the message last keeps
+both.
+
+**A failing step keeps its output.** The full output of each gate that
+fails or warns (markers stripped) goes to
+`.specify/gates/output/<gate>.log`, and the text report names it on the
+next line (`output: .specify/gates/output/custom.log`). At the `ci`
+boundary the report also prints the last 40 lines of each failed gate's
+output, so the cause reaches the job log without a local rerun. The
+run that holds the gate lock first removes the files an earlier run
+left, so the directory holds this run's failures; `--dry-run` and a run
+nested in another (a walk inside a gate command, a run in an accept
+block) write none. The directory ignores itself (its own `.gitignore`
+of `*`), and the attestation still carries no tool output.
+`GATES_VERBOSE=1` streams each gate's output to stderr as it runs, under
+a `gates: output of <gate>` line. Its output then passes through `tee`,
+so a background process a gate command leaves running keeps the gate
+open until that process exits (for a project gate, at most its time
+limit, after which the gate fails as a timeout).
+
+To keep the files in CI: the GitHub template uploads them with
+`actions/upload-artifact` when a step fails, and the GitLab template
+declares `artifacts: when: on_failure` for `.specify/gates/output/`. In
+Jenkins, add to the stage:
+
+```groovy
+post {
+    failure {
+        archiveArtifacts artifacts: '.specify/gates/output/*.log', allowEmptyArchive: true
+    }
+}
+```
 
 **One gate run per working tree.** Two runs in one tree see each
 other's writes (build output, test files) and fail each other, so a run
@@ -863,7 +902,12 @@ lockfile pin, and the record's policy hash captures policy identity, so
 agent, git and CI runs are proven equivalent transitively. The lockfile is
 the shared source of truth; no attestation has to travel between
 boundaries. Drift fails the run by default (`attestation.parity: error`);
-tools with no pin source are attested but exempt.
+tools with no pin source are attested but exempt. When a node linter's
+entry in `node_modules/.package-lock.json` (what npm last installed)
+differs from `package-lock.json`, the failure says `node_modules was
+installed from another lockfile; run npm ci`: the usual cause is a branch
+switch since the last `npm ci`. The gate still fails until the install
+matches.
 
 ## Spec conformance: acceptance criteria as executable gates
 

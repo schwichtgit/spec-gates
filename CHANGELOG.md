@@ -10,6 +10,17 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
 
 ## [Unreleased]
 
+### Added
+
+- **A failed gate's output is kept** (#309). A failing custom command or
+  project gate left one line in the log and its output was deleted. The
+  full output of each gate that fails or warns now goes to
+  `.specify/gates/output/<gate>.log` (ignored by git), the report names
+  the file, and at the `ci` boundary it prints the last 40 lines of each
+  failed gate. The GitHub and GitLab templates keep the directory as an
+  artifact on failure. `GATES_VERBOSE=1` streams gate output to stderr as
+  it runs. The attestation still carries no tool output.
+
 ### Fixed
 
 - **No false timeouts** (#292). An accept block or project gate that
@@ -31,6 +42,15 @@ init` set the main repository's `core.bare = true` and `git add -A`
   accept blocks and the canary only (#173). Every command the gates run,
   and the `contract.sh sync` fetch, now starts without git's
   per-repository variables; one list serves all of them.
+- **The git boundary says when it judged more than the commit** (#305).
+  `pre-commit` runs the gates on the working tree, so an unstaged fix
+  could let a broken commit pass and an untracked file could fail a clean
+  one, while the hook and the README promised "if the git boundary
+  passed, CI passes" without the condition. Both now state it: the
+  promise holds when the working tree matches the commit. When it does
+  not (tracked changes the commit leaves out, including for
+  `git commit -a` and `git commit <paths>`, or untracked files that are
+  not ignored), the hook prints one warning line with the counts.
 
 ### Changed
 
@@ -45,6 +65,18 @@ init` set the main repository's `core.bare = true` and `git add -A`
   index): `GIT_INDEX_FILE="$GATES_GIT_INDEX_FILE" git diff --cached
 --name-only` lists exactly what the commit holds. A command that read
   the staged files through the inherited variable switches to it.
+- **A failing step's summary keeps its first line too** (#296). Without
+  a `##gates-fail##` line, a task, custom or project gate step showed only
+  its last non-empty line, so a tool that names the file and line first
+  (uv's "TOML parse error at line 1 ...") lost them. The summary is now
+  `<first> | <last>` when the two differ; a `##gates-fail##` line still
+  wins.
+- **Parity names a stale install** (#299). After a branch switch whose
+  `package-lock.json` pins other linter versions, parity failed with only
+  the version pair. When a linter's entry in
+  `node_modules/.package-lock.json` differs from `package-lock.json`, the
+  failure now says `node_modules was installed from another lockfile; run
+npm ci`. The gate still fails until the install matches.
 
 ## 0.5.0 — 2026-10-27
 

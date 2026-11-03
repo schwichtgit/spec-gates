@@ -46,7 +46,10 @@ enforcement half lives on here.
 passes; if the git boundary passed, CI passes. Every boundary runs the
 same `verify.sh` with the same policy, and CI runs all of it. An earlier
 boundary runs less only where the policy says so, and names what it skipped
-(constitution, Principle III). `tests/test-parity.sh` asserts it: with
+(constitution, Principle III). The git boundary checks the working tree,
+not the commit, so its half holds when the working tree matches what is
+committed; the pre-commit hook warns when tracked changes are left out of
+the commit or untracked files exist. `tests/test-parity.sh` asserts it: with
 nothing declared, identical results at every boundary, and no boundary
 re-implements the gate.
 A fourth, server-side boundary (branch protection requiring the CI check) is
@@ -111,7 +114,9 @@ self-evidencing:
 - **Verified parity** — a synthetic `parity` gate compares each tool's
   resolved version against its lockfile pin on every run, at every
   boundary. Drift fails the boundary with
-  `parity -- prettier: resolved 3.5.3, pinned 3.9.4 (run npm ci)`;
+  `parity -- prettier: resolved 3.5.3, pinned 3.9.4 (run npm ci)`, or,
+  when `node_modules` was installed from another lockfile (after a branch
+  switch), `(node_modules was installed from another lockfile; run npm ci)`;
   tune it with `attestation.parity` (`error | warning | off`). `doctor`
   additionally fails on the no-op signature: a gate that passed while
   checking zero of its candidate files.
