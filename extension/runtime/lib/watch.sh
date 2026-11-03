@@ -4,11 +4,16 @@
 # Sourced by verify.sh and lib/spec-gate.sh. Provides:
 #   gates_group_stop <pgid>                       # TERM, 2 s grace, KILL
 #   gates_run_watched <timeout-s> <outfile> <cmd...>
+#   gates_watch_wait <timeout-s> <fd>             # the decision, for callers
 #
 # Pure bash 3.2: stock macOS has no timeout(1). The command runs as a job
-# of a `set -m` subshell, so it leads its own process group, and a timer
-# subshell stops that group when the limit passes. A process that leaves
-# the group (setsid, a double fork into a new session) is not stopped.
+# of a `set -m` subshell, so it leads its own process group. When it ends,
+# its exit status is written to a FIFO, and the subshell decides with one
+# `read -t` on that FIFO: a status that arrives in time is the result, no
+# status means the limit passed and the group is stopped. There is no
+# timer process, so nothing can report a timeout for a command that has
+# already finished. A process that leaves the group (setsid, a double fork
+# into a new session) is not stopped.
 # Unlike accept blocks, watched commands are not read-only by contract, so
 # the accept-block runner's lease and snapshot checks do not apply here.
 
@@ -26,43 +31,62 @@ gates_group_stop() { # <pgid>
     return 0
 }
 
+# Wait at most <timeout-s> seconds for the exit status a watched job
+# writes to descriptor <fd>, a FIFO the caller holds open read-write (so
+# the read never sees end-of-file). Sets GATES_WATCH_RC to the status, or
+# to "" when the time is up. This one read is the whole decision. The
+# value decides, not read's own status: on expiry bash 3.2 returns 1 and
+# bash 4+ returns above 128. Integer seconds only (bash 3.2).
+gates_watch_wait() { # <timeout-s> <fd>
+    GATES_WATCH_RC=""
+    read -r -t "$1" -u "$2" GATES_WATCH_RC 2>/dev/null || :
+}
+
 # Run <cmd...> with stdin /dev/null and stdout and stderr to <outfile>,
 # from the current directory. Returns the command's status; on timeout
 # its process group is stopped and the return is 124 with
-# GATES_WATCH_DETAIL="timeout after <n>s[ at load <x>]". The timeout is
-# told by the timer's marker, not by the status, so a command that exits
-# 124 by itself leaves GATES_WATCH_DETAIL empty. Call it in the caller's
-# own shell (not in $( )), or GATES_WATCH_DETAIL is lost.
+# GATES_WATCH_DETAIL="timeout after <n>s[ at load <x>]". Only the
+# decision writes the timeout marker, so a command that exits 124 by
+# itself leaves GATES_WATCH_DETAIL empty. Call it in the caller's own
+# shell (not in $( )), or GATES_WATCH_DETAIL is lost.
 gates_run_watched() { # <timeout-s> <outfile> <cmd...>
-    local timeout="$1" outfile="$2" marker="$2.timedout" rc=0 load
+    local timeout="$1" outfile="$2" marker="$2.timedout" fifo="$2.status" rc=0 load
     shift 2
     GATES_WATCH_DETAIL=""
-    rm -f "$marker"
+    rm -f "$marker" "$fifo"
+    if ! mkfifo "$fifo" 2>/dev/null; then
+        GATES_WATCH_DETAIL="cannot watch the command: mkfifo failed"
+        return 1
+    fi
     (
         set -m
-        "$@" >"$outfile" 2>&1 </dev/null &
+        exec 6<>"$fifo"
+        # The job's own stdio is /dev/null, so it never holds a caller's
+        # $() pipe open; the command writes to <outfile> and does not get
+        # the FIFO's descriptor. The job outlives a TERM to the group (a
+        # handler, not an ignore, so the command still gets the signal) and
+        # reports the command's status however it ended.
+        {
+            trap : HUP INT TERM
+            "$@" >"$outfile" 2>&1 </dev/null 6>&-
+            echo "$?" >&6
+        } >/dev/null 2>&1 </dev/null &
         pid=$!
-        trap 'kill -TERM -- -"$pid" 2>/dev/null' HUP INT TERM
-        # The timer gets /dev/null stdio: it (and its sleep) must not hold
-        # the caller's fds, or a caller capturing this run via $() would
-        # wait on the pipe until the sleep expires. It is a job of its
-        # own, so stopping it takes its sleep along.
-        (
-            sleep "$timeout"
-            : >"$marker"
-            gates_group_stop "$pid"
-        ) >/dev/null 2>&1 </dev/null &
-        watcher=$!
+        stopped=""
+        trap 'stopped=1; kill -TERM -- -"$pid" 2>/dev/null' HUP INT TERM
+        gates_watch_wait "$timeout" 6
+        if [[ -n "$GATES_WATCH_RC" ]]; then
+            wait "$pid" 2>/dev/null
+            exit "$GATES_WATCH_RC"
+        fi
+        gates_group_stop "$pid"
         crc=0
         wait "$pid" 2>/dev/null || crc=$?
-        if [[ -f "$marker" ]]; then
-            wait "$watcher" 2>/dev/null
-        else
-            kill -TERM -- -"$watcher" 2>/dev/null
-            wait "$watcher" 2>/dev/null
-        fi
+        # Stopped from outside (the caller was interrupted): not a timeout.
+        [[ -n "$stopped" ]] || : >"$marker"
         exit "$crc"
     ) 2>/dev/null || rc=$?
+    rm -f "$fifo"
     if [[ -f "$marker" ]]; then
         rm -f "$marker"
         load=""

@@ -1502,7 +1502,7 @@ mv "$LR/.specify/gates/lib/local-hooks.sh.off" "$LR/.specify/gates/lib/local-hoo
 # not the one on PATH: under a PATH without bash a passing rule passes.
 NOBASH="$WORKDIR/path-nobash"
 toolpath "$NOBASH"
-for t in mktemp sleep rm kill mkdir sort cut ls env ps; do
+for t in mktemp mkfifo sleep rm kill mkdir sort cut ls env ps; do
     command -v "$t" >/dev/null 2>&1 && ln -sf "$(command -v "$t")" "$NOBASH/$t"
 done
 NB="$WORKDIR/nobash-rules"

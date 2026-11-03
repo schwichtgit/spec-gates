@@ -8,6 +8,20 @@ never touches `.specify/gates/policy.json`. New policy keys take the
 defaults stated here until you set them. Releases before 0.3.3 are
 described in their [GitHub release notes](https://github.com/schwichtgit/spec-gates/releases).
 
+## [Unreleased]
+
+### Fixed
+
+- **No false timeouts** (#292). An accept block or project gate that
+  finished in seconds could fail as "timeout after Ns", more often the
+  higher the load (in 0.4.1 for accept blocks, in 0.5.0 also for project
+  gates); raising the limit did not help. A timer process slept for the
+  limit and then wrote a timeout marker, and stopping it after the command
+  had ended could still let that write happen. Now the command reports its
+  exit status on a FIFO and the gate decides with one wait of at most the
+  limit: there is no timer process, and no sleep decides the outcome. The
+  `hooks.local.d` rule limit works the same way.
+
 ## 0.5.0 — 2026-10-27
 
 ### Upgrading
