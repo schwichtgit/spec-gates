@@ -148,6 +148,16 @@ npm ci`. The gate still fails until the install matches.
 
 ### Fixed
 
+- **A later run no longer deletes a failed gate's kept output** (#331). Every run that held the gate lock removed all files in
+  `.specify/gates/output/` first, so a Stop-hook run at the agent
+  boundary deleted the output of a failed ci run, including that of gates
+  it never ran (skipped by declaration). A gate's file now changes only
+  when that gate runs: a pass removes it, a failure replaces it.
+- **"Claude Code" wrapped across two lines passes the standalone-Claude
+  rule** (#332). The product name was stripped line by
+  line, so a body that wrapped it ("... inside Claude" / "Code and ...")
+  was refused as a standalone "Claude". Only that pair is joined first;
+  a parenthesis or code span spanning lines still hides nothing.
 - **A memory plugin's state no longer fails an accept block** (#327). A
   Claude Code memory plugin writes `.claude/mind.*` (its store, locks and
   write-ahead log) in the background, and a block that ran meanwhile
