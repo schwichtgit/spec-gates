@@ -455,14 +455,27 @@ fi
 # The templates upload no file; a project that does so opts in (docs). Only the
 # run that holds the gate lock writes there (not --dry-run, and not a run
 # nested in another: a walk inside a gate command, a run in an accept
-# block), and it first removes the files an earlier run left, so the
-# directory holds this run's failures. The directory ignores itself
-# (a .gitignore of "*"). The attestation never carries the output.
+# block). A gate's file is replaced or removed only when that gate runs:
+# a pass removes it, a failure or warning replaces it, and a gate this run
+# does not run (skipped by declaration at this boundary, or a deferred run)
+# keeps the file of its last run, so an agent-boundary run never deletes
+# what a ci run kept. The directory ignores itself (a .gitignore of "*").
+# The attestation never carries the output.
 OUTPUT_DIR=""
 if [[ "$LOCK_HELD" == "1" ]]; then
     OUTPUT_DIR="$GATES_DIR/output"
-    rm -f "$OUTPUT_DIR"/*.log 2>/dev/null || true
 fi
+
+# The kept-output file of gate <name>.
+gates_output_file() { # <gate-name>
+    printf '%s/%s.log' "$OUTPUT_DIR" "$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')"
+}
+
+# Remove gate <name>'s kept output: it ran and has nothing to keep.
+gates_output_drop() { # <gate-name>
+    [[ -n "$OUTPUT_DIR" ]] || return 0
+    rm -f "$(gates_output_file "$1")" 2>/dev/null || true
+}
 
 # Keep /tmp/gates-out.$$.view (run_gate's output, markers stripped) as
 # <gate>.log; prints its path relative to the project root, or at ci
@@ -472,7 +485,7 @@ fi
 gates_output_keep() { # <gate-name>
     local f rc=0
     [[ -n "$OUTPUT_DIR" ]] || return 1
-    f="$OUTPUT_DIR/$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_').log"
+    f="$(gates_output_file "$1")"
     { mkdir -p "$OUTPUT_DIR" \
         && { [[ -f "$OUTPUT_DIR/.gitignore" ]] || printf '*\n' >"$OUTPUT_DIR/.gitignore"; } \
         && cp "/tmp/gates-out.$$.view" "$f"; } 2>/dev/null || return 1
@@ -746,6 +759,8 @@ run_gate() { # name severity cmd...
     esac
     if [[ "$result" == "fail" || "$result" == "warn" ]]; then
         OUTPUTS[${#OUTPUTS[@]} - 1]="$(gates_output_keep "$name" || true)"
+    else
+        gates_output_drop "$name"
     fi
     rm -f "/tmp/gates-out.$$.view"
     att_gate "$name" "$bin" "$version" "$pinned" "$candidates" "$checked" \

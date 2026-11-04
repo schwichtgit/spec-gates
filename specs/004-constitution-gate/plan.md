@@ -64,7 +64,7 @@ doctor's constitution section reads annotations via the projected lib.
 
 **Project Type**: CLI/hooks runtime + agent command — single project.
 
-**Performance Goals**: doctor's constitution section ≤ 1s (SC-004);
+**Performance Goals**: doctor's constitution section ≤ 2 s of CPU time (SC-004);
 bundled-corpus session fully offline; no verify.sh runtime change at all.
 
 **Constraints**: never auto-fill constitution values (FR-006 — refuse
