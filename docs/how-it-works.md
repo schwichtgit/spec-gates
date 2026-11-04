@@ -1048,8 +1048,12 @@ tool gates and before `parity`:
    and `/` (which would exempt everything) makes the policy invalid.
    Editor temporary files are exempt without it, at any depth: `*.swp`,
    `*.swo`, `*~`, `.#*`, `#*#` and vim's `4913` write probe, which an
-   editor holding a file open writes while a block runs. A `.gitignore`
-   entry is no substitute, since ignored files are checked too. One
+   editor holding a file open writes while a block runs. So is the state
+   a Claude Code memory plugin keeps in the background, `.claude/mind.*`
+   (its store, locks and write-ahead log, #327); what an agent edits
+   under `.claude/` on purpose, such as settings or skills, stays
+   checked. A `.gitignore` entry is no substitute, since ignored files
+   are checked too. One
    limit: inside a directory that is ignored as a whole, a new or deleted
    entry also changes the directory, and that change still counts, since
    it may be a deleted file; exempt such a directory through
