@@ -108,7 +108,7 @@ self-evidencing:
   in `--json`: the policy's SHA-256, and per gate the resolved binary,
   detected version, lockfile pin, candidate vs checked file counts,
   result, and duration. Evidence, never file contents.
-- **Canaries** — `canary.sh` plants 18 known violations in disposable
+- **Canaries** — `canary.sh` plants 19 known violations in disposable
   sandboxes (dirty and lint-failing files, dangerous tool calls with and
   without jq, staged secrets, undeclared protected changes, branding,
   failing accept blocks, a tampered effective policy, and more) and requires
@@ -357,7 +357,11 @@ its enforcement frontmatter — one registry, two consumers.
   with `--update` and commit `.specify/gates/shellcheck.local.sha256`.
   `--update` reads GitHub's asset digests, which shellcheck releases carry
   only from v0.11.0 on; for an older version, add the checksums to that
-  file by hand, from assets you verified another way.
+  file by hand, from assets you verified another way. A runner that
+  reaches GitHub only through a mirror sets `GATES_SHELLCHECK_BASE_URL`
+  (the release download base, `<base>/v<version>/<asset>`) and, for
+  `--update`, `GATES_SHELLCHECK_API_URL` (the release API base); the
+  pinned checksum is still verified.
 - **Claude Code** for the agent boundary. The git and CI boundaries are
   agent-agnostic.
 
@@ -507,7 +511,9 @@ instead of overwritten: re-run with `--keep-local <path>` (held in
 which also releases a hold. A deleted file cannot be held. A 0.3.x
 projection has no such record; there only files that differ from every
 0.3.x release stop the run. `project.sh` ends by running the canary suite
-and fails if any gate no longer blocks.
+and fails if any gate no longer blocks. The projected copy,
+`.specify/gates/project.sh`, takes the same options and hands them to the
+installed copy once the install is complete.
 
 Between upgrades, `/speckit.gates.doctor` reports the same state: local
 edits that are not held, stale holds, and CI pipelines missing a template

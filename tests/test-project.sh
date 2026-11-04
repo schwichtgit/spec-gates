@@ -87,15 +87,22 @@ ok "manifest verifies against the tree" bash -c "cd '$D' && tail -n +2 .specify/
 ok ".runtime-version recorded" test -s "$D/.specify/gates/.runtime-version"
 ok "attestations ignored" grep -qxF attestations.jsonl "$D/.specify/gates/.gitignore"
 ok "the gate lock ignored (#263)" grep -qxF .lock/ "$D/.specify/gates/.gitignore"
-# An upgrade from a release that listed only the log adds the lock on a
-# line of its own, also after a last line without its newline.
+ok "the per-gate failure output ignored" grep -qxF output/ "$D/.specify/gates/.gitignore"
+# An upgrade from a release that listed only the log adds the lock and the
+# output directory on lines of their own, also after a last line without
+# its newline.
 GI_SAVED="$(cat "$D/.specify/gates/.gitignore")"
 printf 'attestations.jsonl' >"$D/.specify/gates/.gitignore"
-rc_is "an upgrade adds the missing ignore line" 0 "$D" --skip-canary
-ok "the plan names the added line" grep -qF 'add .lock/ to .specify/gates/.gitignore' <<<"$OUT"
-ok "both ignore lines are whole lines" \
+rc_is "an upgrade adds the missing ignore lines" 0 "$D" --skip-canary
+ok "the plan names the added lines" grep -qF 'add .lock/ output/ to .specify/gates/.gitignore' <<<"$OUT"
+ok "every ignore line is a whole line" \
     test "$(cat "$D/.specify/gates/.gitignore")" == "attestations.jsonl
-.lock/"
+.lock/
+output/"
+# A 0.5.0 projection (log and lock) is pending until re-projected.
+printf 'attestations.jsonl\n.lock/\n' >"$D/.specify/gates/.gitignore"
+rc_is "--check: a missing output/ line is pending work" 1 "$D" --check
+ok "--check names the output/ line" grep -qF 'add output/ to .specify/gates/.gitignore' <<<"$OUT"
 printf '%s\n' "$GI_SAVED" >"$D/.specify/gates/.gitignore"
 ok "settings carry the protect-files hook" jq -e '[.hooks.PreToolUse[].hooks[].command] | any(test("protect-files"))' "$D/.claude/settings.json"
 ok "policy.json untouched" grep -qx '{ "hooks": {} }' "$D/.specify/gates/policy.json"
@@ -189,6 +196,18 @@ ok "--no-agent-hooks leaves settings alone" test ! -e "$D/.claude/settings.json"
 
 OUT="$(cd "$D" && bash .specify/gates/project.sh --check --no-agent-hooks 2>&1)" && rc=0 || rc=$?
 ok "projected copy --check keeps the caller's flags" test "$rc" -eq 0
+
+# The projected copy takes every option and hands it on (#315): a hold
+# and the lint ignores reach the installed copy, which does the work.
+printf '# local hardening\n' >>"$D/.specify/gates/verify.sh"
+printf '\n# newer upstream\n' >>"$D/.specify/extensions/gates/runtime/verify.sh"
+printf 'node_modules\n' >"$D/.prettierignore"
+OUT="$(cd "$D" && bash .specify/gates/project.sh --skip-canary --no-agent-hooks \
+    --keep-local ./.specify/gates/verify.sh --add-lint-ignores 2>&1)" && rc=0 || rc=$?
+ok "projected copy runs --keep-local and --add-lint-ignores" test "$rc" -eq 0
+ok "projected copy: the local edit is kept" grep -q '^# local hardening' "$D/.specify/gates/verify.sh"
+ok "projected copy: the hold is recorded" grep -qxF .specify/gates/verify.sh "$D/.specify/gates/.upgrade-holds"
+ok "projected copy: the lint ignores are added" grep -qxF .specify/extensions/ "$D/.prettierignore"
 
 echo ""
 echo "=== local edits ==="
@@ -601,6 +620,38 @@ rc_is "lefthook adopted later: the missing entries -> exit 1" 1 "$D" --skip-cana
 ok "lefthook adopted later: only pre-commit runs no gates" grep -q 'lefthook owns the git hooks and does not run gates for: pre-commit$' <<<"$OUT"
 ok "lefthook adopted later: the stubs still running are named apart" grep -q 'lefthook.yml has no gates entry for: pre-merge-commit commit-msg (git still runs the gates stub for them' <<<"$OUT"
 
+# A pre-commit config the framework never installed, over 0.3.x hook
+# copies (#314): git runs the copies, so the config does not make the
+# framework the owner. The copies become the stub, the missing hook is
+# installed, and every hook is probed.
+fixture
+for h in pre-commit commit-msg; do
+    git -C "$REPO_ROOT" show "v0.3.6:extension/runtime/hooks/git/$h" >"$D/.git/hooks/$h"
+    chmod +x "$D/.git/hooks/$h"
+done
+printf 'repos: []\n' >"$D/.pre-commit-config.yaml"
+rc_is "pre-commit config, framework not installed, old copies -> exit 0" 0 "$D" --skip-canary
+for h in pre-commit pre-merge-commit commit-msg; do
+    ok "framework not installed: $h is the stub" cmp -s "$D/.specify/extensions/gates/runtime/hooks/git/stub.sh" "$D/.git/hooks/$h"
+    ok "framework not installed: $h is probed" grep -q "git probe: $h reaches the gates hook" <<<"$OUT"
+done
+ok "framework not installed: no config entry asked for" bash -c "! grep -q 'does not run gates for\|has no gates entry' <<<\"\$1\"" _ "$OUT"
+ok "framework not installed: the config is untouched" test "$(cat "$D/.pre-commit-config.yaml")" = "repos: []"
+# The framework installed for pre-commit only: it owns the hooks, and the
+# old copy git still runs for commit-msg is replaced with the stub whatever
+# the config says, and named as what git runs.
+fixture
+printf '#!/bin/sh\n# File generated by pre-commit: https://pre-commit.com\nexit 0\n' >"$D/.git/hooks/pre-commit"
+git -C "$REPO_ROOT" show v0.3.6:extension/runtime/hooks/git/commit-msg >"$D/.git/hooks/commit-msg"
+chmod +x "$D/.git/hooks/pre-commit" "$D/.git/hooks/commit-msg"
+printf 'repos: []\n' >"$D/.pre-commit-config.yaml"
+rc_is "framework installed, old commit-msg copy: --check" 1 "$D" --check
+ok "framework installed: --check names the copy git runs" grep -q 'has no gates entry for: commit-msg (git runs an older gates hook for them' <<<"$OUT"
+rc_is "framework installed, old commit-msg copy -> exit 1 (entries missing)" 1 "$D" --skip-canary
+ok "framework installed: the copy is now the stub" cmp -s "$D/.specify/extensions/gates/runtime/hooks/git/stub.sh" "$D/.git/hooks/commit-msg"
+ok "framework installed: the generated hook is untouched" grep -q 'File generated by pre-commit' "$D/.git/hooks/pre-commit"
+ok "framework installed: the summary names the stub" grep -q 'has no gates entry for: commit-msg (git still runs the gates stub for them' <<<"$OUT"
+
 # pre-commit framework: .pre-commit-config.yaml; repos: last, both indents.
 for ind in "" "  "; do
     fixture
@@ -773,6 +824,22 @@ rm -rf "$D/.specify/extensions"
 OUT="$(cd "$D" && bash .specify/gates/project.sh --check 2>&1)" && rc=0 || rc=$?
 ok "projected copy reports the half-done upgrade (exit 2)" test "$rc" -eq 2
 ok "it prints the add command" grep -q 'specify extension add gates --from' <<<"$OUT"
+
+echo ""
+echo "=== a hook that only calls the gates hook (#298) ==="
+fixture
+# shellcheck disable=SC2016  # the 0.3.x hook text, written literally
+printf '#!/bin/sh\n# spec-gates: delegate to projected git hook (survives extension removal)\nexec "$(git rev-parse --show-toplevel)/.specify/gates/hooks/pre-commit" "$@"\n' >"$D/.git/hooks/pre-commit"
+chmod +x "$D/.git/hooks/pre-commit"
+rc_is "a delegate: --check plans the stub" 1 "$D" --check
+ok "a delegate: the plan names the stub" grep -q 'install the gates stub as git hook pre-commit' <<<"$OUT"
+rc_is "a delegate is replaced with the stub" 0 "$D" --skip-canary
+ok "a delegate: now the stub" cmp -s "$D/.specify/extensions/gates/runtime/hooks/git/stub.sh" "$D/.git/hooks/pre-commit"
+ok "a delegate: not reported as another tool's" bash -c "! grep -q 'another tool owns' <<<\"\$1\"" _ "$OUT"
+# shellcheck disable=SC2016  # the hook text, written literally
+printf '#!/bin/sh\nnpm test\nexec "$(git rev-parse --show-toplevel)/.specify/gates/hooks/pre-commit" "$@"\n' >"$D/.git/hooks/pre-commit"
+rc_is "a hook that runs more than the gates hook" 0 "$D" --skip-canary
+ok "that hook stays the user's" grep -q '^npm test' "$D/.git/hooks/pre-commit"
 
 echo ""
 echo "=== git boundary ==="

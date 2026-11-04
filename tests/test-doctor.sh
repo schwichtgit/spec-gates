@@ -972,6 +972,63 @@ ci_form "Jenkins sh(script: ...)" live Jenkinsfile < <(printf "stage('G') { step
 ci_form "Jenkins last line of a ''' script" live Jenkinsfile < <(printf "stage('G') {\n  steps {\n    sh '''\n      npm ci\n      %s\n    '''\n  }\n}\n" "$V")
 ci_form "Jenkins a ''' line followed by another" inert Jenkinsfile < <(printf "stage('G') {\n  steps {\n    sh '''\n      %s\n      echo done\n    '''\n  }\n}\n" "$V")
 ci_form "Jenkins withEnv GATES_POLICY_FILE" inert Jenkinsfile < <(printf "stage('G') {\n  steps {\n    withEnv(['GATES_POLICY_FILE=x.json']) {\n      sh '%s'\n    }\n  }\n}\n" "$V")
+# Save the status, run the always-run steps, exit with it (#306): one
+# narrow form. The variable starts at 0, nothing between reassigns it or
+# exits, and `exit "$rc"` ends the script.
+SAVE="      rc=0
+      $V || rc=\$?
+      bash .specify/gates/canary.sh
+      exit \"\$rc\""
+ci_form "GitLab save-and-exit block" live .gitlab-ci.yml < <(printf 'gates:\n  script:\n    - |\n%s\n' "$SAVE")
+# shellcheck disable=SC2016  # literal pipeline text
+ci_form "save-and-exit with exit \$rc unquoted" live "$GHW" < <(printf '%s\n      - run: |\n          rc=\n          %s || rc=$?\n          exit $rc\n' "$GHJ" "$V")
+# shellcheck disable=SC2016  # literal pipeline text
+ci_form "Jenkins save-and-exit" live Jenkinsfile < <(printf "stage('G') {\n  steps {\n    sh '''\n      rc=0\n      %s || rc=\$?\n      bash .specify/gates/canary.sh\n      exit \"\$rc\"\n    '''\n  }\n}\n" "$V")
+# shellcheck disable=SC2016  # literal pipeline text
+ci_form "save-and-exit: rc reset between" inert .gitlab-ci.yml < <(printf 'gates:\n  script:\n    - |\n      rc=0\n      %s || rc=$?\n      rc=0\n      exit "$rc"\n' "$V")
+# shellcheck disable=SC2016  # literal pipeline text
+ci_form "save-and-exit: exit 0 between" inert .gitlab-ci.yml < <(printf 'gates:\n  script:\n    - |\n      rc=0\n      %s || rc=$?\n      exit 0\n      exit "$rc"\n' "$V")
+# shellcheck disable=SC2016  # literal pipeline text
+ci_form "save-and-exit: a line after the exit" inert .gitlab-ci.yml < <(printf 'gates:\n  script:\n    - |\n      rc=0\n      %s || rc=$?\n      exit "$rc"\n      echo done\n' "$V")
+# shellcheck disable=SC2016  # literal pipeline text
+ci_form "save-and-exit: no rc=0 before" inert .gitlab-ci.yml < <(printf 'gates:\n  script:\n    - |\n      %s || rc=$?\n      exit "$rc"\n' "$V")
+# shellcheck disable=SC2016  # literal pipeline text
+ci_form "save-and-exit: exits with another variable" inert .gitlab-ci.yml < <(printf 'gates:\n  script:\n    - |\n      rc=0\n      %s || rc=$?\n      exit "$other"\n' "$V")
+# shellcheck disable=SC2016  # literal pipeline text
+ci_form "save-and-exit: a trap between" inert .gitlab-ci.yml < <(printf "gates:\n  script:\n    - |\n      rc=0\n      %s || rc=\$?\n      trap 'exit 0' EXIT\n      exit \"\$rc\"\n" "$V")
+# shellcheck disable=SC2016  # literal pipeline text
+ci_form "save-and-exit: as a single script item" inert .gitlab-ci.yml < <(printf 'gates:\n  script:\n    - %s || rc=$?\n' "$V")
+# A script the pipeline calls is followed one level (#306): a repo file
+# named as the whole command proves the gates step when its own text runs
+# verify.sh in a provable form.
+mkdir -p "$CIF/scripts" "$CIF/.specify/gates"
+printf '#!/bin/bash\nset -e\nnpm ci\n%s\n' "$V" >"$CIF/scripts/ci.sh"
+# shellcheck disable=SC2016  # literal script text
+printf '#!/bin/bash\nrc=0\n%s || rc=$?\nbash .specify/gates/canary.sh\nexit "$rc"\n' "$V" >"$CIF/scripts/save.sh"
+printf '#!/bin/bash\n%s\necho done\n' "$V" >"$CIF/scripts/tail.sh"
+printf '#!/bin/bash\n%s\n' "$V" >"$CIF/.specify/gates/wrap.sh"
+ci_form "a called script whose last line runs it" live .gitlab-ci.yml < <(printf 'gates:\n  script:\n    - bash scripts/ci.sh\n')
+ci_form "a called script, ./ form" live "$GHW" < <(printf '%s\n      - run: ./scripts/ci.sh\n' "$GHJ")
+ci_form "a called script in the save-and-exit form" live .gitlab-ci.yml < <(printf 'gates:\n  script:\n    - bash scripts/save.sh\n')
+ci_form "a called script that runs more after it" inert .gitlab-ci.yml < <(printf 'gates:\n  script:\n    - bash scripts/tail.sh\n')
+ci_form "a called script behind || true" inert .gitlab-ci.yml < <(printf 'gates:\n  script:\n    - bash scripts/ci.sh || true\n')
+ci_form "a script under .specify/gates is not followed" inert .gitlab-ci.yml < <(printf 'gates:\n  script:\n    - bash .specify/gates/wrap.sh\n')
+ci_form "a missing script" inert .gitlab-ci.yml < <(printf 'gates:\n  script:\n    - bash scripts/none.sh\n')
+rm -rf "$CIF/scripts" "$CIF/.specify"
+# The canary and pr steps in a called script count (#306).
+CS="$WORKDIR/ci-script"
+mkdir -p "$CS/scripts"
+printf 'gates:\n  script:\n    - %s\n    - bash scripts/checks.sh\n' "$V" >"$CS/.gitlab-ci.yml"
+printf '#!/bin/bash\nset -e\nbash .specify/gates/canary.sh\nbash .specify/gates/pr-check.sh\n' >"$CS/scripts/checks.sh"
+expect "steps in a called script are present" \
+    "$(bash -c 'source "$1/extension/runtime/lib/manifest.sh"; gates_ci_present "$2" | tr "\n" " "' _ "$REPO_ROOT" "$CS")" "gates canary pr "
+printf 'gates:\n  script:\n    - %s\n    - bash scripts/checks.sh || true\n' "$V" >"$CS/.gitlab-ci.yml"
+expect "a called script whose failure is swallowed is not read" \
+    "$(bash -c 'source "$1/extension/runtime/lib/manifest.sh"; gates_ci_present "$2" | tr "\n" " "' _ "$REPO_ROOT" "$CS")" "gates "
+printf 'gates:\n  script:\n    - %s\n    # - bash scripts/checks.sh\n' "$V" >"$CS/.gitlab-ci.yml"
+expect "a commented-out script call is not read" \
+    "$(bash -c 'source "$1/extension/runtime/lib/manifest.sh"; gates_ci_present "$2" | tr "\n" " "' _ "$REPO_ROOT" "$CS")" "gates "
+rm -rf "$CS"
 fx_cleanup "$U"
 U="$(fx_project)"
 (cd "$U" && GATES_TEST=1 bash .specify/extensions/gates/runtime/project.sh --skip-canary --no-agent-hooks >/dev/null 2>&1)
@@ -1039,6 +1096,26 @@ jq '.extensions.gates.registered_commands.claude += ["speckit.gates.sync"]' \
     "$IH/.specify/extensions/.registry" >"$IH/reg.tmp" && mv "$IH/reg.tmp" "$IH/.specify/extensions/.registry"
 run_doctor "$IH" >/dev/null
 has "a registered command with no file fails" "$IH" "[MISSING] speckit.gates.sync is registered but has no skill or command file"
+# A partial registration (#311): a command extension.yml provides that is
+# not registered for claude does not load.
+has "an unregistered command fails" "$IH" "[MISSING] speckit.gates.upgrade is provided by the extension but not registered for claude"
+lacks "a registered command is not called unregistered" "$IH" "speckit.gates.doctor is provided by the extension but not registered"
+# No command registered for any agent (#311): nothing loads, and the loop
+# over registered commands has nothing to flag.
+jq '.extensions.gates.registered_commands = {} | .extensions.gates.registered_skills = []' \
+    "$IH/.specify/extensions/.registry" >"$IH/reg.tmp" && mv "$IH/reg.tmp" "$IH/.specify/extensions/.registry"
+run_doctor "$IH" >/dev/null
+has "an empty registration fails" "$IH" "[MISSING] the extension registry lists no gates command for any agent, so no /speckit.gates.* command loads — run \`specify integration upgrade --force\`"
+# Skills rendered with the old registration (#311): Spec Kit no longer
+# claims them.
+printf -- '---\nname: "speckit-gates-doctor"\nmetadata:\n  source: "gates:commands/speckit.gates.doctor.md"\n---\n' \
+    >"$IH/.claude/skills/speckit-gates-doctor/SKILL.md"
+run_doctor "$IH" >/dev/null
+has "an old-format gates skill is flagged" "$IH" "[rec] 1 gates skill(s) carry the old registration (source: gates:commands/...)"
+printf -- '---\nname: "speckit-gates-doctor"\nmetadata:\n  source: "extension:gates"\n---\n' \
+    >"$IH/.claude/skills/speckit-gates-doctor/SKILL.md"
+run_doctor "$IH" >/dev/null
+lacks "a current gates skill is not flagged" "$IH" "carry the old registration"
 mkdir -p "$IH/.specify/extensions/gates/.specify-dev"
 chmod 644 "$IH/.specify/extensions/gates/runtime/hooks/git/pre-commit"
 run_doctor "$IH" >/dev/null
@@ -1056,6 +1133,19 @@ printf '#!/bin/sh\nexit 0\n' >"$GPD/.git/hooks/commit-msg"
 chmod +x "$GPD/.git/hooks/commit-msg"
 run_doctor "$GPD" >/dev/null
 has "another tool's hook without the call-through fails (static)" "$GPD" "[MISSING] commit-msg (static): git runs .git/hooks/commit-msg, owned by another tool, and it does not call .specify/gates/hooks/commit-msg on a line that runs"
+# A hook whose only command calls the gates hook (#298), as 0.3.x installs
+# wrote it: gates code, probed, and the stub is recommended.
+# shellcheck disable=SC2016  # the hook body is written literally
+printf '#!/bin/sh\n# spec-gates: delegate to projected git hook (survives extension removal)\nexec "$(git rev-parse --show-toplevel)/.specify/gates/hooks/commit-msg" "$@"\n' >"$GPD/.git/hooks/commit-msg"
+run_doctor "$GPD" >/dev/null
+has "a delegate hook is probed, not read" "$GPD" "[ok]  commit-msg probe: the hook git runs reaches the gates commit-msg hook"
+has "a delegate hook gets the stub recommended" "$GPD" "[rec] commit-msg only calls .specify/gates/hooks/commit-msg — run /speckit.gates.upgrade to replace it with the gates stub"
+lacks "a delegate hook is not another tool's" "$GPD" "commit-msg (static)"
+# shellcheck disable=SC2016  # the hook body is written literally
+printf '#!/bin/sh\nnpm test\nexec "$(git rev-parse --show-toplevel)/.specify/gates/hooks/commit-msg" "$@"\n' >"$GPD/.git/hooks/commit-msg"
+run_doctor "$GPD" >/dev/null
+has "a hook that runs more than the gates hook stays another tool's" "$GPD" "[ok]  commit-msg (static): another tool owns the hook and calls the gates commit-msg hook"
+lacks "and gets no stub recommendation" "$GPD" "commit-msg only calls"
 # A foreign hook that leaves a trace when it runs: doctor must not run it.
 # shellcheck disable=SC2016  # the hook body is written literally
 printf '#!/bin/sh\ntouch "$(git rev-parse --show-toplevel)/ran.txt"\nexec bash "$(git rev-parse --show-toplevel)/.specify/gates/hooks/commit-msg" "$@"\n' >"$GPD/.git/hooks/commit-msg"

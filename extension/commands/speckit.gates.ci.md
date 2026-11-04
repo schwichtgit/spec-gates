@@ -84,7 +84,10 @@ create`; GitLab: `glab repo create` or the web UI; Jenkins: the SCM
      writes `.specify/gates/shellcheck.local.sha256` (commit it; upgrades
      never touch it). shellcheck releases carry those digests only from
      v0.11.0 on; for an older version `--update` refuses, and the
-     checksums go into that file by hand.
+     checksums go into that file by hand. A runner that reaches GitHub
+     only through a mirror sets `GATES_SHELLCHECK_BASE_URL` (release
+     download base) and `GATES_SHELLCHECK_API_URL` (release API base, for
+     `--update`) in the job's environment; the checksums still decide.
 
    When merging into an existing pipeline, keep these install steps. The
    `canary.sh` step fails when a linter the policy enables is not
@@ -218,6 +221,13 @@ gates-pr:
   script:
     - |
       set -e
+      bots="renovate-bot dependabot"
+      case " $bots " in
+        *" ${GITLAB_USER_LOGIN:-none} "*)
+          echo "pr-check: the MR pipeline was started by the bot user ${GITLAB_USER_LOGIN}; its description (quoted release notes) is not checked"
+          export CI_MERGE_REQUEST_DESCRIPTION="" CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED=false
+          ;;
+      esac
       base="${CI_MERGE_REQUEST_DIFF_BASE_SHA:-}"
       if [ -z "$base" ]; then
         bash .specify/gates/pr-check.sh

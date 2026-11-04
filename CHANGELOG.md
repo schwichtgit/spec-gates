@@ -50,6 +50,26 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   `node_modules/.package-lock.json` differs from `package-lock.json`, the
   failure now says `node_modules was installed from another lockfile; run
 npm ci`. The gate still fails until the install matches.
+- **doctor reads a CI script one level and the save-and-exit form**
+  (#306). A pipeline may run the gates step as `rc=0`,
+  `bash .specify/gates/verify.sh --boundary ci || rc=$?`, the always-run
+  steps, then `exit "$rc"` (or `exit $rc`) as the last line, with nothing
+  between that exits or assigns `rc`; it fails the job like the bare
+  step. A repository script the pipeline runs as its whole command
+  (`bash scripts/ci.sh`, outside `.specify/gates/`) is read one level: it
+  proves the gates step when it runs `verify.sh` as its last command or in
+  the save-and-exit form, and the `canary` and `pr` steps count when it
+  runs them. Before, both were reported as missing steps.
+- **`install-shellcheck.sh` downloads through a mirror** (#301).
+  `GATES_SHELLCHECK_BASE_URL` replaces the release download base and
+  `GATES_SHELLCHECK_API_URL` the release API base `--update` reads, for
+  runners that reach GitHub only through a proxy. The pinned SHA-256 is
+  still verified.
+- **A `worktree` canary** (#293). The suite now has 19 canaries: a real
+  commit in a linked worktree of a sandbox runs a project gate that builds
+  a throwaway repository, and the sandbox's main repository must stay
+  non-bare and the worktree's index unchanged, so every install proves
+  that gate commands cannot reach the caller's repository.
 
 ### Changed
 
@@ -92,8 +112,9 @@ npm ci`. The gate still fails until the install matches.
   was refused as "AI branding (OpenAI)". A lowercase kebab-case
   identifier whose parts all start with a letter is no longer checked
   for the terms; `GPT-4`, `gpt-4o` and `OpenAI-compatible` still are.
-  The GitLab template now checks a Renovate or Dependabot MR without its
-  description, which quotes upstream release notes, as the GitHub
+  The GitLab template, and the GitLab pr step on its own that
+  `project.sh` prints and the docs carry, now check a Renovate or
+  Dependabot MR without its description, which quotes upstream release notes, as the GitHub
   template does since #248. GitLab names no MR author, so it goes by the
   user who started the pipeline (`GITLAB_USER_LOGIN`) and its `bots`
   list.
@@ -121,6 +142,9 @@ npm ci`. The gate still fails until the install matches.
   not (tracked changes the commit leaves out, including for
   `git commit -a` and `git commit <paths>`, or untracked files that are
   not ignored), the hook prints one warning line with the counts.
+- `project.sh` adds `output/` (the per-gate failure output,
+  `.specify/gates/output/<gate>.log`) to `.specify/gates/.gitignore`, so
+  `project.sh --check` reports pending work until you re-project.
 
 ### Fixed
 
@@ -164,6 +188,51 @@ npm ci`. The gate still fails until the install matches.
   `.gitignore` entry did not help, since ignored files are checked too.
   `*.swp`, `*.swo`, `*~`, `.#*`, `#*#` and `4913` are now exempt at any
   depth; `spec.snapshot_exclude` covers other processes' files.
+- **The projected `project.sh` takes every option** (#315).
+  `.specify/gates/project.sh --keep-local <path>` or
+  `--add-lint-ignores` exited 2 with "run the installed copy", and the
+  command it printed dropped the options. Once the install checks pass,
+  the projected copy now hands the whole invocation to the installed copy,
+  as it already did for `--check`.
+- **A hook that only calls the gates hook is gates-owned** (#298). A
+  hand-written hook from a 0.3.x install whose only command is
+  `exec "$(git rev-parse --show-toplevel)/.specify/gates/hooks/<hook>" "$@"`
+  was reported as another tool's, and `project.sh` never replaced it.
+  Ownership is now judged by what the file runs: such a delegate is probed
+  like the stub, doctor recommends the upgrade, and `project.sh` replaces
+  it with the stub, which runs the same hook and also fails closed.
+- **A hook manager's config alone no longer keeps old gates hooks**
+  (#314). With `.pre-commit-config.yaml` (or a lefthook config) tracked but
+  the tool never installed, `project.sh` treated it as the hook owner: the
+  0.3.x hook copies git still ran were not replaced, the missing
+  `pre-merge-commit` hook was not installed, and the only fix offered was a
+  config entry that does nothing without the tool. A config now counts only
+  when the tool generated a hook or no gates hook is installed. Older gates
+  hooks become the stub whatever the config says, and the summary names
+  what git runs.
+- **A worktree without `.specify/` is checked with the main worktree's
+  runtime** (#316). In a linked worktree of a repository that keeps
+  `.specify/` untracked, the stub skipped every git-boundary check with
+  "this branch has no gates runtime" although the main worktree had one.
+  The stub now finds the main worktree of the same repository
+  (`git rev-parse --git-common-dir`) and runs its hook with
+  `GATES_RUNTIME_DIR` pointing at its runtime. The pre-commit, commit-msg
+  and pre-merge-commit hooks then load their libraries, `.runtime-version`
+  and the main worktree's policy from there while judging the worktree's
+  index: the secret scan, the forbidden files, the main-branch block and
+  the message rules apply. A policy inside the worktree is never read,
+  `GATES_POLICY_FILE` stays ignored, and any other `GATES_RUNTIME_DIR` is
+  refused. `verify.sh` does not run there (it judges a projected tree),
+  and says so. A main worktree projected by an older release is named, with
+  why it cannot judge the worktree, and the commit proceeds.
+- **doctor fails when no gates command is registered** (#311). A registry
+  entry with an empty `registered_commands` loaded no `/speckit.gates.*`
+  command, and doctor stayed healthy. It now fails on an entry that
+  registers no command for any agent, and on a command the extension
+  provides that is not registered for claude, naming the fix
+  (`specify integration upgrade --force`). Gates skills with the old
+  `source: gates:commands/...` registration, which Spec Kit no longer
+  updates or removes, get a recommendation with the same fix.
 
 ## 0.5.1 — 2026-11-03
 

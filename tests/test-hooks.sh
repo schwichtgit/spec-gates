@@ -1128,6 +1128,92 @@ check "agent boundary: the gate sees the staged files of the worktree's index" 0
     test "$(cat "$PROBE_OUT" 2>/dev/null)" == "pa.txt "
 git -C "$WT" reset -q --hard
 
+# #316: a repository that keeps .specify/ untracked. A linked worktree has
+# no runtime of its own; the stub looks at the main worktree of the same
+# repository and says which runtime ran, or why none did.
+UM="$WORKDIR/wt-untracked"
+mkdir -p "$UM/.specify/gates/hooks"
+git -C "$UM" init -q -b main
+git -C "$UM" config user.email t@example.com
+git -C "$UM" config user.name tester
+project_runtime "$UM" "true"
+cp "$GITHOOKS/pre-commit" "$GITHOOKS/commit-msg" "$GITHOOKS/pre-merge-commit" "$UM/.specify/gates/hooks/"
+printf '%s' '{ "hooks": {}, "git": { "block_main_commits": false } }' >"$UM/.specify/gates/policy.json"
+printf '.specify/\nnode_modules\n' >"$UM/.gitignore"
+echo a >"$UM/a.txt"
+( cd "$UM" && git add -A && git commit -q -m "chore: seed" ) >/dev/null 2>&1
+UHOOKS="$(git -C "$UM" rev-parse --git-path hooks)"
+[[ "$UHOOKS" != /* ]] && UHOOKS="$UM/$UHOOKS"
+for h in pre-commit commit-msg; do
+    cp "$GITHOOKS/stub.sh" "$UHOOKS/$h"
+    chmod +x "$UHOOKS/$h"
+done
+UW="$WORKDIR/wt-untracked-linked"
+git -C "$UM" worktree add -q -b feat/u "$UW" >/dev/null 2>&1
+UOUT="$WORKDIR/wt-untracked.out"
+UMP="$(cd "$UM" && pwd -P)"
+# shellcheck disable=SC2329  # called through check
+ucommit() { # <file> [subject]: stage and commit it in the linked worktree, stderr in $UOUT
+    (cd "$UW" && echo x >>"$1" && git add "$1" && git commit -q -m "${2:-docs: $1}") 2>"$UOUT"
+}
+# The projected hooks honour GATES_RUNTIME_DIR: the main worktree's
+# secret scan and message rules judge the worktree's commit.
+check "untracked .specify: a clean commit passes with the main runtime" 0 ucommit b.txt
+check "untracked .specify: the fallback is named" 0 \
+    grep -qF "this worktree has no gates runtime; running the main worktree's ($UMP/.specify/gates)" "$UOUT"
+printf 'AKIA%s\n' "ABCDEFGHIJKLMNOP" >"$UW/leak.txt"
+check "untracked .specify: a planted secret is refused" 1 \
+    bash -c "cd '$UW' && git add leak.txt && git commit -q -m 'docs: leak' 2>'$UOUT'"
+check "untracked .specify: by the main runtime's secret scan" 0 grep -qF "AWS key pattern" "$UOUT"
+( cd "$UW" && git reset -q && rm -f leak.txt ) >/dev/null 2>&1
+check "untracked .specify: a bad subject is refused" 1 ucommit c.txt "no type here"
+check "untracked .specify: by the main runtime's message rules" 0 \
+    grep -qF "Subject does not match conventional commit format" "$UOUT"
+( cd "$UW" && git reset -q ) >/dev/null 2>&1
+# A policy inside the worktree does not loosen the main one: untracked, it
+# is never read; added by the commit, the stub fails closed.
+mkdir -p "$UW/.specify/gates"
+printf '%s' '{ "hooks": {}, "git": { "conventional_commits": false, "block_main_commits": false } }' \
+    >"$UW/.specify/gates/policy.json"
+check "untracked .specify: a worktree policy does not loosen the main one" 1 ucommit c.txt "no type here"
+( cd "$UW" && git reset -q ) >/dev/null 2>&1
+check "untracked .specify: a commit adding a policy is refused" 1 \
+    bash -c "cd '$UW' && git add -f .specify/gates/policy.json && git commit -q -m 'any subject' 2>'$UOUT'"
+( cd "$UW" && git reset -q && rm -rf .specify ) >/dev/null 2>&1
+# Only the main worktree's runtime is accepted.
+mkdir -p "$WORKDIR/elsewhere/.specify/gates"
+cp -R "$UM/.specify/gates/lib" "$WORKDIR/elsewhere/.specify/gates/"
+check "untracked .specify: a runtime outside the main worktree is refused" 1 \
+    bash -c "cd '$UW' && GATES_RUNTIME_DIR='$WORKDIR/elsewhere/.specify/gates' bash '$UM/.specify/gates/hooks/pre-commit' 2>'$UOUT'"
+check "untracked .specify: the refusal names the expected runtime" 0 \
+    grep -qF "is not this repository's main worktree runtime ($UMP/.specify/gates)" "$UOUT"
+# A main hook without the marker (an older projection) is not run.
+grep -v '^# gates: honours GATES_RUNTIME_DIR' "$GITHOOKS/pre-commit" >"$UM/.specify/gates/hooks/pre-commit"
+check "untracked .specify: a main hook without GATES_RUNTIME_DIR support skips (exit 0)" 0 ucommit d.txt
+check "untracked .specify: the skip names the main worktree's runtime and why" 0 \
+    grep -qF "skipped -- this worktree has no gates runtime, and the main worktree's ($UMP/.specify/gates) cannot judge it from here" "$UOUT"
+# A main hook that loads its runtime from GATES_RUNTIME_DIR is run, from
+# the worktree, with that variable pointing at the main runtime.
+cat >"$UM/.specify/gates/hooks/pre-commit" <<'SH'
+#!/bin/bash
+# gates: honours GATES_RUNTIME_DIR
+printf '%s|%s\n' "$(git rev-parse --show-toplevel)" "$GATES_RUNTIME_DIR" >"$UNTRACKED_PROBE"
+exit 1
+SH
+export UNTRACKED_PROBE="$WORKDIR/wt-untracked.probe"
+check "untracked .specify: the main worktree's hook runs and its refusal reaches git" 1 ucommit c.txt
+check "untracked .specify: the run is named" 0 \
+    grep -qF "this worktree has no gates runtime; running the main worktree's ($UMP/.specify/gates)" "$UOUT"
+check "untracked .specify: it judges the worktree with the main runtime" 0 \
+    test "$(cat "$UNTRACKED_PROBE" 2>/dev/null)" == "$(cd "$UW" && pwd -P)|$UMP/.specify/gates"
+unset UNTRACKED_PROBE
+# Neither worktree has a runtime: the pre-adoption skip, as before.
+mv "$UM/.specify" "$WORKDIR/wt-untracked.specify"
+( cd "$UW" && git reset -q ) >/dev/null 2>&1
+check "untracked .specify: no runtime anywhere skips (exit 0)" 0 ucommit d.txt
+check "untracked .specify: the skip says no runtime" 0 \
+    grep -qF "pre-commit skipped -- this branch has no gates runtime" "$UOUT"
+
 # ===========================================================================
 # Part E3: configurable AI branding (git.ai_branding, issue #52)
 # ===========================================================================

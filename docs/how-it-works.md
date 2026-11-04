@@ -295,6 +295,18 @@ certainly still valid; otherwise it prints it.
 | pre-commit framework                                      | a `repo: local` item in `.pre-commit-config.yaml` | Appended only when `repos:` is the last top-level key and a block list (not `repos: []`); otherwise printed. Needs pre-commit 3.2+; run `pre-commit install --hook-type <hook>` for `commit-msg` and `pre-merge-commit`. Installed after projection, it runs the gates stub as `<hook>.legacy` (below).                   |
 | anything else (another `core.hooksPath`, a custom script) | nothing is written                                | `project.sh` prints the call-through line to add, before any `exit`.                                                                                                                                                                                                                                                      |
 
+Ownership is judged by what the hook file runs. The stub, a hook copied
+from an older release, and a hook whose only command is the call-through
+to `.specify/gates/hooks/<hook>` (as some 0.3.x installs wrote them by
+hand) are gates code: they are probed, and `project.sh` replaces them with
+the current stub, which runs the same hook and also fails closed when the
+branch's hook is missing. A `lefthook.yml` or `.pre-commit-config.yaml`
+alone does not make that tool the owner: while the hooks directory holds
+a gates hook and no hook the tool generated, the tool was never installed
+and the repository is treated as having no manager. Where the tool is
+installed, an older gates hook it has not replaced yet still becomes the
+stub.
+
 **Proving the hooks run.** A hook that exists is not a hook git runs. The
 projected hooks answer `GATES_PROBE=1` with a marker before reading any
 policy, so a probe works with every rule off, and then refuse (exit 1).
@@ -561,6 +573,13 @@ gates-pr:
   script:
     - |
       set -e
+      bots="renovate-bot dependabot"
+      case " $bots " in
+        *" ${GITLAB_USER_LOGIN:-none} "*)
+          echo "pr-check: the MR pipeline was started by the bot user ${GITLAB_USER_LOGIN}; its description (quoted release notes) is not checked"
+          export CI_MERGE_REQUEST_DESCRIPTION="" CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED=false
+          ;;
+      esac
       base="${CI_MERGE_REQUEST_DIFF_BASE_SHA:-}"
       if [ -z "$base" ]; then
         bash .specify/gates/pr-check.sh
@@ -906,7 +925,7 @@ snapshot and the lines never count as a block's writes.
 
 **Canaries.** `canary.sh` (projected next to `verify.sh`) plants known
 violations in `mktemp` sandboxes and requires the real entrypoints to
-reject them, 18 probes in all:
+reject them, 19 probes in all:
 
 - the format, markdown and shell probes run through `verify.sh` itself;
   when the tool is missing but the policy enables it, the probe fails as
@@ -931,6 +950,11 @@ reject them, 18 probes in all:
   block at agent and git: `verify.sh --boundary ci` must fail the spec gate
   on that block, since CI never asks the script, and the git run must
   report the block covered;
+- `worktree` commits in a linked worktree of a sandbox through a project
+  gate that builds a throwaway repository (`git init`, `add`, `commit` in
+  a temp directory): the sandbox's main repository must stay non-bare and
+  the worktree's index unchanged, so gate commands cannot reach the
+  caller's repository through git's hook variables (#293);
 - `spec`, `errexit` and `contract` are described with their gates below.
 
 Hooks run by path, as Claude Code runs them, so their shebang picks the
@@ -1373,7 +1397,18 @@ by one always leaves another. It counts only when all of these hold:
   `sh(script: '...')`); or the last line of such a `|` block or `'''`
   string. Nothing before it in the same shell (earlier lines of the block,
   earlier GitLab script items) holds a heredoc, a `trap`, an `exit 0` or a
-  `\` continuation into it;
+  `\` continuation into it. One more form saves the status for steps that
+  must always run: `rc=0` (or `rc=`) on a line before the step, the step
+  followed by `|| rc=$?`, and `exit "$rc"` (or `exit $rc`) as the last
+  line of the same block, with nothing between that exits, traps, execs,
+  opens a heredoc, assigns `rc` or continues a line (any variable name,
+  the same in all three places);
+- in place of the `verify.sh` command, a script of the repository may
+  stand: `[bash |sh ][./]<path>` naming a file outside `.specify/gates/`
+  (no `..`, not absolute) whose own text runs the step as its last
+  command or in the save-and-exit form. Scripts are followed one level: a
+  script that script calls is not read. The `canary` and `pr` steps also
+  count in a repository script a live pipeline line runs, one level deep;
 - a GitHub workflow has `push` or `pull_request` among its `on:` events;
 - the pipeline file never names `GATES_SPEC_EXEC` (skips the spec gate)
   or `GATES_POLICY_FILE` (replaces the policy), in any `env:`,
@@ -1402,8 +1437,9 @@ not the Jenkinsfile; a Jenkins `when` other than a literal false; a
 Jenkins step in a closure that is never called. Rejected although it may
 be fine: the gates command followed by other commands in the same block
 (move it to its own step, or make it the last line), and a path written
-with a variable. The canary and PR-check steps are still recognized by
-command after the removals above, not proven. The proof that the gates
+with a variable, or a script called more than one level down. The canary
+and PR-check steps are still recognized by command after the removals
+above, not proven. The proof that the gates
 ran is the CI run's own log: `verify.sh` prints a
 `gates: boundary=ci failed=N warnings=N` summary line.
 
@@ -1418,7 +1454,23 @@ installed `project.sh`. The git hook stubs in `.git/hooks` are shared by
 every branch and worktree and run the checked-out branch's projected
 hook; the `pre-merge-commit` stub falls back to the branch's `pre-commit`
 hook on a branch projected before that hook shipped (0.3.x), so rolling
-back to 0.3.x means removing that stub as well. A
+back to 0.3.x means removing that stub as well. A checked-out tree with
+no runtime and nothing tracked under `.specify/gates` (a linked worktree
+of a repository that keeps `.specify/` untracked, or a branch from before
+adoption) has nothing of its own to run. The stub then looks at the main
+worktree of the same repository (the parent of
+`git rev-parse --git-common-dir`, never a path from elsewhere): when its
+hook declares that it loads its runtime from `GATES_RUNTIME_DIR`, the stub
+runs it with that variable set, judging the checked-out tree; otherwise
+it skips with one line naming that runtime and why it cannot judge the
+worktree, or that there is no runtime at all. The projected hooks declare
+it: they load their libraries, `.runtime-version` and the
+main worktree's policy from that runtime and scan the worktree's index,
+so the secret scan, the forbidden files, the main-branch block and the
+message rules apply there. A policy file inside the worktree is never
+read, `GATES_POLICY_FILE` stays ignored, a `GATES_RUNTIME_DIR` other than
+the main worktree's `.specify/gates` is refused, and `verify.sh` does not
+run (it judges a projected tree; the hook says so). A
 `specify extension add --dev` install renders the gates skills as symlinks
 that exist only on the author's machine; doctor fails on symlinked,
 dangling or missing skills. `doctor --installed-only`, run from the
