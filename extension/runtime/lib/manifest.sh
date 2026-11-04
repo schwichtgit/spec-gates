@@ -329,6 +329,13 @@ gates_ci_pr_snippet() { # <github|gitlab|jenkins>
                 '  script:' \
                 '    - |' \
                 '      set -e' \
+                '      bots="renovate-bot dependabot"' \
+                '      case " $bots " in' \
+                '        *" ${GITLAB_USER_LOGIN:-none} "*)' \
+                '          echo "pr-check: the MR pipeline was started by the bot user ${GITLAB_USER_LOGIN}; its description (quoted release notes) is not checked"' \
+                '          export CI_MERGE_REQUEST_DESCRIPTION="" CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED=false' \
+                '          ;;' \
+                '      esac' \
                 '      base="${CI_MERGE_REQUEST_DIFF_BASE_SHA:-}"' \
                 '      if [ -z "$base" ]; then' \
                 '        bash .specify/gates/pr-check.sh' \

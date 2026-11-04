@@ -107,8 +107,9 @@ npm ci`. The gate still fails until the install matches.
   was refused as "AI branding (OpenAI)". A lowercase kebab-case
   identifier whose parts all start with a letter is no longer checked
   for the terms; `GPT-4`, `gpt-4o` and `OpenAI-compatible` still are.
-  The GitLab template now checks a Renovate or Dependabot MR without its
-  description, which quotes upstream release notes, as the GitHub
+  The GitLab template, and the GitLab pr step on its own that
+  `project.sh` prints and the docs carry, now check a Renovate or
+  Dependabot MR without its description, which quotes upstream release notes, as the GitHub
   template does since #248. GitLab names no MR author, so it goes by the
   user who started the pipeline (`GITLAB_USER_LOGIN`) and its `bots`
   list.

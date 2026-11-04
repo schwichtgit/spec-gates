@@ -105,6 +105,30 @@ for src in template snippet; do
     fi
 done
 
+# The GitLab pr snippet runs the template's pr script verbatim (#297),
+# bot-user skip included: the `set -e` block that reads the MR's base,
+# up to its closing `fi`.
+pr_block() { # stdin: GitLab YAML -> the pr job's script block
+    awk '$0 == "      set -e" { buf = ""; inb = 1 }
+        inb { buf = buf $0 "\n" }
+        inb && $0 == "      fi" { inb = 0; if (buf ~ /CI_MERGE_REQUEST_DIFF_BASE_SHA/) { printf "%s", buf; exit } }'
+}
+GL_SNIP_BLOCK="$(source "$REPO_ROOT/extension/runtime/lib/manifest.sh" && gates_ci_pr_snippet gitlab | pr_block)"
+GL_TPL_BLOCK="$(pr_block <"$GL_T")"
+if [[ -n "$GL_TPL_BLOCK" && "$GL_SNIP_BLOCK" == "$GL_TPL_BLOCK" ]]; then
+    pass "gitlab pr snippet runs the template's pr script"
+else
+    fail "gitlab pr snippet and template pr script differ"
+fi
+for src in template snippet; do
+    if [[ "$src" == template ]]; then text="$GL_TPL_BLOCK"; else text="$GL_SNIP_BLOCK"; fi
+    if grep -qF 'export CI_MERGE_REQUEST_DESCRIPTION="" CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED=false' <<<"$text"; then
+        pass "gitlab $src skips the description of a bot user's MR pipeline"
+    else
+        fail "gitlab $src checks bot-quoted release notes"
+    fi
+done
+
 # Every template installs the tools the gate resolves (#138): the pinned,
 # checksum-verified shellcheck through the projected installer, and the
 # lockfile linters. Comment lines (# and //) do not count.
