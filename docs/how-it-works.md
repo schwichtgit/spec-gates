@@ -1440,7 +1440,14 @@ worktree of the same repository (the parent of
 hook declares that it loads its runtime from `GATES_RUNTIME_DIR`, the stub
 runs it with that variable set, judging the checked-out tree; otherwise
 it skips with one line naming that runtime and why it cannot judge the
-worktree, or that there is no runtime at all. A
+worktree, or that there is no runtime at all. The projected hooks declare
+it: they load their libraries, `.runtime-version` and the
+main worktree's policy from that runtime and scan the worktree's index,
+so the secret scan, the forbidden files, the main-branch block and the
+message rules apply there. A policy file inside the worktree is never
+read, `GATES_POLICY_FILE` stays ignored, a `GATES_RUNTIME_DIR` other than
+the main worktree's `.specify/gates` is refused, and `verify.sh` does not
+run (it judges a projected tree; the hook says so). A
 `specify extension add --dev` install renders the gates skills as symlinks
 that exist only on the author's machine; doctor fails on symlinked,
 dangling or missing skills. `doctor --installed-only`, run from the
