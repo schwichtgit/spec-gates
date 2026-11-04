@@ -81,6 +81,16 @@ commit holds, use the index `verify.sh` names:
 `GIT_INDEX_FILE="$GATES_GIT_INDEX_FILE" git diff --cached --name-only`.
 Details in [How it works](docs/how-it-works.md#one-entrypoint).
 
+**When a gate fails.** Its report line names the first and last line of
+its output, and its full output is kept in
+`.specify/gates/output/<gate>.log` (ignored by git). At the `ci`
+boundary the job log shows it too, collapsed on GitHub Actions and
+GitLab CI, where the forge masks secrets; output that looks like it
+holds a secret is withheld and the report says which rule matched.
+`GATES_VERBOSE=1` streams every gate's output as it runs. The templates
+upload no artifact, because a file is never masked; How it works shows a
+restricted opt-in.
+
 **Don't repeat what the run already proved.** `spec.cover` names a
 protected project script that may vouch for an accept block at the agent
 and git boundaries ("covered: the test gate passed this package"); the

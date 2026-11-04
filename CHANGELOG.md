@@ -8,7 +8,43 @@ never touches `.specify/gates/policy.json`. New policy keys take the
 defaults stated here until you set them. Releases before 0.3.3 are
 described in their [GitHub release notes](https://github.com/schwichtgit/spec-gates/releases).
 
-## [Unreleased]
+## 0.6.0 — 2026-11-03
+
+### Upgrading
+
+- Upgrade as for 0.5.1 (README "Upgrade"): one `project.sh` run, then
+  commit `.specify/gates/.projected.sha256` with the upgrade. After
+  `specify extension add`, `specify integration upgrade --force` renders
+  the gates skills in the current format; it also re-renders the Spec
+  Kit scaffold, so commit that diff on its own (#328).
+- `project.sh` adds `output/` to `.specify/gates/.gitignore`, so
+  `project.sh --check` reports pending work until you re-project. A
+  failed gate's full output is kept there; at the `ci` boundary the job
+  log shows it, and output that looks like it holds a secret is
+  withheld. The CI templates upload no artifact, because a file is never
+  masked; How it works shows a restricted opt-in.
+- The canary suite has 19 canaries (new: `worktree`).
+- One new optional key, `git.allow_force_with_lease_on_branches`
+  (default `false`). A 0.5.x runtime refuses a policy that sets it, and
+  a policy contract classifies turning it on as weakening.
+- A block or `hooks.local.d` rule that leaves a process running now
+  fails at its time limit, not half a second after it exits; a child
+  that is already exiting no longer fails a passing block (#294).
+- The failure summary of a task, custom or project gate is
+  `<first> | <last>` when the two lines differ, unless the step marks its
+  failure with a `##gates-fail##` line, which still wins (#296): the
+  built-in walk and `lib/formatter-dispatch.sh` mark the failing file,
+  so a custom command that runs them shows that line. Scripts that match
+  the summary text may need adjusting.
+- doctor now fails when no gates command is registered (#311): run
+  `specify integration upgrade --force`. It accepts the save-and-exit CI
+  form and follows one level into a script the pipeline runs (#306).
+- Workarounds that 0.6.0 makes unnecessary, to remove at your pace:
+  `spec.snapshot_exclude` entries for editor swap files or
+  `.claude/mind.*` (#303, #327), identifiers renamed to dodge the
+  credential rule (#310), and a local edit to `lib/secrets.sh` that
+  exempts quoted variable references (which `project.sh` reports as a
+  local edit until you take the upstream copy).
 
 ### Added
 
