@@ -370,13 +370,24 @@ expect "GATES_VERBOSE=1: the kept files are written too" \
     "$(grep -c '' "$DOF" 2>/dev/null)|$(grep -c '' "$DO/.specify/gates/output/pg.log" 2>/dev/null)" "53|2"
 expect "without GATES_VERBOSE no gate output reaches stderr" \
     "$(cd "$DO" && CLAUDE_PROJECT_DIR="$DO" bash "$DO/.specify/gates/verify.sh" --boundary agent 2>&1 >/dev/null | grep -c 'noise line\|pg-last-309' || true)" 0
-# --dry-run keeps the files; a green run removes them.
+# --dry-run keeps the files.
 (cd "$DO" && CLAUDE_PROJECT_DIR="$DO" bash "$DO/.specify/gates/verify.sh" --boundary ci --dry-run >/dev/null 2>&1) || true
 expect "--dry-run leaves the kept files alone" "$(test -f "$DOF" && echo kept)" kept
-project "$DO" '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error", "custom_command": "true" } } }'
+# A gate's file is replaced or removed only when that gate runs: an agent
+# run that skips pg by declaration keeps pg's file from the ci run, while
+# custom, which it ran and which still fails, replaces its own.
+project "$DO" '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error", "custom_command": "sh ./check.sh",
+    "gates": { "pg": { "command": "echo pg-first-309; echo pg-last-309; exit 1", "skip_at": ["agent"] } } } } }'
+(cd "$DO" && CLAUDE_PROJECT_DIR="$DO" bash "$DO/.specify/gates/verify.sh" --boundary ci >/dev/null 2>&1) || true
+(cd "$DO" && CLAUDE_PROJECT_DIR="$DO" bash "$DO/.specify/gates/verify.sh" --boundary agent >/dev/null 2>&1) || true
+expect "an agent run keeps the file of a gate it skipped by declaration" \
+    "$(cat "$DO/.specify/gates/output/pg.log" 2>/dev/null | paste -sd ' ' -)|$(grep -c '' "$DOF" 2>/dev/null)" "pg-first-309 pg-last-309|53"
+# A green run of the same gates removes their files.
+project "$DO" '{ "hooks": { "verify-quality": { "orchestrator": "custom", "severity": "error", "custom_command": "true",
+    "gates": { "pg": { "command": "true" } } } } }'
 rc=0
 (cd "$DO" && CLAUDE_PROJECT_DIR="$DO" bash "$DO/.specify/gates/verify.sh" --boundary ci >/dev/null 2>&1) || rc=$?
-expect "a green run removes the earlier run's files" \
+expect "a green run removes the files of the gates it ran" \
     "$rc|$(find "$DO/.specify/gates/output" -name '*.log' 2>/dev/null | grep -c . || true)" "0|0"
 
 # A file linter's output opens with banners and ends with a footer

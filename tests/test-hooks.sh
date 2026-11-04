@@ -1248,6 +1248,12 @@ abcheck "standalone Claude: an attribution in a code span is refused" 1 'chore: 
 abcheck "a Co-Authored-By trailer in a code span is refused" 1 'chore: x\n\n`Co-Authored-By: Claude <noreply@example.com>`\n'
 # shellcheck disable=SC2016
 abcheck "a branding term in a code span is refused" 1 'chore: x\n\nRan `copilot setup`.\n'
+# The product name wrapped across two lines is the product name; only that
+# pair is joined, so a parenthesis spanning lines still hides nothing.
+abcheck "standalone Claude: 'Claude Code' wrapped across lines passes" 0 'docs: x\n\nThe agent runs inside Claude\nCode and keeps its state there.\n'
+abcheck "standalone Claude: a wrapped 'Code' line may be indented" 0 'docs: x\n\nThe agent runs inside Claude\n  Code here.\n'
+abcheck "standalone Claude: Claude at a line end before other words is refused" 1 'docs: x\n\nAsk Claude\nabout it.\n'
+abcheck "standalone Claude: a parenthesis across lines still hides nothing" 1 'docs: x\n\nNotes (this was written\nby Claude) here.\n'
 abcheck "editor comments (# On branch ...) are not checked" 0 'feat: x\n\n# Please enter the commit message for your changes.\n# On branch feat/acme-copilot\n'
 abcheck "scissors section (commit -v diff) is not checked" 0 'feat: x\n\n# ------------------------ >8 ------------------------\n# Do not modify or remove the line above.\ndiff --git a/x b/x\n+I have added a TODO for GPT\n'
 printf '%s' '{ "hooks": {}, "git": { "ai_branding": { "allow_phrases": ["Acme Copilot", "feat/acme-copilot"] } } }' \

@@ -774,11 +774,14 @@ boundary the report also prints each failed gate's output in the job
 log, so the cause is there without a local rerun: in a collapsed group
 on GitHub Actions (`::group::`), in a collapsed section on GitLab CI,
 elsewhere its last 40 lines. Every line is indented, so no line of a
-gate's output can act as a workflow command. The
-run that holds the gate lock first removes the files an earlier run
-left, so the directory holds this run's failures; `--dry-run` and a run
-nested in another (a walk inside a gate command, a run in an accept
-block) write none. The directory ignores itself (its own `.gitignore`
+gate's output can act as a workflow command. Only
+the run that holds the gate lock writes there, and a gate's file changes
+only when that gate runs: a pass removes it, a failure or warning
+replaces it. A gate a run does not run keeps the file of its last run,
+so an agent-boundary run that skips a gate by declaration leaves the ci
+run's output for it in place; a gate removed from the policy leaves its
+last file until you delete it. `--dry-run` and a run nested in another
+(a walk inside a gate command, a run in an accept block) write none. The directory ignores itself (its own `.gitignore`
 of `*`), and the attestation still carries no tool output.
 `GATES_VERBOSE=1` streams each gate's output to stderr as it runs, under
 a `gates: output of <gate>` line. Its output then passes through `tee`,
