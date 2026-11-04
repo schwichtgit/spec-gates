@@ -16,10 +16,15 @@ described in their [GitHub release notes](https://github.com/schwichtgit/spec-ga
   project gate left one line in the log and its output was deleted. The
   full output of each gate that fails or warns now goes to
   `.specify/gates/output/<gate>.log` (ignored by git), the report names
-  the file, and at the `ci` boundary it prints the last 40 lines of each
-  failed gate. The GitHub and GitLab templates keep the directory as an
-  artifact on failure. `GATES_VERBOSE=1` streams gate output to stderr as
-  it runs. The attestation still carries no tool output.
+  the file, and at the `ci` boundary the job log shows each failed gate's
+  output, collapsed on GitHub Actions and GitLab CI (else its last 40
+  lines), where the forge masks secrets. A file is never masked, so at
+  `ci` the kept output is scanned with the pre-commit secret rules first:
+  output that looks like it holds a secret is deleted and left out of
+  the log, summary included, and the report names the rule. The
+  templates upload no artifact; How it works shows a restricted opt-in.
+  `GATES_VERBOSE=1` streams gate output to stderr as it runs. The
+  attestation still carries no tool output.
 - **glab descriptions from a file** (#312). glab has no
   description-file flag. validate-pr now reads
   `--description "$(cat <path>)"` and `--description "$(<path)"`, with a
@@ -143,6 +148,18 @@ npm ci`. The gate still fails until the install matches.
 
 ### Fixed
 
+- **A memory plugin's state no longer fails an accept block** (#327). A
+  Claude Code memory plugin writes `.claude/mind.*` (its store, locks and
+  write-ahead log) in the background, and a block that ran meanwhile
+  failed its read-only check for files it never wrote. Those files join
+  the built-in snapshot excludes, next to the editor temporary files
+  (#303); other files under `.claude/` stay checked.
+- **The README says what `integration upgrade --force` also changes**
+  (#328). Run after `specify extension add` to render the gates skills in
+  the current format, it also re-renders the whole Spec Kit scaffold to
+  the CLI's version (scripts, manifests, init options,
+  `.specify/.gitignore`). The Upgrade section now says so, and to review
+  and commit that diff apart from the gates upgrade.
 - **A child on its way out no longer fails a passing block** (#294). An
   accept block or `hooks.local.d` rule that killed a child without
   waiting for it failed with "left a process running" when the child was

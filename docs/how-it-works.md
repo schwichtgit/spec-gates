@@ -770,8 +770,11 @@ both.
 fails or warns (markers stripped) goes to
 `.specify/gates/output/<gate>.log`, and the text report names it on the
 next line (`output: .specify/gates/output/custom.log`). At the `ci`
-boundary the report also prints the last 40 lines of each failed gate's
-output, so the cause reaches the job log without a local rerun. The
+boundary the report also prints each failed gate's output in the job
+log, so the cause is there without a local rerun: in a collapsed group
+on GitHub Actions (`::group::`), in a collapsed section on GitLab CI,
+elsewhere its last 40 lines. Every line is indented, so no line of a
+gate's output can act as a workflow command. The
 run that holds the gate lock first removes the files an earlier run
 left, so the directory holds this run's failures; `--dry-run` and a run
 nested in another (a walk inside a gate command, a run in an accept
@@ -783,18 +786,27 @@ so a background process a gate command leaves running keeps the gate
 open until that process exits (for a project gate, at most its time
 limit, after which the gate fails as a timeout).
 
-To keep the files in CI: the GitHub template uploads them with
-`actions/upload-artifact` when a step fails, and the GitLab template
-declares `artifacts: when: on_failure` for `.specify/gates/output/`. In
-Jenkins, add to the stage:
+**Output and secrets.** The forge masks registered secrets in the job
+log, never in a file: an uploaded artifact holds the output as written,
+and anyone who can download it reads it (on a public GitHub repository,
+any signed-in user, for 90 days by default). So at the `ci` boundary
+each kept file is first scanned with the rules the pre-commit secret
+scan uses (`lib/secrets.sh`). When one matches, or the scan cannot run,
+the file is deleted and the gate's output is left out of the log too,
+its summary included: the report reads `output withheld: it looks like
+it holds a secret (<rule>); run the step locally to see it`. Locally the
+file is kept (it is ignored by git). The scan finds the token shapes it
+knows; a value that only the forge knows is secret is masked in the log
+and nowhere else.
 
-```groovy
-post {
-    failure {
-        archiveArtifacts artifacts: '.specify/gates/output/*.log', allowEmptyArchive: true
-    }
-}
-```
+The templates therefore upload no file. A project that wants the files
+as an artifact adds the step itself, on a private repository only, with
+restricted access and a short lifetime, and the scan above still runs
+first. GitLab: `artifacts: { when: on_failure, access: developer,
+expire_in: 1 day, paths: [.specify/gates/output/] }`. GitHub: an
+`actions/upload-artifact` step with `if: failure()` and
+`retention-days: 1`. Jenkins: `archiveArtifacts` in a `post { failure
+{ } }` block, readable only by those who may see the build.
 
 **One gate run per working tree.** Two runs in one tree see each
 other's writes (build output, test files) and fail each other, so a run
@@ -1060,8 +1072,12 @@ tool gates and before `parity`:
    and `/` (which would exempt everything) makes the policy invalid.
    Editor temporary files are exempt without it, at any depth: `*.swp`,
    `*.swo`, `*~`, `.#*`, `#*#` and vim's `4913` write probe, which an
-   editor holding a file open writes while a block runs. A `.gitignore`
-   entry is no substitute, since ignored files are checked too. One
+   editor holding a file open writes while a block runs. So is the state
+   a Claude Code memory plugin keeps in the background, `.claude/mind.*`
+   (its store, locks and write-ahead log, #327); what an agent edits
+   under `.claude/` on purpose, such as settings or skills, stays
+   checked. A `.gitignore` entry is no substitute, since ignored files
+   are checked too. One
    limit: inside a directory that is ignored as a whole, a new or deleted
    entry also changes the directory, and that change still counts, since
    it may be a deleted file; exempt such a directory through
