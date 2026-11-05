@@ -184,6 +184,11 @@ npm ci`. The gate still fails until the install matches.
 
 ### Fixed
 
+- **The constitution check costs about half as much** (#334). It proved
+  the CI pipelines again for every principle that names a CI step; it now
+  proves them once per check, so `constitution.sh check` (and doctor's
+  constitution section) takes about 0.4 s of CPU instead of 0.7 s here.
+  This repository's own SC-004 budget is one second of CPU time again.
 - **A later run no longer deletes a failed gate's kept output** (#331). Every run that held the gate lock removed all files in
   `.specify/gates/output/` first, so a Stop-hook run at the agent
   boundary deleted the output of a failed ci run, including that of gates
