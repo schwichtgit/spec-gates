@@ -72,6 +72,28 @@ for f in hooks/git/pre-commit hooks/git/commit-msg hooks/git/pre-merge-commit ho
         "$(grep -qxF "gates/runtime/$f" <<<"$PROBES" && echo yes || echo no)" "yes"
 done
 
+# An upgrade PR is judged by the BASE branch's pr-check.sh (the CI
+# templates run the base revision's copy), so every file the package ships
+# must also pass the secret rules a consumer may still be on. 0.6.0's
+# CHANGELOG quoted two examples the 0.5.x credential heuristic refuses, and
+# every upgrade PR from 0.5.x failed its pr step. The rules of 0.4.2,
+# 0.5.0 and 0.5.1 are identical; tests/fixtures/secrets-v0.5.1.sh is that
+# release's lib/secrets.sh, unchanged.
+echo ""
+echo "=== shipped files pass the older releases' secret rules ==="
+secret_hits() { # <secrets-lib> -> "<rule>: <file>" lines for the staged package
+    # shellcheck disable=SC2016  # expanded by the inner bash
+    bash -c 'source "$1"; cd "$2" || exit 1
+        for i in "${!GATES_SECRET_PATTERNS[@]}"; do
+            grep -rlE "${GATES_SECRET_FLAGS[$i]}" -e "${GATES_SECRET_PATTERNS[$i]}" . 2>/dev/null \
+                | sed "s|^|${GATES_SECRET_LABELS[$i]}: |"
+        done' _ "$1" "$STAGE"
+}
+expect "no shipped file matches the 0.4.2-0.5.1 secret rules" \
+    "$(secret_hits "$REPO_ROOT/tests/fixtures/secrets-v0.5.1.sh")" ""
+expect "no shipped file matches the current secret rules" \
+    "$(secret_hits "$REPO_ROOT/extension/runtime/lib/secrets.sh")" ""
+
 # Spec Kit's zip extraction keeps the execute bit only on *.sh files that
 # carry it in the zip, which carries the git modes. A shipped script that is
 # 100644 in git arrives 644, and project.sh then flips it to 755 inside the

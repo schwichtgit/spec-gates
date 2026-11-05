@@ -8,6 +8,30 @@ never touches `.specify/gates/policy.json`. New policy keys take the
 defaults stated here until you set them. Releases before 0.3.3 are
 described in their [GitHub release notes](https://github.com/schwichtgit/spec-gates/releases).
 
+## 0.6.1 — 2026-11-05
+
+### Upgrading
+
+- Upgrade as for 0.6.0 (README "Upgrade"); from 0.5.x or 0.4.x, go
+  straight to 0.6.1. A repository already on 0.6.0 loses nothing by
+  staying there: 0.6.1 changes no runtime file, only the CHANGELOG text
+  the package ships.
+- If a pull request upgrading to 0.6.0 failed its pr step with "SECRET:
+  Possible credential assignment in .specify/extensions/gates/CHANGELOG.md",
+  replace that upgrade with one to 0.6.1; do not edit the vendored file.
+
+### Fixed
+
+- **An upgrade from 0.5.x or 0.4.x passes the base's pr step** (found
+  downstream). CI judges a pull request with the base branch's
+  `pr-check.sh`, so an upgrade PR is checked by the old secret rules, and
+  two examples quoted in the 0.6.0 CHANGELOG's #310 entry matched the old
+  credential heuristic: every upgrade PR from 0.5.x failed its pr step.
+  The entry now describes those cases in words. `tests/test-package.sh`
+  scans every file the package ships with the 0.4.2 to 0.5.1 secret rules
+  (`tests/fixtures/secrets-v0.5.1.sh`) as well as the current ones, so a
+  shipped file that an older base would refuse fails the build.
+
 ## 0.6.0 — 2026-11-04
 
 ### Upgrading
@@ -136,10 +160,11 @@ npm ci`. The gate still fails until the install matches.
   `assert_no_credential_values.sh` or `passwd.txt` was edited without a
   prompt. It asks, never blocks, so the wider list adds prompts only.
 - **The credential rule no longer flags variable references and secret
-  names** (#310). `password="${REGISTRY_PASSWORD}"`,
-  `token="$(tool create token)"` and a camel-case name such as
-  `identitySecret = "hub-identity"` were refused as possible credential
-  assignments. A value starting with `$(`, `${` or `$NAME` no longer
+  names** (#310). A password assigned a quoted variable reference, a
+  token assigned a quoted command substitution, and a camel-case constant
+  whose name ends in "Secret" (holding a Kubernetes Secret's name) were
+  refused as possible credential assignments. A value starting with
+  `$(`, `${` or `$NAME` no longer
   counts, and the keyword must start a name or follow a character that is
   not a letter or digit (`DB_PASSWORD`, `--password`). A quoted literal
   value after such a keyword is still refused.
