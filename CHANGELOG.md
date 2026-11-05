@@ -8,7 +8,17 @@ never touches `.specify/gates/policy.json`. New policy keys take the
 defaults stated here until you set them. Releases before 0.3.3 are
 described in their [GitHub release notes](https://github.com/schwichtgit/spec-gates/releases).
 
-## [Unreleased]
+## 0.6.1 — 2026-11-05
+
+### Upgrading
+
+- Upgrade as for 0.6.0 (README "Upgrade"); from 0.5.x or 0.4.x, go
+  straight to 0.6.1. A repository already on 0.6.0 loses nothing by
+  staying there: 0.6.1 changes no runtime file, only the CHANGELOG text
+  the package ships.
+- If a pull request upgrading to 0.6.0 failed its pr step with "SECRET:
+  Possible credential assignment in .specify/extensions/gates/CHANGELOG.md",
+  replace that upgrade with one to 0.6.1; do not edit the vendored file.
 
 ### Fixed
 
