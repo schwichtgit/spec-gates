@@ -438,6 +438,36 @@ expect_state "ci: a command only in a comment is not wiring" "$cw" "II. Canary" 
 # shellcheck disable=SC2016  # a literal GitHub expression
 printf '      - if: ${{ false }}\n        run: bash .specify/gates/canary.sh\n' >>"$CIW/.github/workflows/ci.yml"
 expect_state "ci: an if: false step is not wiring" "$(ciw_align)" "II. Canary" "missing"
+# #334: one align or check proves the pipelines once for all its ci
+# principles (three here), and a later call in the same shell sees a
+# pipeline changed in between: the cache lives for one call.
+CIWCOUNT="$WORKDIR/ci-proofs"
+# shellcheck disable=SC2016  # expanded by the inner bash
+CIW_ONCE="$(bash -c '
+    lib="$1/extension/runtime/lib"
+    source "$lib/policy.sh"; source "$lib/manifest.sh"; source "$lib/constitution.sh"
+    count="$3"
+    eval "$(declare -f gates_ci_body | sed "1s/gates_ci_body/_ciw_real_body/")"
+    gates_ci_body() { echo x >>"$count"; _ciw_real_body "$@"; }
+    : >"$count"
+    gates_const_align "$2" "$2/.specify/memory/constitution.md" >/dev/null
+    a="$(grep -c x "$count")"
+    : >"$count"
+    gates_const_check_raw "$2" "$2/.specify/memory/constitution.md" >/dev/null || true
+    printf "%s|%s" "$a" "$(grep -c x "$count")"' _ "$REPO_ROOT" "$CIW" "$CIWCOUNT")"
+expect "ci: align and check prove the pipelines once per call (#334)" "$CIW_ONCE" "1|1"
+# shellcheck disable=SC2016  # expanded by the inner bash
+CIW_FRESH="$(bash -c '
+    lib="$1/extension/runtime/lib"
+    source "$lib/policy.sh"; source "$lib/manifest.sh"; source "$lib/constitution.sh"
+    c="$2/.specify/memory/constitution.md"
+    # Called in this shell, not in $( ), so a cache would carry over.
+    gates_const_align "$2" "$c" >"$3.before"
+    printf "      - run: bash .specify/gates/canary.sh\n" >>"$2/.github/workflows/ci.yml"
+    gates_const_align "$2" "$c" >"$3.after"
+    st() { awk -F "\t" "\$1 == \"II. Canary\" { print \$4 }" "$1"; }
+    printf "%s|%s" "$(st "$3.before")" "$(st "$3.after")"' _ "$REPO_ROOT" "$CIW" "$CIWCOUNT")"
+expect "ci: a later call in the same shell sees a changed pipeline (#334)" "$CIW_FRESH" "missing|active"
 printf '      - run: bash .specify/gates/canary.sh\n' >>"$CIW/.github/workflows/ci.yml"
 expect_state "ci: a live template step wires its id" "$(ciw_align)" "II. Canary" "active"
 printf 'jobs:\n  gates:\n    steps:\n      # - run: bash .specify/gates/verify.sh --boundary ci\n' \

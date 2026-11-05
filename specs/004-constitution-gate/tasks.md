@@ -100,7 +100,7 @@ placeholder detection.
 ### Implementation for User Story 3
 
 - [x] T014 [US3] Implement `check` in `extension/runtime/lib/constitution.sh` + entry script: one line per principle (`enforced | gap | prose-only`), unannotated count as a single summary line, exit 1 iff any gap or malformed marker (FR-009 fixed severity), reusing T011's surface evaluation
-- [x] T015 [US3] Extend `extension/runtime/doctor.sh` with the constitution section: runs only when a constitution exists and carries at least one marker (otherwise one informational line, FR-013), reports per-principle status, exit 1 on gaps/malformed markers naming principle + surface (+ line), local-only, ≤ 2 s of CPU time
+- [x] T015 [US3] Extend `extension/runtime/doctor.sh` with the constitution section: runs only when a constitution exists and carries at least one marker (otherwise one informational line, FR-013), reports per-principle status, exit 1 on gaps/malformed markers naming principle + surface (+ line), local-only, ≤ 1 s of CPU time
 
   ```accept
   # verifies: SC-004
@@ -109,7 +109,7 @@ placeholder detection.
   set -eu
   TIMEFORMAT='%3U %3S'
   cpu="$({ time bash .specify/gates/constitution.sh check >/dev/null 2>&1; } 2>&1)"
-  awk -v t="$cpu" 'BEGIN { split(t, a, " "); exit !(a[1] + a[2] <= 2.0) }'
+  awk -v t="$cpu" 'BEGIN { split(t, a, " "); exit !(a[1] + a[2] <= 1.0) }'
   ```
 
 - [x] T016 [P] [US3] Add check/doctor regression cases: `tests/test-constitution.sh` (all-active exit 0, each surface's gap named, malformed marker fails naming `constitution.md:<line>`, prose-only listed never failing, unannotated informational) and `tests/test-doctor.sh` (section present with markers, informational-only without, gap = doctor exit 1)

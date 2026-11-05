@@ -291,8 +291,8 @@ without failing.
   explicit approval: declining the alignment proposal leaves every file
   byte-identical — proven by a regression test.
 - **SC-004**: The bundled corpus session works with zero network access
-  end-to-end; the health-check constitution section adds no more than two
-  seconds of CPU time (user plus system) to a run. CPU time, not wall
+  end-to-end; the health-check constitution section adds no more than one
+  second of CPU time (user plus system) to a run. CPU time, not wall
   time, so a busy machine does not fail it.
 - **SC-005**: The guided session replaces the blank-template experience:
   a maintainer answering the interview honestly is never shown a bracket
